@@ -1,0 +1,7 @@
+{
+  "scopes": {
+    "validation.exec": true,
+    "desktop.actions": true,
+    "simulator.actions": true
+  }
+}

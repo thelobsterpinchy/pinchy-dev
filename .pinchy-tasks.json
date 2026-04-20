@@ -1,0 +1,82 @@
+[
+  {
+    "id": "roadmap-1-reset",
+    "title": "Roadmap Task 1: Structured run outcomes and worker transitions",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 1. Implement Phase 1: structured run outcomes and worker transition handling. Use TDD. Upgrade the Pi facade and worker so runs can end as completed, waiting_for_human, waiting_for_approval, or failed. Add focused transition helpers instead of spreading state changes inline. Keep Pinchy as the orchestrator and Pi as the within-run executor. Re-run npm test and npm run check before stopping.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-2-reset",
+    "title": "Roadmap Task 2: Blocked question delivery scheduling and delivery API visibility",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 2. Implement Phase 2 with TDD. Add blocked question delivery scheduling, persist notification attempts, and expose delivery visibility through the Pinchy API. Keep changes small and cohesive. Re-run npm test and npm run check before stopping.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-3-reset",
+    "title": "Roadmap Task 3: Inbound reply normalization and resume-safe reply ingestion",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 3. Implement inbound reply normalization and make reply ingestion safe for run resume behavior. Use tests first. Reuse the existing Pinchy reply model and Pi-backed resume path. Re-run npm test and npm run check before stopping.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-4-reset",
+    "title": "Roadmap Task 4: Convert daemon autonomous work into queued Pinchy runs",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 4. Refactor the daemon so autonomous goals, watcher follow-ups, and iteration-style autonomous work enqueue persistent Pinchy runs instead of directly prompting Pi for recurring autonomous execution. Keep the daemon as producer and worker as consumer. Use TDD for behavior changes and validate with npm test and npm run check.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-5-reset",
+    "title": "Roadmap Task 5: First-class autonomous QA run kind and scheduling",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 5. Add explicit run kinds/intents and make autonomous QA a first-class Pinchy run kind processed through the worker and Pi facade. Use minimal schema and focused tests. Re-run npm test and npm run check before stopping.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-6-reset",
+    "title": "Roadmap Task 6: Expand API into main control plane",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 6. Expand the Pinchy API with run detail, question detail, delivery listing, and run control endpoints that make the API the main backend surface for dashboard/app clients. Use TDD and validate with npm test and npm run check.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-7-reset",
+    "title": "Roadmap Task 7: Wire dashboard to conversations runs questions and deliveries",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 7. Make the dashboard a real operator UI over persistent conversations, runs, questions, replies, and deliveries. Prefer small validated slices and reuse the API as the primary data source. Re-run npm test and npm run check before stopping.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-8-reset",
+    "title": "Roadmap Task 8: Finish first end-to-end async notification channel",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 8. Finish one async messaging channel end-to-end, prioritizing Discord outbound plus inbound reply support, and scaffold other channels only if it stays bounded. Keep the work local-first and auditable. Re-run npm test and npm run check before stopping.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-9-reset",
+    "title": "Roadmap Task 9: Operational hardening and observability",
+    "prompt": "Follow docs/EXECUTION_ROADMAP.md Task 9. Improve health visibility, audit clarity, run IDs in logs, failure summaries, and operational docs so overnight unattended use is observable and debuggable. Use focused tests where practical and validate with npm test and npm run check.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  },
+  {
+    "id": "roadmap-bookkeeping-reset",
+    "title": "Roadmap bookkeeping: keep roadmap state updated while executing roadmap tasks",
+    "prompt": "While executing docs/EXECUTION_ROADMAP.md, keep docs/ROADMAP_STATUS.md and .pinchy-roadmap-state.json updated step by step. Mark only one roadmap task as in_progress at a time, mark tasks done only after validation passes, record residual gaps in notes when partial, and update lastUpdated/currentTask/currentPhase/overallState as work progresses.",
+    "status": "pending",
+    "createdAt": "2026-04-20T19:41:31.000Z",
+    "updatedAt": "2026-04-20T19:41:31.000Z"
+  }
+]

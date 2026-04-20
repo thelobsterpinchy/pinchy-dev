@@ -1,0 +1,68 @@
+{
+  "roadmapDocument": "docs/EXECUTION_ROADMAP.md",
+  "statusDocument": "docs/ROADMAP_STATUS.md",
+  "currentPhase": 1,
+  "currentTask": {
+    "id": 1,
+    "title": "Structured run outcomes and worker transitions",
+    "status": "queued"
+  },
+  "overallState": "queued",
+  "lastUpdated": "2026-04-20T19:41:31.000Z",
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Structured run outcomes and worker transitions",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 2,
+      "title": "Blocked question delivery scheduling and delivery API visibility",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 3,
+      "title": "Inbound reply normalization and resume-safe reply ingestion",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 4,
+      "title": "Convert daemon autonomous work into queued Pinchy runs",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 5,
+      "title": "First-class autonomous QA run kind and scheduling",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 6,
+      "title": "Expand API into main control plane",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 7,
+      "title": "Wire dashboard to conversations, runs, questions, and deliveries",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 8,
+      "title": "Finish first end-to-end async notification channel",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    },
+    {
+      "id": 9,
+      "title": "Operational hardening and observability",
+      "status": "queued",
+      "validation": ["npm test", "npm run check"]
+    }
+  ]
+}

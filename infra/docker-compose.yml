@@ -1,0 +1,35 @@
+version: '3.9'
+services:
+  api:
+    image: node:20
+    working_dir: /workspace
+    command: sh -lc "echo 'api placeholder' && sleep infinity"
+    volumes:
+      - ..:/workspace
+    ports:
+      - "8080:8080"
+
+  gateway:
+    image: node:20
+    working_dir: /workspace
+    command: sh -lc "echo 'gateway placeholder' && sleep infinity"
+    volumes:
+      - ..:/workspace
+    ports:
+      - "4000:4000"
+
+  worker:
+    image: node:20
+    working_dir: /workspace
+    command: sh -lc "echo 'worker placeholder' && sleep infinity"
+    volumes:
+      - ..:/workspace
+
+  web:
+    image: node:20
+    working_dir: /workspace
+    command: sh -lc "echo 'web placeholder' && sleep infinity"
+    volumes:
+      - ..:/workspace
+    ports:
+      - "3000:3000"

@@ -1,0 +1,10 @@
+{
+  "enableSkillCommands": true,
+  "compaction": {
+    "enabled": true
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 2
+  }
+}

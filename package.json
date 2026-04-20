@@ -1,0 +1,36 @@
+{
+  "name": "pinchy-dev",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "agent": "tsx apps/host/src/main.ts",
+    "daemon": "tsx apps/host/src/daemon.ts",
+    "dashboard": "tsx apps/host/src/dashboard.ts",
+    "dashboard:web": "vite --config apps/dashboard/vite.config.ts",
+    "api": "tsx apps/api/src/server.ts",
+    "worker": "tsx services/agent-worker/src/worker.ts",
+    "check": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
+    "bootstrap": "bash scripts/bootstrap.sh"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "latest",
+    "@sinclair/typebox": "^0.34.41",
+    "chokidar": "^4.0.3",
+    "playwright": "^1.54.2",
+    "pngjs": "^7.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2",
+    "vite": "^6.4.2"
+  }
+}
