@@ -31,3 +31,18 @@ test("updateTaskStatus updates a queued task", () => {
     assert.equal(getNextPendingTask(cwd), undefined);
   });
 });
+
+test("updateTaskStatus can persist linked conversation and run ids", () => {
+  withTempDir((cwd) => {
+    const task = enqueueTask(cwd, "Test task", "Do a thing");
+    const updated = updateTaskStatus(cwd, task.id, "done", {
+      conversationId: "conversation-1",
+      runId: "run-1",
+    });
+
+    assert.equal(updated?.conversationId, "conversation-1");
+    assert.equal(updated?.runId, "run-1");
+    assert.equal(loadTasks(cwd)[0]?.conversationId, "conversation-1");
+    assert.equal(loadTasks(cwd)[0]?.runId, "run-1");
+  });
+});

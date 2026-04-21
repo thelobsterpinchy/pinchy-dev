@@ -1,8 +1,0 @@
-{
-  "intervalMs": 1800000,
-  "goals": [
-    "Run a safe self-improvement cycle for this repository. Focus on docs, prompts, tests, guardrails, and maintainability.",
-    "Run a browser-debugging readiness review. Improve website investigation workflows only if a safe, bounded improvement is obvious.",
-    "Run a local app-debugging readiness review. Improve screenshot, active-app inspection, or approval flow only if the change is small and safe."
-  ]
-}

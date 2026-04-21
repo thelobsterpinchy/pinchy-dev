@@ -2,20 +2,31 @@ import http from "node:http";
 import {
   appendMessage,
   createConversation,
-  createHumanReply,
   createQuestion,
   createRun,
+  getQuestionById,
+  getRunById,
   listConversations,
   listMessages,
+  listNotificationDeliveries,
   listQuestions,
   listReplies,
   listRuns,
-  markQuestionAnswered,
+  updateRunStatus,
 } from "../../host/src/agent-state-store.js";
+import { isRunKind } from "../../../packages/shared/src/contracts.js";
+import { normalizeDiscordInboundReply, DiscordInboundNormalizationError } from "../../../services/notifiers/discord-inbound.js";
+import { InboundReplyIngestionError, ingestInboundReply } from "../../../services/notifiers/inbound-replies.js";
+import { shouldRunAsCliEntry } from "../../host/src/module-entry.js";
 
 type ApiServerOptions = {
   cwd: string;
 };
+
+function resolveRequestCwd(defaultCwd: string, req: http.IncomingMessage) {
+  const header = req.headers["x-pinchy-workspace-path"];
+  return typeof header === "string" && header.trim() ? header.trim() : defaultCwd;
+}
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -45,13 +56,23 @@ function getRouteParams(pathname: string, prefix: string, suffix = "") {
   if (suffix && !remainder.endsWith(suffix)) return undefined;
   const raw = suffix ? remainder.slice(0, -suffix.length) : remainder;
   const value = raw.replace(/^\//, "");
-  return value ? decodeURIComponent(value) : undefined;
+  if (!value || value.includes("/")) return undefined;
+  return decodeURIComponent(value);
+}
+
+function getConversationById(cwd: string, conversationId: string) {
+  return listConversations(cwd).find((conversation) => conversation.id === conversationId);
+}
+
+function parseRunKind(value: unknown) {
+  return typeof value === "string" && isRunKind(value) ? value : undefined;
 }
 
 export function createApiServer({ cwd }: ApiServerOptions) {
   return http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const { pathname, searchParams } = url;
+    const requestCwd = resolveRequestCwd(cwd, req);
 
     if (req.method === "GET" && pathname === "/health") {
       sendJson(res, 200, { ok: true });
@@ -59,7 +80,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
     }
 
     if (req.method === "GET" && pathname === "/conversations") {
-      sendJson(res, 200, listConversations(cwd));
+      sendJson(res, 200, listConversations(requestCwd));
       return;
     }
 
@@ -70,7 +91,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             sendJson(res, 400, { ok: false, error: "title is required" });
             return;
           }
-          sendJson(res, 201, createConversation(cwd, { title: payload.title.trim() }));
+          sendJson(res, 201, createConversation(requestCwd, { title: payload.title.trim() }));
         })
         .catch((error) => sendJsonBodyError(res, error));
       return;
@@ -78,7 +99,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
 
     const conversationIdForMessages = getRouteParams(pathname, "/conversations/", "/messages");
     if (conversationIdForMessages && req.method === "GET") {
-      sendJson(res, 200, listMessages(cwd, conversationIdForMessages));
+      sendJson(res, 200, listMessages(requestCwd, conversationIdForMessages));
       return;
     }
     if (conversationIdForMessages && req.method === "POST") {
@@ -92,7 +113,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             sendJson(res, 400, { ok: false, error: "content is required" });
             return;
           }
-          sendJson(res, 201, appendMessage(cwd, {
+          sendJson(res, 201, appendMessage(requestCwd, {
             conversationId: conversationIdForMessages,
             role: payload.role,
             content: payload.content.trim(),
@@ -103,9 +124,86 @@ export function createApiServer({ cwd }: ApiServerOptions) {
       return;
     }
 
+    const conversationIdForState = getRouteParams(pathname, "/conversations/", "/state");
+    if (conversationIdForState && req.method === "GET") {
+      const conversation = getConversationById(requestCwd, conversationIdForState);
+      if (!conversation) {
+        sendJson(res, 404, { ok: false, error: `Conversation not found: ${conversationIdForState}` });
+        return;
+      }
+      const messages = listMessages(requestCwd, conversationIdForState);
+      const runs = listRuns(requestCwd, conversationIdForState);
+      const questions = listQuestions(requestCwd, conversationIdForState);
+      const questionIds = new Set(questions.map((question) => question.id));
+      const runIds = new Set(runs.map((run) => run.id));
+      const replies = listReplies(requestCwd).filter((reply) => questionIds.has(reply.questionId));
+      const deliveries = listNotificationDeliveries(requestCwd).filter((delivery) => (delivery.questionId ? questionIds.has(delivery.questionId) : false) || (delivery.runId ? runIds.has(delivery.runId) : false));
+      sendJson(res, 200, {
+        conversation,
+        messages,
+        runs,
+        questions,
+        replies,
+        deliveries,
+      });
+      return;
+    }
+
+    const conversationIdForRuns = getRouteParams(pathname, "/conversations/", "/runs");
+    if (conversationIdForRuns && req.method === "POST") {
+      void readJsonBody(req)
+        .then((payload) => {
+          if (typeof payload.goal !== "string" || !payload.goal.trim()) {
+            sendJson(res, 400, { ok: false, error: "goal is required" });
+            return;
+          }
+          if (!getConversationById(requestCwd, conversationIdForRuns)) {
+            sendJson(res, 404, { ok: false, error: `Conversation not found: ${conversationIdForRuns}` });
+            return;
+          }
+          if (payload.kind !== undefined && !parseRunKind(payload.kind)) {
+            sendJson(res, 400, { ok: false, error: "valid run kind is required when provided" });
+            return;
+          }
+          sendJson(res, 201, createRun(requestCwd, {
+            conversationId: conversationIdForRuns,
+            goal: payload.goal.trim(),
+            kind: parseRunKind(payload.kind),
+          }));
+        })
+        .catch((error) => sendJsonBodyError(res, error));
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/runs") {
       const conversationId = searchParams.get("conversationId") ?? undefined;
-      sendJson(res, 200, listRuns(cwd, conversationId));
+      sendJson(res, 200, listRuns(requestCwd, conversationId));
+      return;
+    }
+
+    const runIdForDetail = getRouteParams(pathname, "/runs/");
+    if (runIdForDetail && req.method === "GET") {
+      const run = getRunById(requestCwd, runIdForDetail);
+      if (!run) {
+        sendJson(res, 404, { ok: false, error: `Run not found: ${runIdForDetail}` });
+        return;
+      }
+      sendJson(res, 200, run);
+      return;
+    }
+
+    const runIdForCancel = getRouteParams(pathname, "/runs/", "/cancel");
+    if (runIdForCancel && req.method === "POST") {
+      const run = getRunById(requestCwd, runIdForCancel);
+      if (!run) {
+        sendJson(res, 404, { ok: false, error: `Run not found: ${runIdForCancel}` });
+        return;
+      }
+      if (["completed", "failed", "cancelled"].includes(run.status)) {
+        sendJson(res, 409, { ok: false, error: `Run cannot be cancelled from status: ${run.status}` });
+        return;
+      }
+      sendJson(res, 200, updateRunStatus(requestCwd, runIdForCancel, "cancelled"));
       return;
     }
 
@@ -116,9 +214,18 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             sendJson(res, 400, { ok: false, error: "conversationId and goal are required" });
             return;
           }
-          sendJson(res, 201, createRun(cwd, {
+          if (!getConversationById(requestCwd, payload.conversationId)) {
+            sendJson(res, 404, { ok: false, error: `Conversation not found: ${payload.conversationId}` });
+            return;
+          }
+          if (payload.kind !== undefined && !parseRunKind(payload.kind)) {
+            sendJson(res, 400, { ok: false, error: "valid run kind is required when provided" });
+            return;
+          }
+          sendJson(res, 201, createRun(requestCwd, {
             conversationId: payload.conversationId,
             goal: payload.goal,
+            kind: parseRunKind(payload.kind),
           }));
         })
         .catch((error) => sendJsonBodyError(res, error));
@@ -127,13 +234,36 @@ export function createApiServer({ cwd }: ApiServerOptions) {
 
     if (req.method === "GET" && pathname === "/questions") {
       const conversationId = searchParams.get("conversationId") ?? undefined;
-      sendJson(res, 200, listQuestions(cwd, conversationId));
+      sendJson(res, 200, listQuestions(requestCwd, conversationId));
+      return;
+    }
+
+    const questionIdForDetail = getRouteParams(pathname, "/questions/");
+    if (questionIdForDetail && req.method === "GET") {
+      const question = getQuestionById(requestCwd, questionIdForDetail);
+      if (!question) {
+        sendJson(res, 404, { ok: false, error: `Question not found: ${questionIdForDetail}` });
+        return;
+      }
+      sendJson(res, 200, question);
       return;
     }
 
     if (req.method === "GET" && pathname === "/replies") {
       const questionId = searchParams.get("questionId") ?? undefined;
-      sendJson(res, 200, listReplies(cwd, questionId));
+      sendJson(res, 200, listReplies(requestCwd, questionId));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/deliveries") {
+      const questionId = searchParams.get("questionId") ?? undefined;
+      const runId = searchParams.get("runId") ?? undefined;
+      const channel = searchParams.get("channel");
+      sendJson(res, 200, listNotificationDeliveries(requestCwd, {
+        questionId,
+        runId,
+        channel: channel === "discord" || channel === "imessage" || channel === "pinchy-app" || channel === "dashboard" ? channel : undefined,
+      }));
       return;
     }
 
@@ -144,7 +274,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             sendJson(res, 400, { ok: false, error: "conversationId, runId, and prompt are required" });
             return;
           }
-          sendJson(res, 201, createQuestion(cwd, {
+          sendJson(res, 201, createQuestion(requestCwd, {
             conversationId: payload.conversationId,
             runId: payload.runId,
             prompt: payload.prompt,
@@ -171,14 +301,44 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             sendJson(res, 400, { ok: false, error: "valid channel is required" });
             return;
           }
-          const reply = createHumanReply(cwd, {
-            questionId: questionIdForReply,
-            conversationId: payload.conversationId,
-            channel,
-            content: payload.content,
-          });
-          markQuestionAnswered(cwd, questionIdForReply);
-          sendJson(res, 201, reply);
+          try {
+            const reply = ingestInboundReply(requestCwd, {
+              questionId: questionIdForReply,
+              conversationId: payload.conversationId,
+              channel,
+              content: payload.content,
+            });
+            sendJson(res, 201, reply);
+          } catch (error) {
+            if (error instanceof InboundReplyIngestionError) {
+              sendJson(res, error.statusCode, { ok: false, error: error.message });
+              return;
+            }
+            throw error;
+          }
+        })
+        .catch((error) => sendJsonBodyError(res, error));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/webhooks/discord/reply") {
+      void readJsonBody(req)
+        .then((payload) => {
+          try {
+            const normalized = normalizeDiscordInboundReply(payload);
+            const reply = ingestInboundReply(requestCwd, normalized);
+            sendJson(res, 201, reply);
+          } catch (error) {
+            if (error instanceof DiscordInboundNormalizationError) {
+              sendJson(res, 400, { ok: false, error: error.message });
+              return;
+            }
+            if (error instanceof InboundReplyIngestionError) {
+              sendJson(res, error.statusCode, { ok: false, error: error.message });
+              return;
+            }
+            throw error;
+          }
         })
         .catch((error) => sendJsonBodyError(res, error));
       return;
@@ -197,7 +357,7 @@ async function main() {
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (shouldRunAsCliEntry(import.meta.url)) {
   main().catch((error) => {
     console.error(error);
     process.exit(1);

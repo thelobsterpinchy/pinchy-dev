@@ -3,8 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getFrontWindowBounds, relativeToAbsolute } from "../../../apps/host/src/window-utils.js";
-import { isActionAutoApproved } from "../../../apps/host/src/approval-policy.js";
-import { isSessionScopeEnabled } from "../../../apps/host/src/session-approval.js";
+import { requestScopedApproval } from "../../../apps/host/src/approval-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,10 +31,12 @@ async function clickAt(x: number, y: number) {
 }
 
 async function requestApproval(ctx: ToolCtx, title: string, message: string) {
-  if (isSessionScopeEnabled(ctx.cwd, "desktop.actions")) return true;
-  if (isActionAutoApproved(ctx.cwd, "desktop.actions")) return true;
-  if (ctx.hasUI) return ctx.ui.confirm(title, message);
-  return process.env.PINCHY_ALLOW_DESKTOP_ACTIONS === "1";
+  return requestScopedApproval(ctx, {
+    scope: "desktop.actions",
+    title,
+    message,
+    envVar: "PINCHY_ALLOW_DESKTOP_ACTIONS",
+  });
 }
 
 export default function windowOperator(pi: ExtensionAPI) {

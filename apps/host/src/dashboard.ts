@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { join, resolve } from "node:path";
 import type { ApprovalRecord, DashboardArtifact, DashboardState } from "../../../packages/shared/src/contracts.js";
 import { filterArtifactIndex } from "./artifact-index.js";
-import { loadApprovalPolicy, setApprovalScope } from "./approval-policy.js";
+import { filterActionableApprovals, loadApprovalPolicy, setApprovalScope } from "./approval-policy.js";
 import { loadGeneratedToolRegistry } from "./generated-tool-registry.js";
 import { loadRunContext } from "./run-context.js";
 import { loadRoutines } from "./routine-store.js";
@@ -13,10 +13,21 @@ import { loadGeneratedToolSource } from "./tool-review.js";
 import { loadRunHistory } from "./run-history.js";
 import { loadDaemonHealth } from "./daemon-health.js";
 import { getPendingReloadRequests, queueReloadRequest } from "./reload-requests.js";
+import { requestControlPlaneApi } from "./control-plane-proxy.js";
+import { createMemoryEntry, deleteMemoryEntry, listMemoryEntries, updateMemoryEntry } from "./memory-store.js";
+import { resolveDashboardAssetRequest, resolveDashboardShellMode } from "./dashboard-ui.js";
+import { shouldRunAsCliEntry } from "./module-entry.js";
+import { getActiveWorkspace, listWorkspaces, registerWorkspace, setActiveWorkspace } from "./workspace-registry.js";
 
 type SseClient = {
   id: number;
   res: http.ServerResponse;
+};
+
+type DashboardServerOptions = {
+  cwd: string;
+  port: number;
+  controlPlaneApiBaseUrl?: string;
 };
 
 function readJsonIfPresent<T>(path: string, fallback: T): T {
@@ -284,6 +295,16 @@ function parseForm(body: string) {
   return Object.fromEntries(params.entries());
 }
 
+function getRouteParams(pathname: string, prefix: string, suffix = "") {
+  if (!pathname.startsWith(prefix)) return undefined;
+  const remainder = pathname.slice(prefix.length);
+  if (suffix && !remainder.endsWith(suffix)) return undefined;
+  const raw = suffix ? remainder.slice(0, -suffix.length) : remainder;
+  const value = raw.replace(/^\//, "");
+  if (!value || value.includes("/")) return undefined;
+  return decodeURIComponent(value);
+}
+
 async function readJsonBody(req: http.IncomingMessage) {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -293,21 +314,29 @@ async function readJsonBody(req: http.IncomingMessage) {
   return text ? JSON.parse(text) as Record<string, unknown> : {};
 }
 
+function getActiveWorkspacePath(cwd: string) {
+  return getActiveWorkspace(cwd)?.path ?? cwd;
+}
+
 function buildApiState(cwd: string): DashboardState {
+  const activeWorkspacePath = getActiveWorkspacePath(cwd);
   return {
-    runContext: loadRunContext(cwd),
-    tasks: loadTasks(cwd),
-    approvals: loadApprovals(cwd),
-    generatedTools: loadGeneratedToolRegistry(cwd),
-    routines: loadRoutines(cwd),
-    artifacts: listArtifacts(cwd, {}, 50),
-    policy: loadApprovalPolicy(cwd),
-    goals: readJsonIfPresent(resolve(cwd, ".pinchy-goals.json"), {}),
-    watch: readJsonIfPresent(resolve(cwd, ".pinchy-watch.json"), {}),
-    auditTail: readTextTail(resolve(cwd, "logs/pinchy-audit.jsonl")),
-    daemonHealth: loadDaemonHealth(cwd),
-    runHistory: loadRunHistory(cwd).slice(0, 20),
-    pendingReloadRequests: getPendingReloadRequests(cwd),
+    runContext: loadRunContext(activeWorkspacePath),
+    workspaces: listWorkspaces(cwd),
+    activeWorkspaceId: getActiveWorkspace(cwd)?.id,
+    tasks: loadTasks(activeWorkspacePath),
+    approvals: filterActionableApprovals(activeWorkspacePath, loadApprovals(activeWorkspacePath)),
+    generatedTools: loadGeneratedToolRegistry(activeWorkspacePath),
+    routines: loadRoutines(activeWorkspacePath),
+    artifacts: listArtifacts(activeWorkspacePath, {}, 50),
+    memories: listMemoryEntries(activeWorkspacePath),
+    policy: loadApprovalPolicy(activeWorkspacePath),
+    goals: readJsonIfPresent(resolve(activeWorkspacePath, ".pinchy-goals.json"), {}),
+    watch: readJsonIfPresent(resolve(activeWorkspacePath, ".pinchy-watch.json"), {}),
+    auditTail: readTextTail(resolve(activeWorkspacePath, "logs/pinchy-audit.jsonl")),
+    daemonHealth: loadDaemonHealth(activeWorkspacePath),
+    runHistory: loadRunHistory(activeWorkspacePath).slice(0, 20),
+    pendingReloadRequests: getPendingReloadRequests(activeWorkspacePath),
   };
 }
 
@@ -384,9 +413,7 @@ function openSse(res: http.ServerResponse) {
   res.write("retry: 3000\n\n");
 }
 
-async function main() {
-  const cwd = process.env.PINCHY_CWD ?? process.cwd();
-  const port = Number(process.env.PINCHY_DASHBOARD_PORT ?? 4310);
+export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "http://127.0.0.1:4320" }: DashboardServerOptions) {
   const sseClients: SseClient[] = [];
   let nextClientId = 1;
   let lastStateJson = JSON.stringify(buildApiState(cwd));
@@ -402,9 +429,12 @@ async function main() {
   };
 
   const server = http.createServer((req, res) => {
+    const requestUrl = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+    const activeWorkspacePath = getActiveWorkspacePath(cwd);
+
     if (req.url?.startsWith("/artifact/")) {
       const name = decodeURIComponent(req.url.slice("/artifact/".length));
-      const path = resolve(cwd, "artifacts", name);
+      const path = resolve(activeWorkspacePath, "artifacts", name);
       if (!existsSync(path)) {
         res.writeHead(404).end("not found");
         return;
@@ -416,6 +446,88 @@ async function main() {
 
     if (req.url === "/api/state" && req.method === "GET") {
       sendJson(res, 200, buildApiState(cwd));
+      return;
+    }
+
+    if (req.url === "/api/workspaces" && req.method === "GET") {
+      sendJson(res, 200, listWorkspaces(cwd));
+      return;
+    }
+
+    if (req.url === "/api/workspaces" && req.method === "POST") {
+      void readJsonBody(req)
+        .then((payload) => {
+          if (typeof payload.path !== "string" || !payload.path.trim()) {
+            sendJson(res, 400, { ok: false, error: "path is required" });
+            return;
+          }
+          const created = registerWorkspace(cwd, {
+            path: payload.path.trim(),
+            name: typeof payload.name === "string" ? payload.name.trim() : undefined,
+          });
+          sendJson(res, 201, created);
+          broadcastState();
+        })
+        .catch((error) => {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
+    if (req.url === "/api/memory" && req.method === "GET") {
+      sendJson(res, 200, listMemoryEntries(activeWorkspacePath));
+      return;
+    }
+
+    if (req.url === "/api/memory" && req.method === "POST") {
+      void readJsonBody(req)
+        .then((payload) => {
+          if (typeof payload.title !== "string" || !payload.title.trim()) {
+            sendJson(res, 400, { ok: false, error: "title is required" });
+            return;
+          }
+          if (typeof payload.content !== "string" || !payload.content.trim()) {
+            sendJson(res, 400, { ok: false, error: "content is required" });
+            return;
+          }
+          sendJson(res, 201, createMemoryEntry(activeWorkspacePath, {
+            title: payload.title.trim(),
+            content: payload.content.trim(),
+            kind: payload.kind === "note" || payload.kind === "decision" || payload.kind === "fact" || payload.kind === "summary" ? payload.kind : undefined,
+            tags: Array.isArray(payload.tags) ? payload.tags.filter((entry): entry is string => typeof entry === "string") : undefined,
+            pinned: typeof payload.pinned === "boolean" ? payload.pinned : undefined,
+            sourceConversationId: typeof payload.sourceConversationId === "string" ? payload.sourceConversationId : undefined,
+            sourceRunId: typeof payload.sourceRunId === "string" ? payload.sourceRunId : undefined,
+          }));
+          broadcastState();
+        })
+        .catch((error) => {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
+    if (req.url?.startsWith("/api/control-plane/")) {
+      const path = req.url.slice("/api/control-plane".length);
+      const contentType = req.headers["content-type"];
+      void (async () => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.from(chunk));
+        }
+        const proxyResponse = await requestControlPlaneApi({
+          apiBaseUrl: controlPlaneApiBaseUrl,
+          path,
+          method: req.method ?? "GET",
+          bodyText: chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : undefined,
+          contentType: typeof contentType === "string" ? contentType : undefined,
+          headers: { "x-pinchy-workspace-path": getActiveWorkspacePath(cwd) },
+        });
+        res.writeHead(proxyResponse.status, { "content-type": proxyResponse.contentType });
+        res.end(proxyResponse.bodyText);
+      })().catch((error) => {
+        sendJson(res, 502, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      });
       return;
     }
 
@@ -432,12 +544,61 @@ async function main() {
       return;
     }
 
+    const workspaceId = getRouteParams(requestUrl.pathname, "/api/workspaces/", "/activate");
+    if (workspaceId && req.method === "POST") {
+      const workspace = setActiveWorkspace(cwd, workspaceId);
+      if (!workspace) {
+        sendJson(res, 404, { ok: false, error: `Workspace not found: ${workspaceId}` });
+        return;
+      }
+      sendJson(res, 200, { ok: true, workspace });
+      broadcastState();
+      return;
+    }
+
+    const memoryId = getRouteParams(requestUrl.pathname, "/api/memory/");
+    if (memoryId && req.method === "PATCH") {
+      void readJsonBody(req)
+        .then((payload) => {
+          const updated = updateMemoryEntry(activeWorkspacePath, memoryId, {
+            title: typeof payload.title === "string" ? payload.title.trim() : undefined,
+            content: typeof payload.content === "string" ? payload.content.trim() : undefined,
+            kind: payload.kind === "note" || payload.kind === "decision" || payload.kind === "fact" || payload.kind === "summary" ? payload.kind : undefined,
+            tags: Array.isArray(payload.tags) ? payload.tags.filter((entry): entry is string => typeof entry === "string") : undefined,
+            pinned: typeof payload.pinned === "boolean" ? payload.pinned : undefined,
+            sourceConversationId: typeof payload.sourceConversationId === "string" ? payload.sourceConversationId : undefined,
+            sourceRunId: typeof payload.sourceRunId === "string" ? payload.sourceRunId : undefined,
+          });
+          if (!updated) {
+            sendJson(res, 404, { ok: false, error: `Memory not found: ${memoryId}` });
+            return;
+          }
+          sendJson(res, 200, updated);
+          broadcastState();
+        })
+        .catch((error) => {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
+    if (memoryId && req.method === "DELETE") {
+      const deleted = deleteMemoryEntry(activeWorkspacePath, memoryId);
+      if (!deleted) {
+        sendJson(res, 404, { ok: false, error: `Memory not found: ${memoryId}` });
+        return;
+      }
+      broadcastState();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (req.url?.startsWith("/api/generated-tools/") && req.method === "GET") {
       const rawName = decodeURIComponent(req.url.slice("/api/generated-tools/".length));
       const wantsDiff = rawName.endsWith("/diff");
       const name = wantsDiff ? rawName.slice(0, -"/diff".length) : rawName;
       if (wantsDiff) {
-        const diff = loadGeneratedToolDiff(cwd, name);
+        const diff = loadGeneratedToolDiff(activeWorkspacePath, name);
         if (!diff) {
           sendJson(res, 404, { ok: false, error: `Generated tool not found: ${name}` });
           return;
@@ -445,7 +606,7 @@ async function main() {
         sendJson(res, 200, { ok: true, diff });
         return;
       }
-      const detail = loadGeneratedToolDetail(cwd, name);
+      const detail = loadGeneratedToolDetail(activeWorkspacePath, name);
       if (!detail) {
         sendJson(res, 404, { ok: false, error: `Generated tool not found: ${name}` });
         return;
@@ -458,7 +619,7 @@ async function main() {
       const action = req.url.slice("/api/actions/".length);
       void readJsonBody(req)
         .then(async (payload) => {
-          await handleAction(cwd, action, payload);
+          await handleAction(activeWorkspacePath, action, payload);
           broadcastState();
           sendJson(res, 200, { ok: true });
         })
@@ -473,18 +634,18 @@ async function main() {
       req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       req.on("end", () => {
         const form = parseForm(Buffer.concat(chunks).toString("utf8"));
-        if (req.url === "/task" && typeof form.id === "string" && typeof form.status === "string") updateTaskStatus(cwd, form.id, form.status as "done" | "blocked" | "pending" | "running");
-        if (req.url === "/queue-task" && typeof form.title === "string" && typeof form.prompt === "string") enqueueTask(cwd, form.title, form.prompt);
-        if (req.url === "/routine-run" && typeof form.name === "string") enqueueTask(cwd, `Run routine: ${form.name}`, `Use /run-routine ${form.name} or equivalent routine execution flow to run the saved routine named ${form.name}.`);
+        if (req.url === "/task" && typeof form.id === "string" && typeof form.status === "string") updateTaskStatus(activeWorkspacePath, form.id, form.status as "done" | "blocked" | "pending" | "running");
+        if (req.url === "/queue-task" && typeof form.title === "string" && typeof form.prompt === "string") enqueueTask(activeWorkspacePath, form.title, form.prompt);
+        if (req.url === "/routine-run" && typeof form.name === "string") enqueueTask(activeWorkspacePath, `Run routine: ${form.name}`, `Use /run-routine ${form.name} or equivalent routine execution flow to run the saved routine named ${form.name}.`);
         if (req.url === "/approval" && typeof form.id === "string" && typeof form.status === "string") {
-          const approvals = loadApprovals(cwd);
+          const approvals = loadApprovals(activeWorkspacePath);
           const match = approvals.find((entry) => entry.id === form.id);
           if (match && (form.status === "approved" || form.status === "denied")) {
             match.status = form.status;
-            saveApprovals(cwd, approvals);
+            saveApprovals(activeWorkspacePath, approvals);
           }
         }
-        if (req.url === "/scope" && typeof form.scope === "string" && typeof form.enabled === "string") setApprovalScope(cwd, form.scope, form.enabled === "true");
+        if (req.url === "/scope" && typeof form.scope === "string" && typeof form.enabled === "string") setApprovalScope(activeWorkspacePath, form.scope, form.enabled === "true");
         broadcastState();
         res.writeHead(303, { location: "/" });
         res.end();
@@ -492,9 +653,24 @@ async function main() {
       return;
     }
 
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+    if (req.method === "GET") {
+      const asset = resolveDashboardAssetRequest(cwd, requestUrl.pathname);
+      if (asset) {
+        res.writeHead(200, { "content-type": asset.contentType });
+        res.end(readFileSync(asset.path));
+        return;
+      }
+
+      const shell = resolveDashboardShellMode(cwd);
+      if (shell.kind === "modern") {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(readFileSync(shell.indexPath, "utf8"));
+        return;
+      }
+    }
+
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(renderHtml(cwd, url.searchParams));
+    res.end(renderHtml(cwd, requestUrl.searchParams));
   });
 
   const heartbeat = setInterval(() => {
@@ -504,16 +680,27 @@ async function main() {
     }
   }, 3000);
 
-  server.listen(port, () => {
-    console.log(`Pinchy dashboard running at http://127.0.0.1:${port}`);
-  });
-
   server.on("close", () => {
     clearInterval(heartbeat);
   });
+
+  return server;
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+async function main() {
+  const cwd = process.env.PINCHY_CWD ?? process.cwd();
+  const port = Number(process.env.PINCHY_DASHBOARD_PORT ?? 4310);
+  const controlPlaneApiBaseUrl = process.env.PINCHY_API_BASE_URL ?? "http://127.0.0.1:4320";
+  const server = createDashboardServer({ cwd, port, controlPlaneApiBaseUrl });
+
+  server.listen(port, () => {
+    console.log(`Pinchy dashboard running at http://127.0.0.1:${port}`);
+  });
+}
+
+if (shouldRunAsCliEntry(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

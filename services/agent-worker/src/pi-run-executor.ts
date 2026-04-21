@@ -3,18 +3,13 @@ import { getModel } from "@mariozechner/pi-ai";
 import { resolve } from "node:path";
 import { loadPinchyRuntimeConfig, type PinchyRuntimeConfig, type ThinkingLevel } from "../../../apps/host/src/runtime-config.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
-
-export type PiRunExecutionResult = {
-  summary: string;
-  message: string;
-  piSessionPath?: string;
-};
+import { normalizeRunOutcome, type PiRunExecutionResult } from "./run-outcomes.js";
 
 type PiSession = {
   sessionId?: string;
   sessionFile?: string;
-  prompt: (text: string) => Promise<void>;
-  followUp: (text: string) => Promise<void>;
+  prompt: (text: string) => Promise<unknown>;
+  followUp: (text: string) => Promise<unknown>;
 };
 
 type PiSessionResult = {
@@ -92,12 +87,12 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
         model: defaults.model,
         thinkingLevel: defaults.thinkingLevel,
       });
-      await session.prompt(run.goal);
-      return {
+      const rawResult = await session.prompt(run.goal);
+      return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run completed for goal: ${run.goal}`,
         message: `Pi completed run: ${run.goal}`,
         piSessionPath: session.sessionFile,
-      };
+      });
     },
     async resumeRun({ cwd, run, reply }: { cwd: string; run: Run; reply: string }): Promise<PiRunExecutionResult> {
       if (!run.piSessionPath) {
@@ -111,12 +106,12 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
         model: defaults.model,
         thinkingLevel: defaults.thinkingLevel,
       });
-      await session.followUp(reply);
-      return {
+      const rawResult = await session.followUp(reply);
+      return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run resumed for goal: ${run.goal}`,
         message: `Pi resumed run: ${run.goal}`,
         piSessionPath: session.sessionFile ?? run.piSessionPath,
-      };
+      });
     },
   };
 }

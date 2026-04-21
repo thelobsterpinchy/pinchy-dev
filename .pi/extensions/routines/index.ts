@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { requestScopedApproval } from "../../../apps/host/src/approval-policy.js";
 import { loadRoutines, upsertRoutine } from "../../../apps/host/src/routine-store.js";
 
 type ToolCtx = {
@@ -16,9 +17,11 @@ async function executeRoutineSteps(pi: ExtensionAPI, ctx: ToolCtx, name: string)
 
   for (let index = 0; index < routine.steps.length; index += 1) {
     const step = routine.steps[index];
-    const approved = ctx.hasUI
-      ? await ctx.ui.confirm("Routine step approval", `Execute step ${index + 1}/${routine.steps.length}?\n\nTool: ${step.tool}\nInput: ${JSON.stringify(step.input, null, 2)}`)
-      : false;
+    const approved = await requestScopedApproval(ctx, {
+      scope: "routine.exec",
+      title: "Routine step approval",
+      message: `Execute step ${index + 1}/${routine.steps.length}?\n\nTool: ${step.tool}\nInput: ${JSON.stringify(step.input, null, 2)}`,
+    });
     if (!approved) {
       return { ok: false, message: `Routine paused before step ${index + 1}.` };
     }

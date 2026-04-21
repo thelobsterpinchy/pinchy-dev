@@ -18,6 +18,28 @@ The dashboard is intended to be genuinely usable for day-to-day operation:
 - artifact filters by query, tool, and tag
 - visible summary badges
 - routine visibility
+- daemon health visibility
+- audit tail visibility for recent local runtime events
+
+## Overnight observability
+
+For unattended runs, the most useful local files are:
+- `.pinchy-daemon-health.json` — latest daemon heartbeat, status, current activity, last completion time, and last error
+- `logs/pinchy-audit.jsonl` — newline-delimited local audit entries for worker run starts, finishes, question deliveries, summaries, and errors
+
+Suggested checks:
+
+```bash
+cat .pinchy-daemon-health.json
+
+tail -n 40 logs/pinchy-audit.jsonl
+```
+
+What to look for:
+- `status: "error"` or a stale `heartbeatAt` in daemon health
+- `worker_run_finished` entries with `outcomeKind: "failed"`
+- repeated `worker_question_delivery_finished` failures on the same run/question
+- summaries and `runId` values you can correlate back to dashboard/API state
 
 ## Browser debugging
 
@@ -27,8 +49,10 @@ Useful tools:
 - `browser_run_probe`
 - `browser_execute_steps`
 - `browser_compare_artifacts`
+- `npm run playwright:install` when Playwright browser binaries are missing
 
 Suggested workflow:
+0. if Playwright reports a missing browser executable, run `npm run playwright:install`
 1. run `browser_debug_scan` first to collect screenshot, console issues, and failing requests
 2. use `browser_dom_snapshot` when you need saved HTML and visible-text evidence
 3. use `browser_run_probe` for quick selector/text checks
@@ -80,7 +104,13 @@ Approval-related commands:
 - `/allow-session <scope>`
 - `/allow-persistent <scope>`
 
-Use approvals to keep desktop/app actions reviewable instead of silently bypassing operator confirmation.
+Pinchy now defaults this repo to lower-friction persistent scopes for common local work:
+- `desktop.actions`
+- `simulator.actions`
+- `validation.exec`
+- `routine.exec`
+
+You can still disable any scope with `/allow-persistent <scope>` via the dashboard policy toggles or by writing `.pinchy-approval-policy.json`.
 
 ## Routine execution
 
@@ -91,7 +121,7 @@ Useful tools/commands:
 - `/routines`
 - `/run-routine <name>`
 
-`/run-routine` performs per-step approval before queueing each routine action.
+`/run-routine` respects the `routine.exec` approval scope. In this repo that scope now defaults to enabled, but it can still be turned off when you want step-by-step confirmations again.
 
 ## Artifact metadata and filtering
 

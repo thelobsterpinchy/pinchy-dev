@@ -35,6 +35,8 @@ test("Discord notifier stores a sent delivery for a question", async () => {
     assert.equal(payloads.length, 1);
     assert.equal(payloads[0]?.url, "https://discord.example/webhook");
     assert.match(payloads[0]?.body.content ?? "", /Need clarification/);
+    assert.match(payloads[0]?.body.content ?? "", /question id:\s*question-1/i);
+    assert.match(payloads[0]?.body.content ?? "", /run id:\s*run-1/i);
     assert.equal(delivery.status, "sent");
     assert.equal(listNotificationDeliveries(cwd).length, 1);
     assert.equal(listNotificationDeliveries(cwd)[0]?.channel, "discord");

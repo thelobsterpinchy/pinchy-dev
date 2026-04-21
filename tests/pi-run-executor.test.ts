@@ -49,6 +49,7 @@ test("Pi run executor starts a new Pi session for a fresh run", async () => {
     id: "run-1",
     conversationId: "conversation-1",
     goal: "Investigate the failing build",
+    kind: "user_prompt",
     status: "queued",
     createdAt: "2026-04-20T00:00:00.000Z",
     updatedAt: "2026-04-20T00:00:00.000Z",
@@ -103,6 +104,7 @@ test("Pi run executor resumes an existing Pi session for a blocked run", async (
     id: "run-2",
     conversationId: "conversation-1",
     goal: "Continue after human reply",
+    kind: "resume_reply",
     status: "waiting_for_human",
     createdAt: "2026-04-20T00:00:00.000Z",
     updatedAt: "2026-04-20T00:00:00.000Z",
@@ -118,4 +120,85 @@ test("Pi run executor resumes an existing Pi session for a blocked run", async (
     'session:/repo:/agent-dir:{"kind":"open","sessionPath":"/tmp/existing-session.json"}',
     "followUp:Use SQLite only if JSON becomes limiting.",
   ]);
+});
+
+test("Pi run executor preserves structured waiting_for_human outcomes returned by Pi", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => ({
+      session: {
+        sessionFile: "/tmp/pi-session-3.json",
+        async prompt() {
+          return {
+            kind: "waiting_for_human",
+            summary: "Blocked pending clarification",
+            message: "Need a storage decision before continuing.",
+            blockedReason: "Need persistence format",
+            question: {
+              prompt: "Should I use JSON files or SQLite?",
+              priority: "high",
+              channelHints: ["discord"],
+            },
+          };
+        },
+        async followUp() {
+          return undefined;
+        },
+      },
+    }),
+  });
+
+  const run: Run = {
+    id: "run-3",
+    conversationId: "conversation-1",
+    goal: "Choose a persistence path",
+    kind: "qa_cycle",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.kind, "waiting_for_human");
+  assert.equal(result.piSessionPath, "/tmp/pi-session-3.json");
+  assert.equal(result.blockedReason, "Need persistence format");
+  assert.equal(result.question.prompt, "Should I use JSON files or SQLite?");
+});
+
+test("Pi run executor preserves structured failed outcomes returned by Pi follow-ups", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => ({
+      session: {
+        sessionFile: "/tmp/pi-session-4.json",
+        async prompt() {
+          return undefined;
+        },
+        async followUp() {
+          return {
+            kind: "failed",
+            summary: "Resume failed",
+            message: "Pi could not continue the run.",
+            error: "tool call rejected",
+          };
+        },
+      },
+    }),
+  });
+
+  const run: Run = {
+    id: "run-4",
+    conversationId: "conversation-1",
+    goal: "Resume after a reply",
+    kind: "resume_reply",
+    status: "waiting_for_human",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+    piSessionPath: "/tmp/existing-session.json",
+  };
+
+  const result = await executor.resumeRun({ cwd: "/repo", run, reply: "Please continue." });
+
+  assert.equal(result.kind, "failed");
+  assert.equal(result.error, "tool call rejected");
+  assert.equal(result.piSessionPath, "/tmp/pi-session-4.json");
 });

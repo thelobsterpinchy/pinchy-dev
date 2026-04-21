@@ -22,6 +22,8 @@ Optional multi-goal format:
 export PINCHY_DAEMON_GOALS="Run a website debugging maintenance pass for the local app.||Run a safe self-improvement cycle for this repository."
 ```
 
+To pause recurring autonomous goal cycles without stopping the daemon entirely, set `PINCHY_DAEMON_AUTO_IMPROVEMENTS=false` or write `{ "enabled": false }` in `.pinchy-goals.json`. Watcher follow-ups, queued tasks, and reload requests can still be processed while goal cycles are paused.
+
 ## Runtime defaults
 
 Pinchy can load non-secret runtime defaults from `.pinchy-runtime.json`.
@@ -68,6 +70,36 @@ The first async notification adapter currently supported is Discord via webhook:
 
 If this variable is not configured, Discord delivery attempts are recorded as failed delivery records instead of silently succeeding.
 
+For inbound Discord replies, Pinchy now exposes a local webhook-style API route:
+- `POST /webhooks/discord/reply`
+
+Expected JSON payload:
+
+```json
+{
+  "questionId": "question-123",
+  "conversationId": "conversation-123",
+  "content": "Use JSON files first.",
+  "messageId": "discord-message-123",
+  "authorUsername": "operator-name",
+  "channelId": "discord-channel-123"
+}
+```
+
+This route is intentionally local-first and auditable: it normalizes the Discord payload, persists the reply through the shared inbound reply path, and stores the Discord metadata as raw payload on the resulting human reply record.
+
+## Browser tooling readiness
+
+Pinchy's browser-debugging tools use Playwright and require a local Chromium download in addition to the npm package itself.
+
+Provision it with:
+
+```bash
+npm run playwright:install
+```
+
+The bootstrap flow now installs this automatically. If browser tools later fail with a missing Playwright executable after an upgrade, rerun the same command.
+
 ## Dashboard mode
 
 Server/API:
@@ -94,3 +126,20 @@ Run both if you want the richer operator UI with live updates, generated-tool re
 - or wrap with `launchd`
 - keep autonomous scope constrained to this repository by default
 - review session history periodically
+- inspect `.pinchy-daemon-health.json` and `logs/pinchy-audit.jsonl` after unattended runs
+
+Useful local checks:
+
+```bash
+npm run playwright:install
+```
+
+
+```bash
+cat .pinchy-daemon-health.json
+
+tail -n 40 logs/pinchy-audit.jsonl
+```
+
+The daemon health file summarizes heartbeat and last error state.
+The audit log is a local JSONL trail with worker run IDs, execution modes, outcome kinds, duration information, question delivery events, summaries, and failure details.

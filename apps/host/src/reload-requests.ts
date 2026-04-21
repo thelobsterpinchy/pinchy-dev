@@ -8,7 +8,8 @@ function loadAll(cwd: string): ReloadRequest[] {
   const path = resolve(cwd, FILE);
   if (!existsSync(path)) return [];
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as ReloadRequest[];
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return Array.isArray(parsed) ? parsed as ReloadRequest[] : [];
   } catch {
     return [];
   }

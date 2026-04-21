@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendGeneratedToolIndex, scaffoldExtensionTool } from "../apps/host/src/tool-scaffold.js";
+import { appendGeneratedToolIndex, listGeneratedTools, scaffoldExtensionTool } from "../apps/host/src/tool-scaffold.js";
 
 function withTempDir(run: (cwd: string) => void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-tool-scaffold-"));
@@ -21,5 +21,21 @@ test("scaffoldExtensionTool creates a generated tool file", () => {
     const content = readFileSync(result.path, "utf8");
     assert.match(content, /registerTool/);
     assert.match(content, /demo/);
+  });
+});
+
+test("listGeneratedTools returns an empty list when the generated tools directory exists without an index", () => {
+  withTempDir((cwd) => {
+    mkdirSync(join(cwd, ".pi/extensions/generated-tools"), { recursive: true });
+    assert.deepEqual(listGeneratedTools(cwd), []);
+  });
+});
+
+test("scaffoldExtensionTool rejects names that normalize to an empty identifier", () => {
+  withTempDir((cwd) => {
+    assert.throws(
+      () => scaffoldExtensionTool(cwd, { name: "!!!", description: "demo" }),
+      /tool name/i,
+    );
   });
 });

@@ -14,3 +14,24 @@ yarn.lock
 __pycache__/
 pytest_cache/
 playwright-report/
+
+# Pinchy local runtime/state artifacts
+.pinchy/run/
+.pinchy/state/
+.pinchy-approval-policy.json
+.pinchy-approvals.json
+.pinchy-daemon-health.json
+.pinchy-goals.json
+.pinchy-health.md
+.pinchy-iteration.json
+.pinchy-memory.json
+.pinchy-run-context.json
+.pinchy-run-history.json
+.pinchy-tasks.json
+.pinchy-watch.json
+.pinchy-workspaces.json
+
+# Local generated outputs
+artifacts/
+logs/*.log
+logs/*.jsonl

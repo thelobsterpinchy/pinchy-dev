@@ -4,11 +4,27 @@ import type { DaemonHealth } from "../../../packages/shared/src/contracts.js";
 
 const FILE = ".pinchy-daemon-health.json";
 
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function loadDaemonHealth(cwd: string): DaemonHealth | undefined {
   const path = resolve(cwd, FILE);
   if (!existsSync(path)) return undefined;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as DaemonHealth;
+    const health = JSON.parse(readFileSync(path, "utf8")) as DaemonHealth;
+    if (typeof health.pid === "number" && health.status !== "stopped" && !isProcessAlive(health.pid)) {
+      return {
+        ...health,
+        status: "stopped",
+      } satisfies DaemonHealth;
+    }
+    return health;
   } catch {
     return undefined;
   }

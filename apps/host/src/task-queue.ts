@@ -40,12 +40,14 @@ export function enqueueTask(cwd: string, title: string, prompt: string): PinchyT
   return task;
 }
 
-export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["status"]): PinchyTask | undefined {
+export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["status"], patch: Partial<Pick<PinchyTask, "conversationId" | "runId">> = {}): PinchyTask | undefined {
   const tasks = loadTasks(cwd);
   const match = tasks.find((task) => task.id === id);
   if (!match) return undefined;
   match.status = status;
   match.updatedAt = new Date().toISOString();
+  match.conversationId = patch.conversationId ?? match.conversationId;
+  match.runId = patch.runId ?? match.runId;
   saveTasks(cwd, tasks);
   return match;
 }

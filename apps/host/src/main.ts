@@ -7,9 +7,22 @@ import {
   SessionManager,
   type CreateAgentSessionRuntimeFactory,
 } from "@mariozechner/pi-coding-agent";
+import {
+  buildAgentStartupSummary,
+  formatAgentStartupNotice,
+  formatNonInteractiveAgentError,
+  requiresInteractiveTerminal,
+} from "./agent-startup.js";
 
 async function main() {
   const cwd = process.env.PINCHY_CWD ?? process.cwd();
+
+  if (!requiresInteractiveTerminal()) {
+    console.error(formatNonInteractiveAgentError());
+    process.exit(1);
+  }
+
+  console.log(formatAgentStartupNotice(buildAgentStartupSummary(cwd)));
 
   const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
     const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });

@@ -4,9 +4,8 @@ import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { isActionAutoApproved } from "../../../apps/host/src/approval-policy.js";
+import { requestScopedApproval } from "../../../apps/host/src/approval-policy.js";
 import { appendArtifactRecord } from "../../../apps/host/src/artifact-index.js";
-import { isSessionScopeEnabled } from "../../../apps/host/src/session-approval.js";
 import { getFrontWindowBounds, relativeToAbsolute } from "../../../apps/host/src/window-utils.js";
 import { buildArtifactMetadata, mergeArtifactTags } from "../../../apps/host/src/artifact-metadata.js";
 
@@ -54,10 +53,12 @@ async function simulatorSwipe(x1: number, y1: number, x2: number, y2: number) {
 }
 
 async function requestApproval(ctx: ToolCtx, title: string, message: string) {
-  if (isSessionScopeEnabled(ctx.cwd, "simulator.actions")) return true;
-  if (isActionAutoApproved(ctx.cwd, "simulator.actions")) return true;
-  if (ctx.hasUI) return ctx.ui.confirm(title, message);
-  return process.env.PINCHY_ALLOW_SIMULATOR_ACTIONS === "1";
+  return requestScopedApproval(ctx, {
+    scope: "simulator.actions",
+    title,
+    message,
+    envVar: "PINCHY_ALLOW_SIMULATOR_ACTIONS",
+  });
 }
 
 function recordArtifact(cwd: string, path: string, toolName: string, note?: string, tags?: string[]) {

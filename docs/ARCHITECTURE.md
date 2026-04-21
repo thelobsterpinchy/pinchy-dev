@@ -122,7 +122,7 @@ Disallowed by default:
 ## Local ops files
 
 - `.pinchy-goals.json` — recurring daemon goals
-- `.pinchy-watch.json` — watched paths and watcher-triggered review prompt
+- `.pinchy-watch.json` — watched paths and watcher-triggered review prompt; malformed JSON falls back to safe defaults so live edits do not crash the daemon
 - `.pinchy-health.md` — recurring self-improvement hints
 - `.pinchy-tasks.json` — queued tasks
 - `.pinchy-approvals.json` — local approval inbox state

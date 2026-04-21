@@ -19,6 +19,7 @@ It is designed to run on your own machine, use your local LLMs, debug websites/a
 - `browser_run_probe`
 - `browser_execute_steps`
 - `browser_compare_artifacts`
+- `npm run playwright:install` provisions the local Chromium runtime these tools use
 
 ### Desktop and simulator debugging
 - `desktop_click`
@@ -44,6 +45,7 @@ It is designed to run on your own machine, use your local LLMs, debug websites/a
 - `/allow-session <scope>`
 - `/allow-persistent <scope>`
 - local dashboard with artifact gallery, filters, routine actions, and queue-task form
+- repo-default low-friction approval scopes for `desktop.actions`, `simulator.actions`, `validation.exec`, and `routine.exec`
 
 ### Run metadata
 - current run context stored in `.pinchy-run-context.json`
@@ -70,6 +72,12 @@ There are now two dashboard surfaces:
 
 The React dashboard can now issue one-click runtime reload requests. When the Pinchy daemon is running, it consumes the reload request and triggers `/reload-runtime` directly inside the Pi session.
 
+The React dashboard also acts as a control-plane operator UI over the persistent Pinchy run model:
+- browse conversations from the Pinchy API
+- inspect runs, blocked questions, replies, and delivery attempts per conversation
+- submit dashboard replies to waiting questions
+- cancel in-flight runs from the operator surface
+
 ## Runtime services
 
 Current local entrypoints include:
@@ -88,11 +96,20 @@ Pinchy can also load non-secret runtime defaults from `.pinchy-runtime.json`, in
 For the first async notification adapter, Discord webhook delivery is supported through:
 - `PINCHY_DISCORD_WEBHOOK_URL`
 
+Discord replies can also be ingested back into Pinchy through the local API webhook:
+- `POST /webhooks/discord/reply`
+
+For browser-debugging access, Pinchy’s Playwright-backed browser tools require a local browser install. The repo provides:
+- `npm run playwright:install`
+
+If Playwright is upgraded and browser tools start failing with a missing executable message, rerun that command.
+
 ## Run locally
 
 ```bash
 cd pinchy-dev
 npm install
+npm run playwright:install
 npm run agent
 npm run daemon
 npm run api

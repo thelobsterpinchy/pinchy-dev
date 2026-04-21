@@ -8,6 +8,7 @@ export type ImportedRoadmapTask = {
   prompt: string;
   status: "queued" | "in_progress" | "done" | "blocked";
   validation: string[];
+  notes?: string;
 };
 
 export type RoadmapImportOptions = {
@@ -64,7 +65,7 @@ export function parseDaemonFollowableTasks(markdown: string): ImportedRoadmapTas
   };
 
   for (const line of lines) {
-    const heading = line.match(/^### Task\s+(\d+)\s*$/);
+    const heading = line.match(/^### Task\s+(\d+)(?:\s+[—-].*)?\s*$/);
     if (heading) {
       flushTask();
       currentId = Number(heading[1]);

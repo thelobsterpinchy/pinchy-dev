@@ -13,6 +13,7 @@ import type {
   QuestionPriority,
   QuestionStatus,
   Run,
+  RunKind,
   RunStatus,
 } from "../../../packages/shared/src/contracts.js";
 
@@ -91,13 +92,14 @@ export function listMessages(cwd: string, conversationId: string) {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export function createRun(cwd: string, input: { conversationId: string; goal: string; status?: RunStatus }) {
+export function createRun(cwd: string, input: { conversationId: string; goal: string; kind?: RunKind; status?: RunStatus }) {
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
   const now = nowIso();
   const run: Run = {
     id: createId("run"),
     conversationId: input.conversationId,
     goal: input.goal,
+    kind: input.kind ?? "user_prompt",
     status: input.status ?? "queued",
     createdAt: now,
     updatedAt: now,
@@ -111,6 +113,10 @@ export function listRuns(cwd: string, conversationId?: string) {
   return loadCollection<Run>(cwd, RUNS_FILE)
     .filter((run) => !conversationId || run.conversationId === conversationId)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function getRunById(cwd: string, runId: string) {
+  return loadCollection<Run>(cwd, RUNS_FILE).find((run) => run.id === runId);
 }
 
 export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "piSessionPath">> = {}) {

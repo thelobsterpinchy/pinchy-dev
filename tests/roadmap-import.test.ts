@@ -53,3 +53,14 @@ test("importRoadmapDocument writes roadmap state and can enqueue imported tasks"
     assert.match(queuedTasks[1]?.prompt ?? "", /Second step/);
   });
 });
+
+test("parseDaemonFollowableTasks accepts titled task headings", () => {
+  const markdown = `# Example\n\n## Daemon-followable execution order\n\n### Task 1 — Worker transitions\nImplement Phase 1: First step.\n\n### Task 2 - Delivery visibility\nImplement Phase 2: Second step.\n\n## Definition of roadmap completion\nDone.`;
+
+  const tasks = parseDaemonFollowableTasks(markdown);
+
+  assert.equal(tasks.length, 2);
+  assert.deepEqual(tasks.map((task) => task.id), [1, 2]);
+  assert.match(tasks[0]?.prompt ?? "", /First step/);
+  assert.match(tasks[1]?.title ?? "", /Second step/);
+});

@@ -59,7 +59,12 @@ export function createDiscordNotifier(dependencies: DiscordNotifierDependencies 
       return send(cwd, {
         questionId: input.questionId,
         runId: input.runId,
-        content: `${header}\n\n${input.prompt}`,
+        content: [
+          header,
+          input.prompt,
+          `Question ID: ${input.questionId}`,
+          `Run ID: ${input.runId}`,
+        ].join("\n\n"),
       });
     },
     async sendRunSummary(cwd: string, input: { runId: string; summary: string }) {

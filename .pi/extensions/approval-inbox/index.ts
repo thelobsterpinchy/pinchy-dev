@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import { setSessionScope } from "../../../apps/host/src/session-approval.js";
-import { setApprovalScope } from "../../../apps/host/src/approval-policy.js";
+import { isActionAutoApproved, setApprovalScope } from "../../../apps/host/src/approval-policy.js";
 
 type ApprovalRecord = {
   id: string;
@@ -40,6 +40,11 @@ async function appendAuditNote(cwd: string, line: string) {
 export default function approvalInbox(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("desktop_open_app", event)) return;
+
+    if (isActionAutoApproved(ctx.cwd, "desktop.actions")) {
+      await appendAuditNote(ctx.cwd, `approved-use tool=${event.toolName} app=${String(event.input.appName)} scope=desktop.actions`);
+      return;
+    }
 
     const approvals = await loadApprovals(ctx.cwd);
     const approved = approvals.find((entry) => entry.status === "approved" && entry.toolName === event.toolName && entry.payload.appName === event.input.appName);

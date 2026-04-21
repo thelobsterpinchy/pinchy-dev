@@ -1,0 +1,262 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createDashboardServer } from "../apps/host/src/dashboard.js";
+
+async function withServer(
+  run: (args: { cwd: string; baseUrl: string }) => Promise<void>,
+  options: { controlPlaneApiBaseUrl?: string } = {},
+) {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-dashboard-"));
+  const server = createDashboardServer({ cwd, port: 0, controlPlaneApiBaseUrl: options.controlPlaneApiBaseUrl });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await run({ cwd, baseUrl });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+async function withHttpServer(run: (baseUrl: string) => Promise<void>, handler: http.RequestListener) {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await run(baseUrl);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+test("dashboard server exposes workspace registry state through the dashboard api", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const state = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ workspaces: Array<{ id: string; path: string }>; activeWorkspaceId?: string }>);
+
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0]?.path, cwd);
+    assert.equal(state.activeWorkspaceId, state.workspaces[0]?.id);
+  });
+});
+
+test("dashboard server lists, registers, and activates workspaces", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const initial = await fetch(`${baseUrl}/api/workspaces`).then((response) => response.json() as Promise<Array<{ id: string; path: string }>>);
+    assert.equal(initial[0]?.path, cwd);
+
+    const createdResponse = await fetch(`${baseUrl}/api/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/tmp/demo-repo", name: "Demo repo" }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = await createdResponse.json() as { id: string; path: string; name: string };
+    assert.equal(created.path, "/tmp/demo-repo");
+    assert.equal(created.name, "Demo repo");
+
+    const activateResponse = await fetch(`${baseUrl}/api/workspaces/${created.id}/activate`, {
+      method: "POST",
+    });
+    assert.equal(activateResponse.status, 200);
+    const activated = await activateResponse.json() as { ok: true; workspace: { id: string } };
+    assert.equal(activated.workspace.id, created.id);
+
+    const state = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ activeWorkspaceId?: string }>);
+    assert.equal(state.activeWorkspaceId, created.id);
+  });
+});
+
+test("dashboard server exposes memory CRUD and reports memories in api state", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const workspace = await fetch(`${baseUrl}/api/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/tmp/dashboard-memory-workspace", name: "Memory workspace" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+    await fetch(`${baseUrl}/api/workspaces/${workspace.id}/activate`, { method: "POST" });
+
+    const initialState = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ memories: Array<{ id: string }> }>);
+    assert.deepEqual(initialState.memories, []);
+
+    const invalidCreate = await fetch(`${baseUrl}/api/memory`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "", content: "Missing title" }),
+    });
+    assert.equal(invalidCreate.status, 400);
+
+    const createResponse = await fetch(`${baseUrl}/api/memory`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Watcher follow-up",
+        content: "Add a regression test for the changed dashboard memory route.",
+        kind: "decision",
+        tags: ["dashboard", "watcher"],
+        pinned: true,
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json() as { id: string; title: string; pinned: boolean; tags: string[]; kind: string };
+    assert.equal(created.title, "Watcher follow-up");
+    assert.equal(created.pinned, true);
+    assert.equal(created.kind, "decision");
+    assert.deepEqual(created.tags, ["dashboard", "watcher"]);
+
+    const afterCreate = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ memories: Array<{ id: string; title: string }> }>);
+    assert.equal(afterCreate.memories.length, 1);
+    assert.equal(afterCreate.memories[0]?.id, created.id);
+
+    const updateResponse = await fetch(`${baseUrl}/api/memory/${created.id}?view=detail`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Updated watcher follow-up", pinned: false }),
+    });
+    assert.equal(updateResponse.status, 200);
+    const updated = await updateResponse.json() as { id: string; title: string; pinned: boolean };
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.title, "Updated watcher follow-up");
+    assert.equal(updated.pinned, false);
+
+    const missingDelete = await fetch(`${baseUrl}/api/memory/missing-entry`, { method: "DELETE" });
+    assert.equal(missingDelete.status, 404);
+
+    const deleteResponse = await fetch(`${baseUrl}/api/memory/${created.id}`, { method: "DELETE" });
+    assert.equal(deleteResponse.status, 200);
+
+    const finalState = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ memories: Array<{ id: string }> }>);
+    assert.deepEqual(finalState.memories, []);
+  });
+});
+
+
+test("dashboard server filters stale auto-approved approvals out of api state", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    writeFileSync(join(cwd, ".pinchy-approvals.json"), JSON.stringify([
+      {
+        id: "approval-hidden",
+        status: "pending",
+        toolName: "desktop_click",
+        reason: "Click a button",
+        payload: {},
+      },
+      {
+        id: "approval-visible",
+        status: "pending",
+        toolName: "desktop_open_app",
+        reason: "Open an app",
+        payload: {},
+      },
+      {
+        id: "approval-denied",
+        status: "denied",
+        toolName: "desktop_click",
+        reason: "Denied click",
+        payload: {},
+      },
+    ], null, 2));
+
+    writeFileSync(join(cwd, ".pinchy-approval-policy.json"), JSON.stringify({
+      scopes: {
+        "desktop.actions": true,
+      },
+    }, null, 2));
+
+    const state = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ approvals: Array<{ id: string }> }>);
+
+    assert.deepEqual(state.approvals.map((entry) => entry.id), ["approval-denied"]);
+  });
+});
+
+
+test("dashboard server serves built dashboard assets before falling back to legacy html", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const distDir = join(cwd, "apps/dashboard/dist/assets");
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(join(cwd, "apps/dashboard/dist/index.html"), "<html><body>modern shell</body></html>");
+    writeFileSync(join(distDir, "main.js"), "console.log('dashboard');");
+
+    const shellResponse = await fetch(`${baseUrl}/`);
+    assert.equal(shellResponse.status, 200);
+    assert.match(await shellResponse.text(), /modern shell/);
+
+    const assetResponse = await fetch(`${baseUrl}/assets/main.js`);
+    assert.equal(assetResponse.status, 200);
+    assert.equal(assetResponse.headers.get("content-type"), "application/javascript; charset=utf-8");
+    assert.match(await assetResponse.text(), /dashboard/);
+  });
+});
+
+
+test("dashboard server proxies control-plane requests with the active workspace header", async () => {
+  await withHttpServer(async (controlPlaneApiBaseUrl) => {
+    await withServer(async ({ baseUrl }) => {
+      const created = await fetch(`${baseUrl}/api/workspaces`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "/tmp/demo-repo", name: "Demo repo" }),
+      }).then((response) => response.json() as Promise<{ id: string }>);
+
+      await fetch(`${baseUrl}/api/workspaces/${created.id}/activate`, { method: "POST" });
+
+      const response = await fetch(`${baseUrl}/api/control-plane/conversations`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        workspacePath: "/tmp/demo-repo",
+      });
+    }, { controlPlaneApiBaseUrl });
+  }, async (req, res) => {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({
+      ok: true,
+      workspacePath: req.headers["x-pinchy-workspace-path"],
+    }));
+  });
+});
+
+test("dashboard server proxies control-plane requests with method, query, body, and content type intact", async () => {
+  await withHttpServer(async (controlPlaneApiBaseUrl) => {
+    await withServer(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/control-plane/questions/question-1/reply?channel=dashboard`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Reply from watcher review" }),
+      });
+
+      assert.equal(response.status, 202);
+      assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        method: "POST",
+        url: "/questions/question-1/reply?channel=dashboard",
+        contentType: "application/json",
+        body: { content: "Reply from watcher review" },
+      });
+    }, { controlPlaneApiBaseUrl });
+  }, async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.from(chunk));
+    }
+
+    res.writeHead(202, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({
+      ok: true,
+      method: req.method,
+      url: req.url,
+      contentType: req.headers["content-type"],
+      body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+    }));
+  });
+});

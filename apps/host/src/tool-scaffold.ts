@@ -15,8 +15,20 @@ function toPascalCase(value: string) {
     .join("");
 }
 
+function normalizeToolName(value: string) {
+  return value
+    .trim()
+    .replace(/[^a-z0-9-]/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
 export function scaffoldExtensionTool(cwd: string, spec: ToolScaffoldSpec) {
-  const safeName = spec.name.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+  const safeName = normalizeToolName(spec.name);
+  if (!safeName) {
+    throw new Error("Tool name must include at least one letter or number.");
+  }
   const dir = resolve(cwd, ".pi/extensions/generated-tools");
   const path = resolve(dir, `${safeName}.ts`);
   mkdirSync(dirname(path), { recursive: true });
@@ -50,9 +62,9 @@ export default function ${functionName}(pi: ExtensionAPI) {
 }
 
 export function listGeneratedTools(cwd: string) {
-  const dir = resolve(cwd, ".pi/extensions/generated-tools");
-  if (!existsSync(dir)) return [] as string[];
-  return readFileSync(resolve(cwd, ".pi/extensions/generated-tools/.index"), "utf8")
+  const path = resolve(cwd, ".pi/extensions/generated-tools/.index");
+  if (!existsSync(path)) return [] as string[];
+  return readFileSync(path, "utf8")
     .split(/\r?\n/)
     .filter(Boolean);
 }

@@ -11,6 +11,7 @@ import {
   createQuestion,
   createRun,
   getQuestionById,
+  getRunById,
   listConversations,
   listMessages,
   listNotificationDeliveries,
@@ -18,6 +19,7 @@ import {
   listReplies,
   listRuns,
   markQuestionAnswered,
+  updateQuestionStatus,
   updateRunStatus,
 } from "../apps/host/src/agent-state-store.js";
 
@@ -56,6 +58,7 @@ test("agent state store persists runs and supports status updates", () => {
     const run = createRun(cwd, {
       conversationId: conversation.id,
       goal: "Implement file-backed repositories",
+      kind: "qa_cycle",
     });
 
     const updated = updateRunStatus(cwd, run.id, "waiting_for_human", {
@@ -65,9 +68,11 @@ test("agent state store persists runs and supports status updates", () => {
     const runs = listRuns(cwd, conversation.id);
 
     assert.equal(runs.length, 1);
+    assert.equal(run.kind, "qa_cycle");
     assert.equal(updated?.status, "waiting_for_human");
     assert.equal(updated?.blockedReason, "Need clarification on persistence format");
     assert.equal(runs[0]?.status, "waiting_for_human");
+    assert.equal(runs[0]?.kind, "qa_cycle");
   });
 });
 
@@ -102,6 +107,59 @@ test("agent state store persists questions and replies", () => {
     assert.equal(reply.channel, "dashboard");
     assert.equal(answered?.status, "answered");
     assert.ok(getQuestionById(cwd, question.id)?.resolvedAt);
+  });
+});
+
+test("agent state store defaults runs to user_prompt kind", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Default run kind" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Use the default run kind",
+    });
+
+    assert.equal(run.kind, "user_prompt");
+    assert.equal(listRuns(cwd, conversation.id)[0]?.kind, "user_prompt");
+  });
+});
+
+test("agent state store returns runs by id", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Run lookup" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Find this run",
+    });
+
+    assert.equal(getRunById(cwd, run.id)?.goal, "Find this run");
+    assert.equal(getRunById(cwd, "run-missing"), undefined);
+  });
+});
+
+test("agent state store updates question status across delivery and answer lifecycle", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Question status transitions" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Track question delivery state",
+    });
+
+    const question = createQuestion(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      prompt: "Which channel should I use?",
+      priority: "normal",
+      channelHints: ["discord"],
+    });
+
+    const waiting = updateQuestionStatus(cwd, question.id, "waiting_for_human");
+    assert.equal(waiting?.status, "waiting_for_human");
+    assert.equal(waiting?.resolvedAt, undefined);
+
+    const answered = updateQuestionStatus(cwd, question.id, "answered");
+    assert.equal(answered?.status, "answered");
+    assert.ok(answered?.resolvedAt);
+    assert.equal(getQuestionById(cwd, question.id)?.status, "answered");
   });
 });
 

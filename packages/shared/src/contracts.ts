@@ -13,6 +13,9 @@ export type DaemonHealthStatus = typeof DAEMON_HEALTH_STATUSES[number];
 export const RELOAD_REQUEST_STATUSES = ["pending", "processed"] as const;
 export type ReloadRequestStatus = typeof RELOAD_REQUEST_STATUSES[number];
 
+export const RUN_KINDS = ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal"] as const;
+export type RunKind = typeof RUN_KINDS[number];
+
 export const RUN_STATUSES = ["queued", "running", "waiting_for_human", "waiting_for_approval", "completed", "failed", "cancelled"] as const;
 export type RunStatus = typeof RUN_STATUSES[number];
 
@@ -43,6 +46,10 @@ export function isReloadRequestStatus(value: string): value is ReloadRequestStat
   return includesValue(RELOAD_REQUEST_STATUSES, value);
 }
 
+export function isRunKind(value: string): value is RunKind {
+  return includesValue(RUN_KINDS, value);
+}
+
 export function isRunStatus(value: string): value is RunStatus {
   return includesValue(RUN_STATUSES, value);
 }
@@ -51,9 +58,21 @@ export function isQuestionStatus(value: string): value is QuestionStatus {
   return includesValue(QUESTION_STATUSES, value);
 }
 
+export function isMemoryKind(value: string): value is MemoryKind {
+  return includesValue(MEMORY_KINDS, value);
+}
+
 export type RunContext = {
   currentRunId: string;
   currentRunLabel: string;
+  updatedAt: string;
+};
+
+export type WorkspaceEntry = {
+  id: string;
+  name: string;
+  path: string;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -123,13 +142,32 @@ export type ReloadRequest = {
   status: ReloadRequestStatus;
 };
 
+export const MEMORY_KINDS = ["note", "decision", "fact", "summary"] as const;
+export type MemoryKind = typeof MEMORY_KINDS[number];
+
+export type SavedMemory = {
+  id: string;
+  title: string;
+  content: string;
+  kind: MemoryKind;
+  tags: string[];
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+  sourceConversationId?: string;
+  sourceRunId?: string;
+};
+
 export type DashboardState = {
   runContext?: RunContext;
+  workspaces: WorkspaceEntry[];
+  activeWorkspaceId?: string;
   tasks: PinchyTask[];
   approvals: ApprovalRecord[];
   generatedTools: string[];
   routines: RoutineRecord[];
   artifacts: DashboardArtifact[];
+  memories: SavedMemory[];
   policy: ApprovalPolicy;
   goals: unknown;
   watch: unknown;
@@ -168,6 +206,7 @@ export type Run = {
   id: string;
   conversationId: string;
   goal: string;
+  kind: RunKind;
   status: RunStatus;
   createdAt: string;
   updatedAt: string;

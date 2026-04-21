@@ -8,8 +8,12 @@
     "daemon": "tsx apps/host/src/daemon.ts",
     "dashboard": "tsx apps/host/src/dashboard.ts",
     "dashboard:web": "vite --config apps/dashboard/vite.config.ts",
+    "dashboard:build": "vite build --config apps/dashboard/vite.config.ts",
+    "dashboard:smoke": "tsx scripts/dashboard-smoke.ts",
+    "playwright:install": "playwright install chromium",
     "api": "tsx apps/api/src/server.ts",
     "worker": "tsx services/agent-worker/src/worker.ts",
+    "up": "tsx apps/host/src/up.ts",
     "check": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
     "bootstrap": "bash scripts/bootstrap.sh"

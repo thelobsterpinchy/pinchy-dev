@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { detectProjectSignals, detectValidationPlan } from "../../../apps/host/src/project-detection.js";
+import { requestScopedApproval } from "../../../apps/host/src/approval-policy.js";
 import { createRunContext, loadRunContext } from "../../../apps/host/src/run-context.js";
 
 export default function validationHelper(pi: ExtensionAPI) {
@@ -36,9 +37,12 @@ export default function validationHelper(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const plan = detectValidationPlan(ctx.cwd);
-      const approved = ctx.hasUI
-        ? await ctx.ui.confirm("Run validation command", `Command: ${plan.command}\n\nReason: ${params.reason ?? "Verify recent changes"}`)
-        : process.env.PINCHY_ALLOW_VALIDATION_EXEC === "1";
+      const approved = await requestScopedApproval(ctx, {
+        scope: "validation.exec",
+        title: "Run validation command",
+        message: `Command: ${plan.command}\n\nReason: ${params.reason ?? "Verify recent changes"}`,
+        envVar: "PINCHY_ALLOW_VALIDATION_EXEC",
+      });
       if (!approved) {
         return {
           content: [{ type: "text", text: `Validation command not approved: ${plan.command}` }],

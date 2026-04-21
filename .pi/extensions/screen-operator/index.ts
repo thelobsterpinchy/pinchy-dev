@@ -5,9 +5,8 @@ import { promisify } from "node:util";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { findTemplateInImage } from "../../../apps/host/src/image-match.js";
-import { isActionAutoApproved } from "../../../apps/host/src/approval-policy.js";
+import { requestScopedApproval } from "../../../apps/host/src/approval-policy.js";
 import { appendArtifactRecord } from "../../../apps/host/src/artifact-index.js";
-import { isSessionScopeEnabled } from "../../../apps/host/src/session-approval.js";
 import { findPhraseOnImage, findTextOnImage } from "../../../apps/host/src/ocr-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -52,10 +51,12 @@ async function captureScreenshot(targetPath: string) {
 }
 
 async function requestApproval(ctx: ToolCtx, title: string, message: string, scope: string) {
-  if (isSessionScopeEnabled(ctx.cwd, scope)) return true;
-  if (isActionAutoApproved(ctx.cwd, scope)) return true;
-  if (ctx.hasUI) return ctx.ui.confirm(title, message);
-  return process.env.PINCHY_ALLOW_DESKTOP_ACTIONS === "1";
+  return requestScopedApproval(ctx, {
+    scope,
+    title,
+    message,
+    envVar: "PINCHY_ALLOW_DESKTOP_ACTIONS",
+  });
 }
 
 function recordArtifact(cwd: string, path: string, toolName: string, note?: string, tags?: string[]) {

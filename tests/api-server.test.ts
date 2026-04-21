@@ -21,6 +21,35 @@ async function withServer(run: (args: { cwd: string; baseUrl: string }) => Promi
   }
 }
 
+test("api server honors a workspace override header for control-plane state", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "pinchy-api-workspace-"));
+    try {
+      const response = await fetch(`${baseUrl}/conversations`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-pinchy-workspace-path": workspaceCwd,
+        },
+        body: JSON.stringify({ title: "Workspace-specific conversation" }),
+      });
+      assert.equal(response.status, 201);
+
+      const rootConversations = await fetch(`${baseUrl}/conversations`).then((result) => result.json() as Promise<Array<{ id: string }>>);
+      const workspaceConversations = await fetch(`${baseUrl}/conversations`, {
+        headers: { "x-pinchy-workspace-path": workspaceCwd },
+      }).then((result) => result.json() as Promise<Array<{ title: string }>>);
+
+      assert.equal(rootConversations.length, 0);
+      assert.equal(workspaceConversations.length, 1);
+      assert.equal(workspaceConversations[0]?.title, "Workspace-specific conversation");
+      assert.notEqual(workspaceCwd, cwd);
+    } finally {
+      rmSync(workspaceCwd, { recursive: true, force: true });
+    }
+  });
+});
+
 test("api server exposes health and conversation endpoints", async () => {
   await withServer(async ({ baseUrl }) => {
     const health = await fetch(`${baseUrl}/health`).then((response) => response.json() as Promise<{ ok: boolean }>);
@@ -141,5 +170,298 @@ test("api server exposes notification deliveries with query filters", async () =
     assert.equal(byRun[0]?.runId, "run-2");
     assert.equal(byChannel.length, 1);
     assert.equal(byChannel[0]?.channel, "dashboard");
+  });
+});
+
+test("api server exposes run detail, question detail, and aggregate conversation state", async () => {
+  await withServer(async ({ baseUrl, cwd }) => {
+    const { createNotificationDelivery } = await import("../apps/host/src/agent-state-store.js");
+
+    const conversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Control plane conversation" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    await fetch(`${baseUrl}/conversations/${conversation.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "user", content: "Please run a QA cycle." }),
+    });
+
+    const run = await fetch(`${baseUrl}/conversations/${conversation.id}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ goal: "Run a focused QA cycle", kind: "qa_cycle" }),
+    }).then((response) => response.json() as Promise<{ id: string; kind: string; status: string }>);
+
+    const question = await fetch(`${baseUrl}/questions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        runId: run.id,
+        prompt: "Should I update the regression snapshots too?",
+        priority: "high",
+        channelHints: ["dashboard"],
+      }),
+    }).then((response) => response.json() as Promise<{ id: string; runId: string }>);
+
+    createNotificationDelivery(cwd, {
+      channel: "dashboard",
+      status: "sent",
+      questionId: question.id,
+      runId: run.id,
+    });
+
+    const runDetailResponse = await fetch(`${baseUrl}/runs/${run.id}`);
+    assert.equal(runDetailResponse.status, 200);
+    const runDetail = await runDetailResponse.json() as { id: string; kind: string; status: string };
+    assert.equal(runDetail.id, run.id);
+    assert.equal(runDetail.kind, "qa_cycle");
+
+    const questionDetailResponse = await fetch(`${baseUrl}/questions/${question.id}`);
+    assert.equal(questionDetailResponse.status, 200);
+    const questionDetail = await questionDetailResponse.json() as { id: string; runId: string; priority: string };
+    assert.equal(questionDetail.id, question.id);
+    assert.equal(questionDetail.runId, run.id);
+    assert.equal(questionDetail.priority, "high");
+
+    const aggregateResponse = await fetch(`${baseUrl}/conversations/${conversation.id}/state`);
+    assert.equal(aggregateResponse.status, 200);
+    const aggregate = await aggregateResponse.json() as {
+      conversation: { id: string };
+      messages: Array<{ content: string }>;
+      runs: Array<{ id: string }>;
+      questions: Array<{ id: string }>;
+      replies: Array<{ questionId: string }>;
+      deliveries: Array<{ questionId?: string; runId?: string }>;
+    };
+
+    assert.equal(aggregate.conversation.id, conversation.id);
+    assert.equal(aggregate.messages.length, 1);
+    assert.equal(aggregate.runs.length, 1);
+    assert.equal(aggregate.runs[0]?.id, run.id);
+    assert.equal(aggregate.questions.length, 1);
+    assert.equal(aggregate.questions[0]?.id, question.id);
+    assert.equal(aggregate.replies.length, 0);
+    assert.equal(aggregate.deliveries.length, 1);
+    assert.equal(aggregate.deliveries[0]?.questionId, question.id);
+    assert.equal(aggregate.deliveries[0]?.runId, run.id);
+  });
+});
+
+test("api server supports conversation-scoped run creation and run cancellation", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const conversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Run control" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const createRunResponse = await fetch(`${baseUrl}/conversations/${conversation.id}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ goal: "Follow up on a watcher change", kind: "watch_followup" }),
+    });
+    assert.equal(createRunResponse.status, 201);
+    const run = await createRunResponse.json() as { id: string; kind: string; status: string };
+    assert.equal(run.kind, "watch_followup");
+    assert.equal(run.status, "queued");
+
+    const cancelResponse = await fetch(`${baseUrl}/runs/${run.id}/cancel`, {
+      method: "POST",
+    });
+    assert.equal(cancelResponse.status, 200);
+    const cancelledRun = await cancelResponse.json() as { id: string; status: string; completedAt?: string };
+    assert.equal(cancelledRun.id, run.id);
+    assert.equal(cancelledRun.status, "cancelled");
+    assert.ok(cancelledRun.completedAt);
+
+    const runDetail = await fetch(`${baseUrl}/runs/${run.id}`).then((response) => response.json() as Promise<{ status: string }>);
+    assert.equal(runDetail.status, "cancelled");
+
+    const missingCancel = await fetch(`${baseUrl}/runs/run-missing/cancel`, {
+      method: "POST",
+    });
+    assert.equal(missingCancel.status, 404);
+  });
+});
+
+test("api server rejects run creation for unknown conversations", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: "conversation-missing", goal: "Run without a real conversation" }),
+    });
+
+    assert.equal(response.status, 404);
+    const body = await response.json() as { ok: boolean; error: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error, /conversation not found/i);
+  });
+});
+
+test("api server rejects replies for unknown questions and mismatched conversations", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const unknownQuestion = await fetch(`${baseUrl}/questions/question-missing/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: "conversation-1", channel: "dashboard", content: "reply" }),
+    });
+    assert.equal(unknownQuestion.status, 404);
+
+    const conversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Inbound reply test" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const otherConversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Other conversation" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const run = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, goal: "Wait for a reply" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const question = await fetch(`${baseUrl}/questions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, runId: run.id, prompt: "Need a decision" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const mismatch = await fetch(`${baseUrl}/questions/${question.id}/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: otherConversation.id, channel: "dashboard", content: "Use JSON." }),
+    });
+
+    assert.equal(mismatch.status, 409);
+    const body = await mismatch.json() as { ok: boolean; error: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error, /conversation/i);
+  });
+});
+
+test("api server rejects duplicate replies after a question has already been answered", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const conversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Duplicate reply test" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const run = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, goal: "Wait for one reply" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const question = await fetch(`${baseUrl}/questions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, runId: run.id, prompt: "One answer only" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const firstReply = await fetch(`${baseUrl}/questions/${question.id}/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, channel: "dashboard", content: "First answer." }),
+    });
+    assert.equal(firstReply.status, 201);
+
+    const duplicateReply = await fetch(`${baseUrl}/questions/${question.id}/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, channel: "dashboard", content: "Second answer." }),
+    });
+
+    assert.equal(duplicateReply.status, 409);
+    const body = await duplicateReply.json() as { ok: boolean; error: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error, /already answered/i);
+  });
+});
+
+test("api server ingests Discord inbound replies through a webhook-style endpoint", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const conversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Discord inbound" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const run = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, goal: "Wait for Discord reply" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const question = await fetch(`${baseUrl}/questions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        runId: run.id,
+        prompt: "Reply from Discord",
+        channelHints: ["discord"],
+      }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const webhookResponse = await fetch(`${baseUrl}/webhooks/discord/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        questionId: question.id,
+        conversationId: conversation.id,
+        content: "Use JSON files first.",
+        messageId: "discord-message-1",
+        authorUsername: "pinchy-operator",
+        channelId: "discord-channel-1",
+      }),
+    });
+
+    assert.equal(webhookResponse.status, 201);
+    const reply = await webhookResponse.json() as { questionId: string; channel: string; rawPayload?: unknown };
+    assert.equal(reply.questionId, question.id);
+    assert.equal(reply.channel, "discord");
+
+    const replies = await fetch(`${baseUrl}/replies?questionId=${encodeURIComponent(question.id)}`).then((response) => response.json() as Promise<Array<{ channel: string; rawPayload?: unknown }>>);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0]?.channel, "discord");
+    assert.deepEqual(replies[0]?.rawPayload, {
+      source: "discord",
+      messageId: "discord-message-1",
+      authorUsername: "pinchy-operator",
+      channelId: "discord-channel-1",
+    });
+
+    const questionDetail = await fetch(`${baseUrl}/questions/${question.id}`).then((response) => response.json() as Promise<{ status: string }>);
+    assert.equal(questionDetail.status, "answered");
+  });
+});
+
+test("api server rejects malformed Discord inbound reply payloads", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/webhooks/discord/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        questionId: "question-1",
+        conversationId: "conversation-1",
+        content: "   ",
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const body = await response.json() as { ok: boolean; error: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error, /content/i);
   });
 });

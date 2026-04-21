@@ -17,7 +17,11 @@ function parseBooleanEnv(value: string | undefined) {
 
 function loadJsonFile<T>(path: string): T | undefined {
   if (!existsSync(path)) return undefined;
-  return JSON.parse(readFileSync(path, "utf8")) as T;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseEnvGoals(): string[] {
@@ -33,6 +37,11 @@ function getDefaultGoals() {
   ];
 }
 
+function parseIntervalMs(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : undefined;
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 export function loadDaemonGoalsConfig(cwd: string) {
   const config = loadJsonFile<GoalConfig>(resolve(cwd, ".pinchy-goals.json")) ?? {};
   const envGoals = parseEnvGoals();
@@ -41,6 +50,6 @@ export function loadDaemonGoalsConfig(cwd: string) {
   return {
     enabled: enabledOverride ?? config.enabled ?? true,
     goals: envGoals.length > 0 ? envGoals : config.goals?.length ? config.goals : getDefaultGoals(),
-    intervalMs: Number(process.env.PINCHY_DAEMON_INTERVAL_MS ?? config.intervalMs ?? 30 * 60 * 1000),
+    intervalMs: parseIntervalMs(process.env.PINCHY_DAEMON_INTERVAL_MS) ?? parseIntervalMs(config.intervalMs) ?? 30 * 60 * 1000,
   };
 }
