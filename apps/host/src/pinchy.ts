@@ -12,15 +12,19 @@ import {
   type ManagedServiceName,
 } from "./dev-stack.js";
 import { formatPinchyInitSummary, initializePinchyWorkspace } from "./pinchy-init.js";
-import { buildPinchyDoctorReport, summarizePinchyDoctorReport } from "./pinchy-doctor.js";
-import { formatPinchyVersion, summarizeLogs as summarizeLogSections, summarizeStatus as summarizeManagedStatus, summarizeStopResults } from "./pinchy-command-output.js";
+import { buildPinchyDoctorReport, summarizePinchyDoctorReport, summarizePinchyDoctorReportJson } from "./pinchy-doctor.js";
+import { formatPinchyVersion, summarizeLogs as summarizeLogSections, summarizeLogsJson, summarizeStatus as summarizeManagedStatus, summarizeStatusJson, summarizeStopResults } from "./pinchy-command-output.js";
 import { buildPinchySetupPlan, runPinchySetup, summarizePinchySetupPlan } from "./pinchy-setup.js";
 import { parsePinchyCliArgs, PINCHY_CLI_COMMANDS, summarizePinchyCliHelp } from "./pinchy-cli.js";
+import { loadPinchyRuntimeConfig } from "./runtime-config.js";
+import { setPinchyConfigValue } from "./pinchy-config.js";
+import { summarizePinchyConfigSet, summarizePinchyConfigView } from "./pinchy-config-cli.js";
 import { buildTsxEntrypointCommand, getPinchyPackageRoot, resolvePinchyPackagePath } from "./package-runtime.js";
 import { shouldRunAsCliEntry } from "./module-entry.js";
 
-function summarizeStatus(cwd: string) {
-  return summarizeManagedStatus(inspectManagedServices(cwd));
+function summarizeStatus(cwd: string, json = false) {
+  const inspections = inspectManagedServices(cwd);
+  return json ? summarizeStatusJson(inspections) : summarizeManagedStatus(inspections);
 }
 
 function readLogTail(path: string, maxChars = 4000) {
@@ -32,16 +36,17 @@ function readLogTail(path: string, maxChars = 4000) {
   }
 }
 
-function summarizeLogs(cwd: string, serviceName?: ManagedServiceName) {
+function summarizeLogs(cwd: string, serviceName?: ManagedServiceName, options: { json?: boolean; tailChars?: number } = {}) {
   const names = serviceName ? [serviceName] : buildManagedServiceDefinitions().map((service) => service.name);
-  return summarizeLogSections(names.map((name) => {
+  const sections = names.map((name) => {
     const { logPath } = getManagedServiceStatePaths(cwd, name);
     return {
       name,
       logPath,
-      content: readLogTail(logPath),
+      content: readLogTail(logPath, options.tailChars),
     };
-  }));
+  });
+  return options.json ? summarizeLogsJson(sections) : summarizeLogSections(sections);
 }
 
 async function runForegroundEntrypoint(entryPath: string, args: string[] = []) {
@@ -88,6 +93,19 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       console.log(formatPinchyVersion(packageJson.version));
       return;
     }
+    case "config": {
+      const [action, key, value] = parsed.args;
+      if (action === "set") {
+        if (!key || value === undefined) {
+          throw new Error("Usage: pinchy config set <key> <value>");
+        }
+        setPinchyConfigValue(cwd, key, value);
+        console.log(summarizePinchyConfigSet(key, value));
+        return;
+      }
+      console.log(summarizePinchyConfigView(loadPinchyRuntimeConfig(cwd)));
+      return;
+    }
     case "up": {
       const results = buildManagedServiceDefinitions().map((service) => startManagedService(cwd, service));
       await waitForManagedServiceReadiness(buildManagedServiceReadinessChecks());
@@ -99,16 +117,19 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       return;
     }
     case "status": {
-      console.log(summarizeStatus(cwd));
+      console.log(summarizeStatus(cwd, parsed.args.includes("--json")));
       return;
     }
     case "logs": {
-      const requested = parsed.args[0] as ManagedServiceName | undefined;
-      console.log(summarizeLogs(cwd, requested));
+      const requested = (["api", "worker", "dashboard"].includes(parsed.args[0] ?? "") ? parsed.args[0] : undefined) as ManagedServiceName | undefined;
+      const tailIndex = parsed.args.indexOf("--tail");
+      const tailChars = tailIndex >= 0 ? Number(parsed.args[tailIndex + 1] ?? "4000") : 4000;
+      console.log(summarizeLogs(cwd, requested, { json: parsed.args.includes("--json"), tailChars: Number.isFinite(tailChars) ? tailChars : 4000 }));
       return;
     }
     case "doctor": {
-      console.log(summarizePinchyDoctorReport(buildPinchyDoctorReport(cwd)));
+      const report = buildPinchyDoctorReport(cwd);
+      console.log(parsed.args.includes("--json") ? summarizePinchyDoctorReportJson(report) : summarizePinchyDoctorReport(report));
       return;
     }
     case "dashboard": {

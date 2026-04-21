@@ -2,7 +2,8 @@ import http from "node:http";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ApprovalRecord, DashboardArtifact, DashboardState } from "../../../packages/shared/src/contracts.js";
+import type { ApprovalRecord, DashboardArtifact, DashboardState, PinchyTask, TaskStatus } from "../../../packages/shared/src/contracts.js";
+import { appendMessage } from "./agent-state-store.js";
 import { filterArtifactIndex } from "./artifact-index.js";
 import { filterActionableApprovals, loadApprovalPolicy, setApprovalScope } from "./approval-policy.js";
 import { loadGeneratedToolRegistry } from "./generated-tool-registry.js";
@@ -17,7 +18,12 @@ import { requestControlPlaneApi } from "./control-plane-proxy.js";
 import { createMemoryEntry, deleteMemoryEntry, listMemoryEntries, updateMemoryEntry } from "./memory-store.js";
 import { resolveDashboardAssetRequest, resolveDashboardShellMode } from "./dashboard-ui.js";
 import { shouldRunAsCliEntry } from "./module-entry.js";
-import { getActiveWorkspace, listWorkspaces, registerWorkspace, setActiveWorkspace } from "./workspace-registry.js";
+import { deleteWorkspace, getActiveWorkspace, listWorkspaces, registerWorkspace, setActiveWorkspace } from "./workspace-registry.js";
+import { buildPinchyDoctorReport } from "./pinchy-doctor.js";
+import { readPinchyConfigValue, setPinchyConfigValue } from "./pinchy-config.js";
+import { THINKING_LEVELS, loadPinchyRuntimeConfigDetails, type ThinkingLevel } from "./runtime-config.js";
+import { discoverLocalServerModel } from "./local-server-model-discovery.js";
+import { listPiAgentResources } from "./pi-resource-inventory.js";
 
 type SseClient = {
   id: number;
@@ -318,6 +324,23 @@ function getActiveWorkspacePath(cwd: string) {
   return getActiveWorkspace(cwd)?.path ?? cwd;
 }
 
+function readDashboardSettings(cwd: string) {
+  const effective = loadPinchyRuntimeConfigDetails(cwd);
+  return {
+    defaultProvider: effective.defaultProvider,
+    defaultModel: effective.defaultModel,
+    defaultThinkingLevel: effective.defaultThinkingLevel,
+    defaultBaseUrl: effective.defaultBaseUrl,
+    workspaceDefaults: {
+      defaultProvider: readPinchyConfigValue(cwd, "defaultProvider"),
+      defaultModel: readPinchyConfigValue(cwd, "defaultModel"),
+      defaultThinkingLevel: readPinchyConfigValue(cwd, "defaultThinkingLevel") as ThinkingLevel | undefined,
+      defaultBaseUrl: readPinchyConfigValue(cwd, "defaultBaseUrl"),
+    },
+    sources: effective.sources,
+  };
+}
+
 function buildApiState(cwd: string): DashboardState {
   const activeWorkspacePath = getActiveWorkspacePath(cwd);
   return {
@@ -327,6 +350,7 @@ function buildApiState(cwd: string): DashboardState {
     tasks: loadTasks(activeWorkspacePath),
     approvals: filterActionableApprovals(activeWorkspacePath, loadApprovals(activeWorkspacePath)),
     generatedTools: loadGeneratedToolRegistry(activeWorkspacePath),
+    agentResources: listPiAgentResources(activeWorkspacePath),
     routines: loadRoutines(activeWorkspacePath),
     artifacts: listArtifacts(activeWorkspacePath, {}, 50),
     memories: listMemoryEntries(activeWorkspacePath),
@@ -364,13 +388,73 @@ function loadGeneratedToolDiff(cwd: string, name: string) {
   }
 }
 
+function appendTaskOrchestrationMessage(cwd: string, task: Pick<PinchyTask, "conversationId" | "runId" | "title">, content: string) {
+  if (!task.conversationId) return;
+  appendMessage(cwd, {
+    conversationId: task.conversationId,
+    role: "agent",
+    content,
+    runId: task.runId,
+  });
+}
+
+function summarizeTaskStatus(task: Pick<PinchyTask, "title" | "status">) {
+  const statusText = task.status === "done"
+    ? "done"
+    : task.status === "running"
+      ? "running"
+      : task.status === "blocked"
+        ? "blocked"
+        : "queued";
+  return `Background task update: ${task.title} is now ${statusText}.`;
+}
+
+function isDelegationTask(value: unknown): value is { title: string; prompt: string } {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { title?: unknown }).title === "string"
+    && typeof (value as { prompt?: unknown }).prompt === "string"
+    && (value as { title: string }).title.trim()
+    && (value as { prompt: string }).prompt.trim(),
+  );
+}
+
 async function handleAction(cwd: string, action: string, payload: Record<string, unknown>) {
   if (action === "task" && typeof payload.id === "string" && typeof payload.status === "string") {
-    updateTaskStatus(cwd, payload.id, payload.status as "done" | "blocked" | "pending" | "running");
+    const updated = updateTaskStatus(cwd, payload.id, payload.status as TaskStatus);
+    if (updated?.conversationId) {
+      appendTaskOrchestrationMessage(cwd, updated, summarizeTaskStatus(updated));
+    }
     return;
   }
   if (action === "queue-task" && typeof payload.title === "string" && typeof payload.prompt === "string") {
-    enqueueTask(cwd, payload.title, payload.prompt);
+    const task = enqueueTask(cwd, payload.title, payload.prompt, {
+      source: payload.source === "user" || payload.source === "daemon" || payload.source === "qa" || payload.source === "watcher" || payload.source === "routine"
+        ? payload.source
+        : undefined,
+      conversationId: typeof payload.conversationId === "string" ? payload.conversationId : undefined,
+      runId: typeof payload.runId === "string" ? payload.runId : undefined,
+    });
+    if (task.conversationId) {
+      appendTaskOrchestrationMessage(cwd, task, `I spawned a bounded background task for this thread: ${task.title}. I will keep orchestrating and summarize progress here.`);
+    }
+    return;
+  }
+  if (action === "delegate-plan" && typeof payload.conversationId === "string" && Array.isArray(payload.tasks)) {
+    const tasks = payload.tasks.filter(isDelegationTask).map((task) => enqueueTask(cwd, task.title.trim(), task.prompt.trim(), {
+      source: "user",
+      conversationId: payload.conversationId,
+      runId: typeof payload.runId === "string" ? payload.runId : undefined,
+    }));
+    if (tasks.length > 0) {
+      const taskList = tasks.map((task) => task.title).join(", ");
+      appendTaskOrchestrationMessage(cwd, {
+        conversationId: payload.conversationId,
+        runId: typeof payload.runId === "string" ? payload.runId : undefined,
+        title: tasks[0]?.title ?? "delegated work",
+      }, `I delegated ${tasks.length} bounded background tasks for this thread: ${taskList}. I will keep orchestrating and summarize progress here.`);
+    }
     return;
   }
   if (action === "routine-run" && typeof payload.name === "string") {
@@ -449,6 +533,32 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
       return;
     }
 
+    if (req.url === "/api/doctor" && req.method === "GET") {
+      sendJson(res, 200, buildPinchyDoctorReport(activeWorkspacePath));
+      return;
+    }
+
+    if (req.url === "/api/settings" && req.method === "GET") {
+      sendJson(res, 200, readDashboardSettings(activeWorkspacePath));
+      return;
+    }
+
+    if (req.url === "/api/settings/discover-model" && req.method === "POST") {
+      void readJsonBody(req)
+        .then(async (payload) => {
+          if (typeof payload.baseUrl !== "string" || !payload.baseUrl.trim()) {
+            sendJson(res, 400, { ok: false, error: "baseUrl is required" });
+            return;
+          }
+          const result = await discoverLocalServerModel(payload.baseUrl.trim());
+          sendJson(res, 200, result);
+        })
+        .catch((error) => {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
     if (req.url === "/api/workspaces" && req.method === "GET") {
       sendJson(res, 200, listWorkspaces(cwd));
       return;
@@ -476,6 +586,34 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
 
     if (req.url === "/api/memory" && req.method === "GET") {
       sendJson(res, 200, listMemoryEntries(activeWorkspacePath));
+      return;
+    }
+
+    if (req.url === "/api/settings" && req.method === "PATCH") {
+      void readJsonBody(req)
+        .then((payload) => {
+          if (typeof payload.defaultProvider === "string") {
+            setPinchyConfigValue(activeWorkspacePath, "defaultProvider", payload.defaultProvider.trim());
+          }
+          if (typeof payload.defaultModel === "string") {
+            setPinchyConfigValue(activeWorkspacePath, "defaultModel", payload.defaultModel.trim());
+          }
+          if (typeof payload.defaultThinkingLevel === "string") {
+            const trimmed = payload.defaultThinkingLevel.trim();
+            if (!THINKING_LEVELS.includes(trimmed as ThinkingLevel)) {
+              sendJson(res, 400, { ok: false, error: `invalid thinking level: ${trimmed}` });
+              return;
+            }
+            setPinchyConfigValue(activeWorkspacePath, "defaultThinkingLevel", trimmed);
+          }
+          if (typeof payload.defaultBaseUrl === "string") {
+            setPinchyConfigValue(activeWorkspacePath, "defaultBaseUrl", payload.defaultBaseUrl.trim());
+          }
+          sendJson(res, 200, readDashboardSettings(activeWorkspacePath));
+        })
+        .catch((error) => {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
       return;
     }
 
@@ -544,14 +682,31 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
       return;
     }
 
-    const workspaceId = getRouteParams(requestUrl.pathname, "/api/workspaces/", "/activate");
-    if (workspaceId && req.method === "POST") {
-      const workspace = setActiveWorkspace(cwd, workspaceId);
+    const workspaceActivationId = getRouteParams(requestUrl.pathname, "/api/workspaces/", "/activate");
+    if (workspaceActivationId && req.method === "POST") {
+      const workspace = setActiveWorkspace(cwd, workspaceActivationId);
       if (!workspace) {
-        sendJson(res, 404, { ok: false, error: `Workspace not found: ${workspaceId}` });
+        sendJson(res, 404, { ok: false, error: `Workspace not found: ${workspaceActivationId}` });
         return;
       }
       sendJson(res, 200, { ok: true, workspace });
+      broadcastState();
+      return;
+    }
+
+    const workspaceId = getRouteParams(requestUrl.pathname, "/api/workspaces/");
+    if (workspaceId && req.method === "DELETE") {
+      const workspaces = listWorkspaces(cwd);
+      if (!workspaces.some((workspace) => workspace.id === workspaceId)) {
+        sendJson(res, 404, { ok: false, error: `Workspace not found: ${workspaceId}` });
+        return;
+      }
+      const deleted = deleteWorkspace(cwd, workspaceId);
+      if (!deleted) {
+        sendJson(res, 409, { ok: false, error: "Cannot delete the last remaining workspace." });
+        return;
+      }
+      sendJson(res, 200, { ok: true, workspace: deleted, activeWorkspaceId: getActiveWorkspace(cwd)?.id });
       broadcastState();
       return;
     }

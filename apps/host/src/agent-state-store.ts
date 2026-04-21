@@ -71,6 +71,27 @@ export function createConversation(cwd: string, input: { title: string; status?:
   return conversation;
 }
 
+export function deleteConversation(cwd: string, conversationId: string) {
+  const conversations = loadCollection<Conversation>(cwd, CONVERSATIONS_FILE);
+  const remainingConversations = conversations.filter((conversation) => conversation.id !== conversationId);
+  if (remainingConversations.length === conversations.length) {
+    return false;
+  }
+
+  const runs = loadCollection<Run>(cwd, RUNS_FILE);
+  const removedRunIds = new Set(runs.filter((run) => run.conversationId === conversationId).map((run) => run.id));
+  const questions = loadCollection<Question>(cwd, QUESTIONS_FILE);
+  const removedQuestionIds = new Set(questions.filter((question) => question.conversationId === conversationId).map((question) => question.id));
+
+  saveCollection(cwd, CONVERSATIONS_FILE, remainingConversations);
+  saveCollection(cwd, MESSAGES_FILE, loadCollection<Message>(cwd, MESSAGES_FILE).filter((message) => message.conversationId !== conversationId));
+  saveCollection(cwd, RUNS_FILE, runs.filter((run) => run.conversationId !== conversationId));
+  saveCollection(cwd, QUESTIONS_FILE, questions.filter((question) => question.conversationId !== conversationId));
+  saveCollection(cwd, REPLIES_FILE, loadCollection<HumanReply>(cwd, REPLIES_FILE).filter((reply) => !removedQuestionIds.has(reply.questionId) && reply.conversationId !== conversationId));
+  saveCollection(cwd, DELIVERIES_FILE, loadCollection<NotificationDelivery>(cwd, DELIVERIES_FILE).filter((delivery) => !removedQuestionIds.has(delivery.questionId ?? "") && !removedRunIds.has(delivery.runId ?? "")));
+  return true;
+}
+
 export function appendMessage(cwd: string, input: { conversationId: string; role: MessageRole; content: string; runId?: string }) {
   const messages = loadCollection<Message>(cwd, MESSAGES_FILE);
   const message: Message = {

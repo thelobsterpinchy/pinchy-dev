@@ -67,6 +67,54 @@ test("Pi run executor starts a new Pi session for a fresh run", async () => {
   ]);
 });
 
+test("Pi run executor overrides the resolved model baseUrl when a local endpoint is configured", async () => {
+  const calls: string[] = [];
+  const executor = createPiRunExecutor({
+    agentDir: "/agent-dir",
+    loadRuntimeConfig: () => ({
+      defaultProvider: "ollama",
+      defaultModel: "qwen3-coder",
+      defaultThinkingLevel: "medium",
+      defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    }),
+    resolveModel: (provider, modelId) => {
+      calls.push(`resolveModel:${provider}/${modelId}`);
+      return { provider, id: modelId, baseUrl: "https://old.example.invalid" };
+    },
+    createSession: async ({ model }) => {
+      calls.push(`model:${JSON.stringify(model)}`);
+      return {
+        session: {
+          sessionFile: "/tmp/pi-session-local-endpoint.json",
+          async prompt() {
+            return undefined;
+          },
+          async followUp() {
+            return undefined;
+          },
+        },
+      };
+    },
+  });
+
+  const run: Run = {
+    id: "run-local-endpoint",
+    conversationId: "conversation-1",
+    goal: "Use the local endpoint",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  await executor.executeRun({ cwd: "/repo", run });
+
+  assert.deepEqual(calls, [
+    "resolveModel:ollama/qwen3-coder",
+    'model:{"provider":"ollama","id":"qwen3-coder","baseUrl":"http://127.0.0.1:11434/v1"}',
+  ]);
+});
+
 test("Pi run executor resumes an existing Pi session for a blocked run", async () => {
   const calls: string[] = [];
   const sessionManagerFactory = {
@@ -120,6 +168,207 @@ test("Pi run executor resumes an existing Pi session for a blocked run", async (
     'session:/repo:/agent-dir:{"kind":"open","sessionPath":"/tmp/existing-session.json"}',
     "followUp:Use SQLite only if JSON becomes limiting.",
   ]);
+});
+
+test("Pi run executor uses plain string prompt results as the agent message", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => ({
+      session: {
+        sessionFile: "/tmp/pi-session-string.json",
+        async prompt() {
+          return "PINCHY_E2E_OK The dashboard conversation loop is working.";
+        },
+        async followUp() {
+          return undefined;
+        },
+      },
+    }),
+  });
+
+  const run: Run = {
+    id: "run-string",
+    conversationId: "conversation-1",
+    goal: "Reply with a short confirmation",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.kind, "completed");
+  assert.equal(result.message, "PINCHY_E2E_OK The dashboard conversation loop is working.");
+  assert.match(result.summary, /Pi-backed run completed/);
+  assert.equal(result.piSessionPath, "/tmp/pi-session-string.json");
+});
+
+test("Pi run executor captures assistant text from streamed session events", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => {
+      let listener: ((event: unknown) => void) | undefined;
+      return {
+        session: {
+          sessionFile: "/tmp/pi-session-stream.json",
+          subscribe(nextListener: (event: unknown) => void) {
+            listener = nextListener;
+            return () => {
+              listener = undefined;
+            };
+          },
+          messages: [],
+          async prompt() {
+            listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "PINCHY_" } });
+            listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "STREAM_OK" } });
+            return undefined;
+          },
+          async followUp() {
+            return undefined;
+          },
+        },
+      };
+    },
+  });
+
+  const run: Run = {
+    id: "run-stream",
+    conversationId: "conversation-1",
+    goal: "Reply with the streamed confirmation",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.kind, "completed");
+  assert.equal(result.message, "PINCHY_STREAM_OK");
+  assert.match(result.summary, /Pi-backed run completed/);
+  assert.equal(result.piSessionPath, "/tmp/pi-session-stream.json");
+});
+
+test("Pi run executor collapses exact duplicated assistant text captured from Pi", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => {
+      let listener: ((event: unknown) => void) | undefined;
+      const session = {
+        sessionFile: "/tmp/pi-session-repeat.json",
+        messages: [],
+        subscribe(nextListener: (event: unknown) => void) {
+          listener = nextListener;
+          return () => {
+            listener = undefined;
+          };
+        },
+        async prompt() {
+          listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "PINCHY_CHAT_NATIVE_FINAL_OKPINCHY_CHAT_NATIVE_FINAL_OK" } });
+          return undefined;
+        },
+        async followUp() {
+          return undefined;
+        },
+      };
+      return { session };
+    },
+  });
+
+  const run: Run = {
+    id: "run-repeat",
+    conversationId: "conversation-1",
+    goal: "Reply with a collapsed confirmation",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.kind, "completed");
+  assert.equal(result.message, "PINCHY_CHAT_NATIVE_FINAL_OK");
+});
+
+test("Pi run executor prefers a non-duplicated assistant reply when stream and history match", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => {
+      let listener: ((event: unknown) => void) | undefined;
+      const session = {
+        sessionFile: "/tmp/pi-session-dedupe.json",
+        messages: [{ role: "assistant", content: "PINCHY_CHAT_NATIVE_OK" }],
+        subscribe(nextListener: (event: unknown) => void) {
+          listener = nextListener;
+          return () => {
+            listener = undefined;
+          };
+        },
+        async prompt() {
+          listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "PINCHY_CHAT_" } });
+          listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "NATIVE_OK" } });
+          return undefined;
+        },
+        async followUp() {
+          return undefined;
+        },
+      };
+      return { session };
+    },
+  });
+
+  const run: Run = {
+    id: "run-dedupe",
+    conversationId: "conversation-1",
+    goal: "Reply with a non-duplicated confirmation",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.kind, "completed");
+  assert.equal(result.message, "PINCHY_CHAT_NATIVE_OK");
+});
+
+test("Pi run executor falls back to the last assistant session message when prompt returns void", async () => {
+  const executor = createPiRunExecutor({
+    createSession: async () => ({
+      session: {
+        sessionFile: "/tmp/pi-session-history.json",
+        messages: [
+          { role: "user", content: "Previous user turn" },
+          { role: "assistant", content: "PINCHY_HISTORY_OK" },
+        ],
+        subscribe() {
+          return () => {};
+        },
+        async prompt() {
+          return undefined;
+        },
+        async followUp() {
+          return undefined;
+        },
+      },
+    }),
+  });
+
+  const run: Run = {
+    id: "run-history",
+    conversationId: "conversation-1",
+    goal: "Reply with the history confirmation",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.kind, "completed");
+  assert.equal(result.message, "PINCHY_HISTORY_OK");
+  assert.match(result.summary, /Pi-backed run completed/);
+  assert.equal(result.piSessionPath, "/tmp/pi-session-history.json");
 });
 
 test("Pi run executor preserves structured waiting_for_human outcomes returned by Pi", async () => {

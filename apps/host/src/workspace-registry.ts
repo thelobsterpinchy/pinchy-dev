@@ -97,3 +97,18 @@ export function setActiveWorkspace(cwd: string, workspaceId: string) {
   saveRegistry(cwd, registry);
   return match;
 }
+
+export function deleteWorkspace(cwd: string, workspaceId: string) {
+  const registry = loadRegistry(cwd);
+  if (registry.workspaces.length <= 1) return undefined;
+
+  const index = registry.workspaces.findIndex((entry) => entry.id === workspaceId);
+  if (index < 0) return undefined;
+
+  const [deleted] = registry.workspaces.splice(index, 1);
+  if (registry.activeWorkspaceId === workspaceId) {
+    registry.activeWorkspaceId = registry.workspaces[0]?.id;
+  }
+  saveRegistry(cwd, registry);
+  return deleted;
+}

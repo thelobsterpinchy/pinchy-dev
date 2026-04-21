@@ -6,16 +6,22 @@ import {
   createConversation,
   createMemory,
   createRun,
+  deleteConversation,
   deleteMemory,
+  deleteWorkspace,
   fetchConversationState,
   fetchConversations,
   fetchMemories,
+  fetchSettings,
   fetchWorkspaces,
+  discoverLocalServerModel,
   registerWorkspace,
   replyToQuestion,
   selectConversationId,
   setActiveWorkspace,
   submitPromptToConversation,
+  updateSettings,
+  submitTaskDelegationPlan,
   updateMemory,
 } from "../apps/dashboard/src/control-plane-client.js";
 
@@ -190,6 +196,175 @@ test("control plane client submits a prompt by appending a user message and crea
   assert.equal(String(calls[1]?.input), "/api/control-plane/conversations/conversation-1/runs");
 });
 
+test("control plane client deletes a conversation session through the dashboard proxy", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await deleteConversation("conversation-1", fetchMock);
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(String(calls[0]?.input), "/api/control-plane/conversations/conversation-1");
+  assert.equal(calls[0]?.init?.method, "DELETE");
+});
+
+test("dashboard client fetches runtime settings through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({
+      defaultProvider: "openai-codex",
+      defaultModel: "gpt-5.4",
+      defaultThinkingLevel: "medium",
+      defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      workspaceDefaults: {},
+      sources: {
+        defaultProvider: "pi-agent",
+        defaultModel: "pi-agent",
+        defaultThinkingLevel: "pi-agent",
+        defaultBaseUrl: "workspace",
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const settings = await fetchSettings(fetchMock);
+
+  assert.equal(settings.defaultProvider, "openai-codex");
+  assert.equal(settings.defaultModel, "gpt-5.4");
+  assert.equal(settings.defaultThinkingLevel, "medium");
+  assert.equal(settings.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+  assert.deepEqual(settings.workspaceDefaults, {});
+  assert.deepEqual(settings.sources, {
+    defaultProvider: "pi-agent",
+    defaultModel: "pi-agent",
+    defaultThinkingLevel: "pi-agent",
+    defaultBaseUrl: "workspace",
+  });
+  assert.equal(String(calls[0]?.input), "/api/settings");
+});
+
+test("dashboard client updates runtime settings through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({
+      defaultProvider: "ollama",
+      defaultModel: "qwen3-coder",
+      defaultThinkingLevel: "high",
+      defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      workspaceDefaults: {
+        defaultProvider: "ollama",
+        defaultModel: "qwen3-coder",
+        defaultThinkingLevel: "high",
+        defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      },
+      sources: {
+        defaultProvider: "workspace",
+        defaultModel: "workspace",
+        defaultThinkingLevel: "workspace",
+        defaultBaseUrl: "workspace",
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const settings = await updateSettings({
+    defaultModel: "qwen3-coder",
+    defaultThinkingLevel: "high",
+    defaultBaseUrl: "http://127.0.0.1:11434/v1",
+  }, fetchMock);
+
+  assert.equal(settings.defaultModel, "qwen3-coder");
+  assert.equal(settings.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+  assert.deepEqual(settings.workspaceDefaults, {
+    defaultProvider: "ollama",
+    defaultModel: "qwen3-coder",
+    defaultThinkingLevel: "high",
+    defaultBaseUrl: "http://127.0.0.1:11434/v1",
+  });
+  assert.deepEqual(settings.sources, {
+    defaultProvider: "workspace",
+    defaultModel: "workspace",
+    defaultThinkingLevel: "workspace",
+    defaultBaseUrl: "workspace",
+  });
+  assert.equal(String(calls[0]?.input), "/api/settings");
+  assert.equal(calls[0]?.init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    defaultModel: "qwen3-coder",
+    defaultThinkingLevel: "high",
+    defaultBaseUrl: "http://127.0.0.1:11434/v1",
+  });
+});
+
+test("dashboard client discovers a local server model through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({
+      models: ["qwen3-coder", "deepseek-r1"],
+      detectedModel: "qwen3-coder",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await discoverLocalServerModel("http://127.0.0.1:11434/v1", fetchMock);
+
+  assert.deepEqual(result, {
+    models: ["qwen3-coder", "deepseek-r1"],
+    detectedModel: "qwen3-coder",
+  });
+  assert.equal(String(calls[0]?.input), "/api/settings/discover-model");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    baseUrl: "http://127.0.0.1:11434/v1",
+  });
+});
+
+test("dashboard client submits a multi-task delegation plan through the dashboard actions api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await submitTaskDelegationPlan({
+    conversationId: "conversation-1",
+    runId: "run-1",
+    tasks: [
+      { title: "Audit worker logs", prompt: "Inspect the worker logs." },
+      { title: "Review dashboard smoke", prompt: "Run the smoke checks." },
+    ],
+  }, fetchMock);
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(String(calls[0]?.input), "/api/actions/delegate-plan");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    conversationId: "conversation-1",
+    runId: "run-1",
+    tasks: [
+      { title: "Audit worker logs", prompt: "Inspect the worker logs." },
+      { title: "Review dashboard smoke", prompt: "Run the smoke checks." },
+    ],
+  });
+});
+
 test("dashboard client lists and mutates saved memory entries", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {
@@ -233,7 +408,7 @@ test("dashboard client lists and mutates saved memory entries", async () => {
   assert.equal(String(calls[3]?.input), "/api/memory/memory-1");
 });
 
-test("dashboard client lists, registers, and activates workspaces", async () => {
+test("dashboard client lists, registers, activates, and deletes workspaces", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {
     calls.push({ input, init });
@@ -250,6 +425,12 @@ test("dashboard client lists, registers, and activates workspaces", async () => 
         headers: { "content-type": "application/json" },
       });
     }
+    if (init.method === "DELETE") {
+      return new Response(JSON.stringify({ ok: true, workspace: { id: "workspace-2", name: "demo", path: "/tmp/demo" }, activeWorkspaceId: "workspace-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new Response(JSON.stringify({ id: "workspace-2", name: "demo", path: "/tmp/demo" }), {
       status: 201,
       headers: { "content-type": "application/json" },
@@ -259,13 +440,17 @@ test("dashboard client lists, registers, and activates workspaces", async () => 
   const listed = await fetchWorkspaces(fetchMock);
   const created = await registerWorkspace({ path: "/tmp/demo", name: "demo" }, fetchMock);
   const activated = await setActiveWorkspace("workspace-2", fetchMock);
+  const deleted = await deleteWorkspace("workspace-2", fetchMock);
 
   assert.equal(listed[0]?.id, "workspace-1");
   assert.equal(created.path, "/tmp/demo");
   assert.equal(activated.workspace.id, "workspace-2");
+  assert.equal(deleted.workspace.id, "workspace-2");
   assert.equal(String(calls[0]?.input), "/api/workspaces");
   assert.equal(String(calls[1]?.input), "/api/workspaces");
   assert.equal(String(calls[2]?.input), "/api/workspaces/workspace-2/activate");
+  assert.equal(String(calls[3]?.input), "/api/workspaces/workspace-2");
+  assert.equal(calls[3]?.init?.method, "DELETE");
 });
 
 test("selectConversationId keeps the current selection when still present and otherwise falls back to the first conversation", () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import type {
   Conversation,
@@ -17,24 +17,46 @@ import {
   createConversation,
   createMemory,
   createRun,
+  deleteConversation,
   deleteMemory,
+  deleteWorkspace,
   fetchConversationState,
   fetchConversations,
+  fetchSettings,
+  discoverLocalServerModel,
   registerWorkspace,
   replyToQuestion,
   setActiveWorkspace,
   submitPromptToConversation,
+  submitTaskDelegationPlan,
   updateMemory,
+  updateSettings,
   type ConversationState,
+  type DashboardSettings,
+  type LocalServerModelDiscovery,
 } from "./control-plane-client.js";
 import {
   DASHBOARD_PAGES,
   buildMemoryDraftFromMessage,
+  buildAgentChatChromeState,
+  buildChatWorkbenchState,
+  buildChatWorkspacePanelState,
   buildConversationComposerState,
+  buildConversationListEntryPresentation,
+  buildSettingsConfigurationState,
+  buildSettingsDraftFromSettings,
   buildConversationOnboardingPresets,
+  buildConversationOrchestrationState,
+  buildConversationShellHeaderState,
+  buildConversationTranscriptState,
+  decideTranscriptFollowUp,
+  buildDashboardSidebarState,
+  buildDashboardUtilityRailState,
   buildGlobalPromptState,
+  parseDelegationPlanDraft,
   buildMemoryDraftFromQuestion,
   buildRunHeadline,
+  buildTranscriptMessagePresentation,
   filterDashboardArtifacts,
   filterSavedMemories,
   resolveDashboardLandingPage,
@@ -43,7 +65,9 @@ import {
   summarizeConversationWorkspacePresence,
   summarizeDashboardState,
   workspaceConversationSelectionStorageKey,
+  mergeSettingsDraftWithFetchedSettings,
   type DashboardPage,
+  type SettingsDraftState,
 } from "./dashboard-model.js";
 
 type GeneratedToolDetail = { ok: true; tool: { path: string; source: string } };
@@ -59,6 +83,43 @@ type MemoryDraft = {
 type WorkspaceDraft = {
   path: string;
   name: string;
+};
+
+type DoctorReport = {
+  summary: { status: "ok" | "warn" | "fail"; okCount: number; warnCount: number; failCount: number };
+  checks: Array<{ name: string; status: "ok" | "warn" | "fail"; message: string; hint?: string }>;
+};
+
+type SettingsDraft = SettingsDraftState;
+
+type SettingsStatus = {
+  tone: "idle" | "success";
+  message: string;
+};
+
+type LocalServerDiscoveryStatus = {
+  state: "idle" | "loading" | "success" | "error";
+  message: string;
+  detectedModel?: string;
+  models: string[];
+};
+
+const EMPTY_SETTINGS_STATUS: SettingsStatus = {
+  tone: "idle",
+  message: "Workspace-local Pinchy runtime defaults for Pi-backed runs.",
+};
+
+const EMPTY_LOCAL_SERVER_DISCOVERY_STATUS: LocalServerDiscoveryStatus = {
+  state: "idle",
+  message: "Enter a local server endpoint to auto-detect an available model.",
+  models: [],
+};
+
+const EMPTY_SETTINGS_DRAFT: SettingsDraft = {
+  defaultProvider: "",
+  defaultModel: "",
+  defaultThinkingLevel: "medium",
+  defaultBaseUrl: "",
 };
 
 const EMPTY_WORKSPACE_DRAFT: WorkspaceDraft = {
@@ -179,13 +240,13 @@ function toTestIdSegment(value: string) {
 
 function ActionRow(props: React.PropsWithChildren<{ title: string; subtitle?: string; actions?: React.ReactNode }>) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", background: "#0b1220", borderRadius: 12, padding: 12 }}>
-      <div style={{ minWidth: 260, flex: "1 1 320px" }}>
-        <div style={{ fontWeight: 700, overflowWrap: "anywhere" }}>{props.title}</div>
-        {props.subtitle ? <div style={{ color: "#94a3b8", marginTop: 4, overflowWrap: "anywhere" }}>{props.subtitle}</div> : null}
-        {props.children ? <div style={{ marginTop: 8 }}>{props.children}</div> : null}
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap", background: "#0b1220", borderRadius: 10, padding: 10 }}>
+      <div style={{ minWidth: 240, flex: "1 1 300px" }}>
+        <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.35, overflowWrap: "anywhere" }}>{props.title}</div>
+        {props.subtitle ? <div style={{ color: "#94a3b8", marginTop: 3, fontSize: 12, overflowWrap: "anywhere" }}>{props.subtitle}</div> : null}
+        {props.children ? <div style={{ marginTop: 6 }}>{props.children}</div> : null}
       </div>
-      {props.actions ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>{props.actions}</div> : null}
+      {props.actions ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>{props.actions}</div> : null}
     </div>
   );
 }
@@ -201,32 +262,137 @@ function MetricCard({ label, value, tone }: { label: string; value: string; tone
 
 function SectionTitle({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
       <div>
-        <h2 style={{ margin: 0 }}>{title}</h2>
-        {subtitle ? <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>{subtitle}</p> : null}
+        <h2 style={{ margin: 0, fontSize: 22 }}>{title}</h2>
+        {subtitle ? <p style={{ color: "#94a3b8", margin: "4px 0 0", fontSize: 13 }}>{subtitle}</p> : null}
       </div>
       {actions}
     </div>
   );
 }
 
-function ConversationMessages({ messages, onSaveMemory, isBusy }: { messages: Message[]; onSaveMemory?: (message: Message) => void; isBusy?: boolean }) {
-  if (messages.length === 0) return <p style={{ color: "#94a3b8" }}>No messages yet.</p>;
+function MenuToggleIcon() {
   return (
-    <div style={{ display: "grid", gap: 10, maxHeight: 420, overflow: "auto" }}>
-      {messages.map((message) => (
-        <div data-testid={`message-row-${message.id}`} key={message.id} style={{ ...cardStyle(), padding: 12, background: message.role === "user" ? "#172554" : "#0b1220" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8, alignItems: "flex-start" }}>
-            <div>
-              <strong style={{ textTransform: "capitalize" }}>{message.role}</strong>
-              <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>{formatTs(message.createdAt)}</div>
-            </div>
-            {onSaveMemory ? <button data-testid={`message-save-memory-${message.id}`} style={buttonStyle("ghost")} disabled={isBusy} onClick={() => onSaveMemory(message)}>Save memory</button> : null}
-          </div>
-          <div style={{ whiteSpace: "pre-wrap", color: "#e5e7eb" }}>{message.content}</div>
-        </div>
+    <span aria-hidden="true" style={{ display: "grid", gap: 4 }}>
+      {[0, 1, 2].map((line) => (
+        <span key={line} style={{ display: "block", width: 16, height: 2, borderRadius: 999, background: "currentColor" }} />
       ))}
+    </span>
+  );
+}
+
+function UtilityRailToggleIcon() {
+  return (
+    <span aria-hidden="true" style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "stretch", gap: 4, width: 18, height: 16 }}>
+      <span style={{ display: "grid", gap: 3, alignContent: "center" }}>
+        {[0, 1, 2].map((line) => (
+          <span key={line} style={{ display: "block", width: 9, height: 2, borderRadius: 999, background: "currentColor", opacity: 0.95 - line * 0.12 }} />
+        ))}
+      </span>
+      <span style={{ display: "block", width: 5, height: "100%", borderRadius: 999, background: "currentColor" }} />
+    </span>
+  );
+}
+
+function ConversationMessages({
+  messages,
+  onSaveMemory,
+  isBusy,
+  transcriptState,
+  scrollContainerRef,
+  onScroll,
+  onJumpToLatest,
+}: {
+  messages: Message[];
+  onSaveMemory?: (message: Message) => void;
+  isBusy?: boolean;
+  transcriptState?: ReturnType<typeof buildConversationTranscriptState>;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+  onScroll?: React.UIEventHandler<HTMLDivElement>;
+  onJumpToLatest?: () => void;
+}) {
+  const agentPresentation = buildTranscriptMessagePresentation({ role: "agent" });
+
+  return (
+    <div style={{ position: "relative" }}>
+      <style>{`@keyframes pinchyTypingWave { 0%, 60%, 100% { transform: translateY(0); opacity: 0.38; } 30% { transform: translateY(-4px); opacity: 1; } }`}</style>
+      <div ref={scrollContainerRef} onScroll={onScroll} style={{ display: "grid", gap: 10, maxHeight: 560, overflow: "auto", paddingRight: 4, paddingBottom: 56 }}>
+        {messages.length === 0 ? <p style={{ color: "#94a3b8" }}>No messages yet.</p> : messages.map((message) => {
+          const presentation = buildTranscriptMessagePresentation(message);
+          const justifyContent = presentation.align === "end" ? "flex-end" : presentation.align === "center" ? "center" : "flex-start";
+          return (
+            <div key={message.id} style={{ display: "flex", justifyContent }}>
+              <div
+                data-testid={`message-row-${message.id}`}
+                style={{
+                  width: presentation.bubbleWidth,
+                  borderRadius: presentation.surfaceTone === "system" ? 12 : 16,
+                  border: `1px solid ${presentation.borderColor}`,
+                  background: presentation.background,
+                  boxShadow: presentation.shadow,
+                  padding: presentation.bubblePadding,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: presentation.metaGap, marginBottom: presentation.metaGap, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <strong style={{ color: presentation.accentColor, letterSpacing: 0.2, fontSize: 13 }}>{presentation.roleLabel}</strong>
+                      {message.runId ? <span style={{ ...badgeStyle("#334155"), padding: "3px 7px", fontSize: 11, fontWeight: 600 }}>run</span> : null}
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 3 }}>{formatTs(message.createdAt)}</div>
+                  </div>
+                  {onSaveMemory ? <button data-testid={`message-save-memory-${message.id}`} style={{ ...buttonStyle("ghost"), padding: "6px 10px", fontSize: 12 }} disabled={isBusy} onClick={() => onSaveMemory(message)}>Save</button> : null}
+                </div>
+                <div style={{ whiteSpace: "pre-wrap", color: "#e5e7eb", lineHeight: 1.55, fontSize: 14, overflowWrap: "anywhere" }}>{message.content}</div>
+              </div>
+            </div>
+          );
+        })}
+        {transcriptState?.showTypingIndicator ? (
+          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div
+              data-testid="conversation-typing-indicator"
+              style={{
+                width: "fit-content",
+                borderRadius: 16,
+                border: `1px solid ${agentPresentation.borderColor}`,
+                background: agentPresentation.background,
+                boxShadow: agentPresentation.shadow,
+                padding: 12,
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <strong style={{ color: agentPresentation.accentColor, letterSpacing: 0.2, fontSize: 13 }}>Pinchy</strong>
+                <span style={{ color: "#94a3b8", fontSize: 11 }}>{transcriptState.typingLabel}</span>
+              </div>
+              <div aria-label={transcriptState.typingLabel} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {[0, 1, 2].map((dot) => (
+                  <span
+                    key={dot}
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 999,
+                      background: "#93c5fd",
+                      animation: `pinchyTypingWave 1.1s ease-in-out ${dot * 0.14}s infinite`,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      {transcriptState?.showNewMessagesNotice && onJumpToLatest ? (
+        <div style={{ position: "absolute", right: 18, bottom: 14 }}>
+          <button data-testid="conversation-new-messages" style={{ ...buttonStyle("primary"), borderRadius: 999, boxShadow: "0 10px 22px rgba(37, 99, 235, 0.28)" }} onClick={onJumpToLatest}>
+            {transcriptState.newMessagesLabel}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -235,6 +401,10 @@ function toneForWorkspaceSummary(tone: "info" | "warning" | "idle") {
   if (tone === "info") return "#2563eb";
   if (tone === "warning") return "#d97706";
   return "#475569";
+}
+
+function isTranscriptScrolledNearBottom(element: HTMLDivElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 40;
 }
 
 function App() {
@@ -255,6 +425,7 @@ function App() {
   const [newConversationTitle, setNewConversationTitle] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   const [memoryDraft, setMemoryDraft] = useState<MemoryDraft>(EMPTY_MEMORY_DRAFT);
+  const [delegationPlanDraft, setDelegationPlanDraft] = useState("");
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [memoryQuery, setMemoryQuery] = useState("");
   const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(EMPTY_WORKSPACE_DRAFT);
@@ -264,11 +435,39 @@ function App() {
   const [operatorError, setOperatorError] = useState<string | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [isBusy, setIsBusy] = useState(false);
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
+  const [fetchedSettings, setFetchedSettings] = useState<DashboardSettings | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>(EMPTY_SETTINGS_DRAFT);
+  const [settingsStatus, setSettingsStatus] = useState<SettingsStatus>(EMPTY_SETTINGS_STATUS);
+  const [localServerDiscovery, setLocalServerDiscovery] = useState<LocalServerDiscoveryStatus>(EMPTY_LOCAL_SERVER_DISCOVERY_STATUS);
+  const detectedModelRef = useRef<string | undefined>(undefined);
+  const [chatToolsExpanded, setChatToolsExpanded] = useState(false);
+  const [chatWorkflowsExpanded, setChatWorkflowsExpanded] = useState(false);
+  const [conversationSidebarOpen, setConversationSidebarOpen] = useState(false);
+  const [conversationUtilityRailOpen, setConversationUtilityRailOpen] = useState(false);
+  const [hasUnreadLatestMessages, setHasUnreadLatestMessages] = useState(false);
+  const [isTranscriptNearBottom, setIsTranscriptNearBottom] = useState(true);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const transcriptSnapshotRef = useRef<{ conversationId?: string; messageCount: number; latestMessageId?: string; latestMessageContent?: string }>({ conversationId: undefined, messageCount: 0, latestMessageId: undefined, latestMessageContent: undefined });
 
-  const load = async () => {
+  const load = async (options?: { preserveUnsavedSettingsDraft?: boolean }) => {
     try {
-      const nextState = await fetchJson<DashboardState>("/api/state");
+      const [nextState, nextDoctorReport, nextSettings] = await Promise.all([
+        fetchJson<DashboardState>("/api/state"),
+        fetchJson<DoctorReport>("/api/doctor"),
+        fetchSettings(),
+      ]);
       setState(nextState);
+      setDoctorReport(nextDoctorReport);
+      setFetchedSettings((current) => {
+        setSettingsDraft((draft) => mergeSettingsDraftWithFetchedSettings({
+          currentDraft: draft,
+          previousFetchedSettings: current ?? undefined,
+          incomingSettings: nextSettings,
+          preserveUnsavedChanges: options?.preserveUnsavedSettingsDraft ?? true,
+        }));
+        return nextSettings;
+      });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -297,6 +496,22 @@ function App() {
       setOperatorError(null);
     } catch (err) {
       setOperatorError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const scrollTranscriptToBottom = (behavior: ScrollBehavior = "smooth") => {
+    const element = transcriptScrollRef.current;
+    if (!element) return;
+    element.scrollTo({ top: element.scrollHeight, behavior });
+    setHasUnreadLatestMessages(false);
+    setIsTranscriptNearBottom(true);
+  };
+
+  const handleTranscriptScroll: React.UIEventHandler<HTMLDivElement> = (event) => {
+    const nextNearBottom = isTranscriptScrolledNearBottom(event.currentTarget);
+    setIsTranscriptNearBottom(nextNearBottom);
+    if (nextNearBottom) {
+      setHasUnreadLatestMessages(false);
     }
   };
 
@@ -333,10 +548,59 @@ function App() {
   useEffect(() => {
     if (!selectedConversationId) {
       setSelectedConversationState(null);
+      transcriptSnapshotRef.current = { conversationId: undefined, messageCount: 0, latestMessageId: undefined, latestMessageContent: undefined };
+      setHasUnreadLatestMessages(false);
+      setIsTranscriptNearBottom(true);
       return;
     }
     void loadConversationState(selectedConversationId);
   }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (page !== "conversations") return;
+    const frame = window.requestAnimationFrame(() => scrollTranscriptToBottom("auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, selectedConversationId]);
+
+  useEffect(() => {
+    const latestMessage = selectedConversationState?.messages.at(-1);
+    const latestMessageId = latestMessage?.id;
+    const latestMessageContent = latestMessage?.content;
+    const nextMessageCount = selectedConversationState?.messages.length ?? 0;
+    const previous = transcriptSnapshotRef.current;
+    const changedConversation = previous.conversationId !== selectedConversationId;
+    const messageCountChanged = !changedConversation && nextMessageCount !== previous.messageCount;
+    const latestMessageChanged = !changedConversation && (
+      latestMessageId !== previous.latestMessageId || latestMessageContent !== previous.latestMessageContent
+    );
+    const followUp = decideTranscriptFollowUp({
+      changedConversation,
+      messageCountChanged,
+      latestMessageChanged,
+      isNearBottom: isTranscriptNearBottom,
+    });
+
+    transcriptSnapshotRef.current = {
+      conversationId: selectedConversationId,
+      messageCount: nextMessageCount,
+      latestMessageId,
+      latestMessageContent,
+    };
+
+    if (page !== "conversations") return;
+    if (!followUp.shouldScrollToBottom && !followUp.shouldMarkUnread) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      if (followUp.shouldScrollToBottom) {
+        scrollTranscriptToBottom("smooth");
+        return;
+      }
+      if (followUp.shouldMarkUnread) {
+        setHasUnreadLatestMessages(true);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isTranscriptNearBottom, page, selectedConversationId, selectedConversationState?.messages]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -352,6 +616,57 @@ function App() {
     }
     window.localStorage.removeItem(storageKey);
   }, [selectedConversationId, state?.activeWorkspaceId]);
+
+  useEffect(() => {
+    const trimmedBaseUrl = settingsDraft.defaultBaseUrl.trim();
+    if (!trimmedBaseUrl) {
+      detectedModelRef.current = undefined;
+      setLocalServerDiscovery(EMPTY_LOCAL_SERVER_DISCOVERY_STATUS);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setLocalServerDiscovery({
+        state: "loading",
+        message: "Detecting a model from the local server…",
+        models: [],
+      });
+      void discoverLocalServerModel(trimmedBaseUrl)
+        .then((result: LocalServerModelDiscovery) => {
+          const previousDetectedModel = detectedModelRef.current;
+          detectedModelRef.current = result.detectedModel;
+          setLocalServerDiscovery({
+            state: "success",
+            message: result.detectedModel
+              ? `Detected model: ${result.detectedModel}`
+              : "No models were returned by this local server.",
+            detectedModel: result.detectedModel,
+            models: result.models,
+          });
+          if (!result.detectedModel) return;
+          setSettingsDraft((current) => {
+            const shouldAdoptDetectedModel = !current.defaultModel.trim() || current.defaultModel === previousDetectedModel;
+            if (!shouldAdoptDetectedModel) {
+              return current;
+            }
+            return {
+              ...current,
+              defaultModel: result.detectedModel,
+            };
+          });
+        })
+        .catch((error) => {
+          detectedModelRef.current = undefined;
+          setLocalServerDiscovery({
+            state: "error",
+            message: error instanceof Error ? error.message : String(error),
+            models: [],
+          });
+        });
+    }, 500);
+
+    return () => window.clearTimeout(timeout);
+  }, [settingsDraft.defaultBaseUrl]);
 
   useEffect(() => {
     if (!state?.activeWorkspaceId) return;
@@ -595,6 +910,22 @@ function App() {
     selectedConversationStatus: conversationWorkspace?.statusLabel,
     selectedConversationSummary: conversationWorkspace,
   }), [activeWorkspace?.name, conversationWorkspace, conversations.length, selectedConversationState?.conversation.title]);
+  const agentChatChrome = useMemo(() => buildAgentChatChromeState({
+    selectedConversationTitle: selectedConversationState?.conversation.title,
+    selectedConversationStatusLabel: conversationWorkspace?.statusLabel,
+    selectedConversationStatusTone: conversationWorkspace?.statusTone,
+    latestMessagePreview: conversationWorkspace?.latestMessagePreview,
+  }), [conversationWorkspace?.latestMessagePreview, conversationWorkspace?.statusLabel, conversationWorkspace?.statusTone, selectedConversationState?.conversation.title]);
+  const conversationTranscriptState = useMemo(() => buildConversationTranscriptState({
+    messages: selectedConversationState?.messages ?? [],
+    runs: selectedConversationState?.runs ?? [],
+    hasUnreadLatestMessages,
+  }), [hasUnreadLatestMessages, selectedConversationState?.messages, selectedConversationState?.runs]);
+  const parsedDelegationTasks = useMemo(() => parseDelegationPlanDraft(delegationPlanDraft), [delegationPlanDraft]);
+
+  useEffect(() => {
+    setChatToolsExpanded(false);
+  }, [selectedConversationId]);
 
   const handlePromptDraftKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
     if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return;
@@ -604,6 +935,60 @@ function App() {
       return;
     }
     void handleSubmitPrompt();
+  };
+
+  const handleSpawnBackgroundTask = async () => {
+    const title = queueTaskTitle.trim();
+    const prompt = queueTaskPrompt.trim();
+    if (!title || !prompt || !selectedConversationId) return;
+    setIsBusy(true);
+    try {
+      await performAction("queue-task", {
+        title,
+        prompt,
+        conversationId: selectedConversationId,
+        runId: selectedConversationState?.conversation.latestRunId,
+        source: "user",
+      });
+      setQueueTaskTitle("");
+      setQueueTaskPrompt("");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleDelegatePlan = async () => {
+    if (!selectedConversationId || parsedDelegationTasks.length === 0) return;
+    setIsBusy(true);
+    try {
+      await submitTaskDelegationPlan({
+        conversationId: selectedConversationId,
+        runId: selectedConversationState?.conversation.latestRunId,
+        tasks: parsedDelegationTasks,
+      });
+      setDelegationPlanDraft("");
+      await loadConversationState(selectedConversationId);
+      await load();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSettingsSave = async () => {
+    setIsBusy(true);
+    try {
+      const updated = await updateSettings({
+        defaultProvider: settingsDraft.defaultProvider,
+        defaultModel: settingsDraft.defaultModel,
+        defaultThinkingLevel: settingsDraft.defaultThinkingLevel,
+        defaultBaseUrl: settingsDraft.defaultBaseUrl,
+      });
+      setFetchedSettings(updated);
+      setSettingsDraft(buildSettingsDraftFromSettings(updated));
+      setSettingsStatus({ tone: "success", message: "Saved workspace runtime settings." });
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const handleWorkspaceRegister = async () => {
@@ -622,6 +1007,25 @@ function App() {
     }
   };
 
+  const handleConversationDelete = async (conversationId: string) => {
+    setIsBusy(true);
+    try {
+      await deleteConversation(conversationId);
+      setReplyDrafts((current) => {
+        const next = { ...current };
+        return next;
+      });
+      if (selectedConversationId === conversationId) {
+        setSelectedConversationId(undefined);
+        setSelectedConversationState(null);
+      }
+      await loadConversations();
+      await load();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const handleWorkspaceActivate = async (workspaceId: string) => {
     if (workspaceId === state?.activeWorkspaceId) return;
     setIsBusy(true);
@@ -631,11 +1035,44 @@ function App() {
     setOperatorError(null);
     try {
       await setActiveWorkspace(workspaceId);
-      await Promise.all([load(), loadConversations()]);
+      setSettingsStatus(EMPTY_SETTINGS_STATUS);
+      await Promise.all([load({ preserveUnsavedSettingsDraft: false }), loadConversations()]);
     } finally {
       setIsBusy(false);
     }
   };
+
+  const handleWorkspaceDelete = async (workspaceId: string) => {
+    setIsBusy(true);
+    if (workspaceId === state?.activeWorkspaceId) {
+      setSelectedConversationId(undefined);
+      setSelectedConversationState(null);
+      setReplyDrafts({});
+      setOperatorError(null);
+    }
+    try {
+      await deleteWorkspace(workspaceId);
+      setSettingsStatus(EMPTY_SETTINGS_STATUS);
+      await Promise.all([load({ preserveUnsavedSettingsDraft: false }), loadConversations()]);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const conversationOrchestration = buildConversationOrchestrationState({
+    conversationId: selectedConversationId,
+    tasks: state?.tasks ?? [],
+  });
+  const chatWorkspacePanels = buildChatWorkspacePanelState({
+    hasSelectedConversation: Boolean(selectedConversationId),
+    linkedTaskCounts: conversationOrchestration.counts,
+    queuedTaskCount: queueTaskTitle.trim() ? 1 : 0,
+    delegationTaskCount: parsedDelegationTasks.length,
+  });
+
+  useEffect(() => {
+    setChatWorkflowsExpanded(chatWorkspacePanels.workflows.defaultExpanded);
+  }, [chatWorkspacePanels.workflows.defaultExpanded, selectedConversationId]);
 
   if (error && !state) return <div style={{ padding: 24, color: "#fff", background: "#111" }}>Error: {error}</div>;
   if (!state) return <div style={{ padding: 24, color: "#fff", background: "#111" }}>Loading…</div>;
@@ -647,60 +1084,247 @@ function App() {
   const visibleReplies = selectedConversationState?.replies ?? [];
   const visibleDeliveries = selectedConversationState?.deliveries ?? [];
   const summary = summarizeDashboardState(state);
+  const chatWorkbench = buildChatWorkbenchState({
+    pendingTasks: summary.pendingTasks,
+    pendingApprovals: summary.pendingApprovals,
+    recentRuns: summary.recentRuns,
+    hasActiveConversationRun: conversationWorkspace?.hasActiveRun ?? false,
+  });
+  const settingsConfiguration = buildSettingsConfigurationState({
+    defaultProvider: settingsDraft.defaultProvider || undefined,
+    defaultModel: settingsDraft.defaultModel || undefined,
+    defaultThinkingLevel: settingsDraft.defaultThinkingLevel,
+    defaultBaseUrl: settingsDraft.defaultBaseUrl || undefined,
+    workspaceDefaults: {
+      defaultProvider: fetchedSettings?.workspaceDefaults?.defaultProvider,
+      defaultModel: fetchedSettings?.workspaceDefaults?.defaultModel,
+      defaultThinkingLevel: fetchedSettings?.workspaceDefaults?.defaultThinkingLevel,
+      defaultBaseUrl: fetchedSettings?.workspaceDefaults?.defaultBaseUrl,
+    },
+    sources: fetchedSettings?.sources,
+  });
+  const dashboardSidebar = buildDashboardSidebarState({
+    isOpen: conversationSidebarOpen,
+    page,
+  });
+  const dashboardUtilityRail = buildDashboardUtilityRailState({
+    isOpen: conversationUtilityRailOpen,
+    page,
+  });
+  const conversationShellHeader = buildConversationShellHeaderState({
+    page,
+    utilityRailToggleLabel: dashboardUtilityRail.toggleLabel,
+  });
 
   return (
-    <div style={{ padding: 24, fontFamily: "Inter, system-ui, sans-serif", background: "#0f172a", color: "#e5e7eb", minHeight: "100vh" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "stretch", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
-        <section style={{ ...cardStyle(), flex: 2, minWidth: 320, background: "linear-gradient(135deg, #1e293b, #111827)" }}>
-          <h1 style={{ marginTop: 0 }}>Pinchy Control UI</h1>
-          <p style={{ color: "#94a3b8" }}>An OpenClaw-style local operator console: focused pages, conversation-driven work, saved memory, approvals, artifacts, and daemon visibility.</p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-            {DASHBOARD_PAGES.map((entry) => (
-              <button data-testid={`nav-page-${entry}`} key={entry} style={pageButtonStyle(page === entry)} onClick={() => setPage(entry)}>{entry}</button>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {page === "conversations" ? null : <span style={badgeStyle("#2563eb")}>{summary.pendingTasks} pending tasks</span>}
-            {page === "conversations" ? null : <span style={badgeStyle(summary.pendingApprovals ? "#d97706" : "#059669")}>{summary.pendingApprovals} pending approvals</span>}
-            {page === "conversations" ? null : <span style={badgeStyle("#7c3aed")}>{summary.savedMemories} saved memories</span>}
-            <span style={badgeStyle(daemonTone)}>daemon: {state.daemonHealth?.status ?? "unknown"}</span>
-          </div>
-          <p style={{ color: "#cbd5e1", marginTop: 12 }}>Current workspace: {activeWorkspace ? `${activeWorkspace.name} (${activeWorkspace.path})` : "none"}</p>
-          <p style={{ color: "#cbd5e1", marginTop: 12 }}>Current run: {state.runContext ? `${state.runContext.currentRunLabel} (${state.runContext.currentRunId})` : "none"}</p>
-          {error ? <p style={{ color: "#fbbf24" }}>{error}</p> : <p style={{ color: "#10b981" }}>Live updates connected.</p>}
-        </section>
+    <div style={{ padding: 20, fontFamily: "Inter, system-ui, sans-serif", background: "#0f172a", color: "#e5e7eb", minHeight: "100vh" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `${dashboardSidebar.width}px minmax(0, 1fr)`, gap: dashboardSidebar.isOpen ? 16 : 0, alignItems: "start" }}>
+        <aside
+          style={{
+            width: dashboardSidebar.width,
+            overflow: "hidden",
+            opacity: dashboardSidebar.isOpen ? 1 : 0,
+            pointerEvents: dashboardSidebar.isOpen ? "auto" : "none",
+            transition: "width 180ms ease, opacity 140ms ease",
+          }}
+        >
+          <section style={{ ...cardStyle(), padding: 14, position: "sticky", top: 20, maxHeight: "calc(100vh - 40px)", overflow: "auto" }}>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>{dashboardSidebar.title}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{dashboardSidebar.subtitle}</div>
+              </div>
 
-        <section style={{ ...cardStyle(), flex: 1, minWidth: 320 }}>
-          <SectionTitle title="Quick prompt" subtitle="Reach the coding agent from anywhere in the dashboard" />
-          <div style={{ display: "grid", gap: 10 }}>
-            <ActionRow
-              title={globalPromptState.targetLabel}
-              subtitle={globalPromptState.helperText}
-              actions={<span style={badgeStyle(selectedConversationId ? "#2563eb" : "#475569")}>{globalPromptState.targetStatus}</span>}
-            />
-            <textarea
-              data-testid="quick-prompt-input"
-              value={promptDraft}
-              onChange={(event) => setPromptDraft(event.target.value)}
-              onKeyDown={handlePromptDraftKeyDown}
-              placeholder={selectedConversationId ? (conversationWorkspace?.composerPlaceholder ?? "Send the next message to Pinchy") : "Describe the next thing Pinchy should do"}
-              rows={5}
-              style={inputStyle(true)}
-            />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <button data-testid="quick-prompt-submit" style={buttonStyle("primary")} disabled={isBusy || !promptDraft.trim()} onClick={() => void (selectedConversationId ? handleStartRunFromDraft() : handleSubmitPrompt())}>
-                {globalPromptState.primaryActionLabel}
-              </button>
-              <button data-testid="quick-prompt-new-thread" style={buttonStyle("ghost")} disabled={isBusy || !promptDraft.trim() || !selectedConversationId} onClick={() => void handleSubmitPrompt()}>
-                {globalPromptState.secondaryActionLabel}
-              </button>
-              {selectedConversationId ? <button data-testid="quick-prompt-open-conversation" style={buttonStyle("ghost")} disabled={isBusy} onClick={() => setPage("conversations")}>Open conversation</button> : null}
-              <button data-testid="dashboard-refresh" style={buttonStyle("ghost")} onClick={() => void load()}>Refresh</button>
-              <span style={{ color: "#94a3b8", fontSize: 12 }}>Tip: press ⌘/Ctrl + Enter to send</span>
+              <div style={{ display: "grid", gap: 8 }}>
+                {DASHBOARD_PAGES.map((entry) => (
+                  <button data-testid={`nav-page-${entry}`} key={entry} style={{ ...pageButtonStyle(page === entry), width: "100%", textAlign: "left" }} onClick={() => setPage(entry)}>{entry}</button>
+                ))}
+              </div>
+
+              <ActionRow
+                title={conversationWorkspacePresence.workspaceLabel}
+                subtitle={conversationWorkspacePresence.inventoryLabel}
+                actions={activeWorkspace ? <span style={badgeStyle("#2563eb")}>active</span> : undefined}
+              >
+                <div style={{ color: "#cbd5e1", fontSize: 12 }}>{conversationWorkspacePresence.selectionLabel}</div>
+              </ActionRow>
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <select
+                  data-testid="workspace-select"
+                  value={state.activeWorkspaceId ?? ""}
+                  onChange={(event) => void handleWorkspaceActivate(event.target.value)}
+                  style={inputStyle()}
+                  disabled={isBusy || state.workspaces.length === 0}
+                >
+                  {state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+                </select>
+                <button data-testid="workspace-refresh" style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void Promise.all([load(), loadConversations()])}>Refresh workspace</button>
+              </div>
+
+              <div style={{ display: "grid", gap: 8, paddingTop: 4, borderTop: "1px solid #1e293b" }}>
+                <input data-testid="conversation-title-input" value={newConversationTitle} onChange={(event) => setNewConversationTitle(event.target.value)} placeholder="New conversation title" style={inputStyle()} />
+                <button data-testid="conversation-create" style={buttonStyle("primary")} disabled={isBusy || !newConversationTitle.trim()} onClick={() => void handleCreateConversation()}>Create conversation</button>
+              </div>
+
+              {operatorError ? <p style={{ color: "#fbbf24", margin: 0 }}>{operatorError}</p> : null}
+
+              <div style={{ display: "grid", gap: 10 }}>
+                {conversations.length === 0 ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <p style={{ color: "#94a3b8", margin: 0 }}>No conversations in this workspace yet. Create the first thread for this repo.</p>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {onboardingPresets.map((preset) => (
+                        <button
+                          data-testid={`onboarding-preset-${toTestIdSegment(preset.title)}`}
+                          key={preset.title}
+                          style={{ ...buttonStyle("ghost"), textAlign: "left" }}
+                          disabled={isBusy}
+                          onClick={() => void handleSubmitSpecificPrompt(preset.prompt)}
+                        >
+                          <div style={{ fontWeight: 700 }}>{preset.title}</div>
+                          <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 4, whiteSpace: "normal" }}>{preset.prompt}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : conversations.map((conversation) => {
+                  const entry = buildConversationListEntryPresentation({
+                    title: conversation.title,
+                    status: conversation.status,
+                    updatedAtLabel: formatTs(conversation.updatedAt),
+                    hasLatestRun: Boolean(conversation.latestRunId),
+                    isSelected: selectedConversationId === conversation.id,
+                  });
+
+                  return (
+                    <div
+                      key={conversation.id}
+                      style={{
+                        background: entry.containerTone === "selected" ? "#172033" : "#111827",
+                        border: `1px solid ${entry.containerTone === "selected" ? "#2563eb" : "#334155"}`,
+                        borderRadius: 14,
+                        padding: 10,
+                        boxShadow: entry.containerTone === "selected" ? "0 10px 24px rgba(37, 99, 235, 0.10)" : "none",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                        <button
+                          data-testid={`conversation-row-${conversation.id}`}
+                          onClick={() => setSelectedConversationId(conversation.id)}
+                          style={{ border: 0, background: "transparent", color: "inherit", padding: 0, textAlign: "left", cursor: "pointer", flex: 1, minWidth: 0 }}
+                        >
+                          <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.35, overflowWrap: "anywhere" }}>{entry.title}</div>
+                          <div style={{ color: "#94a3b8", marginTop: 3, fontSize: 12 }}>{entry.metaLabel}</div>
+                          <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {entry.badges.map((badge) => (
+                              <span key={badge.label} style={{ ...badgeStyle(badge.tone === "accent" ? "#2563eb" : "#475569"), padding: "3px 7px", fontSize: 11, fontWeight: 600 }}>{badge.label}</span>
+                            ))}
+                          </div>
+                        </button>
+                        <button
+                          data-testid={`conversation-delete-${conversation.id}`}
+                          title={entry.deleteLabel}
+                          style={{
+                            border: "1px solid #7f1d1d",
+                            borderRadius: 10,
+                            padding: "6px 8px",
+                            background: "transparent",
+                            color: "#fca5a5",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            lineHeight: 1,
+                          }}
+                          disabled={isBusy}
+                          onClick={() => void handleConversationDelete(conversation.id)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        </section>
-      </div>
+          </section>
+        </aside>
+
+        <div style={{ minWidth: 0, display: "grid", gap: 16 }}>
+          <section style={{ ...cardStyle(), background: "linear-gradient(180deg, #08111f 0%, #0b1220 100%)", borderColor: "#1e293b", padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: "1 1 420px" }}>
+                <button
+                  data-testid="conversation-shell-sidebar-toggle"
+                  style={{ ...buttonStyle("ghost"), width: 42, height: 42, padding: 0, fontSize: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                  disabled={isBusy}
+                  onClick={() => setConversationSidebarOpen((current) => !current)}
+                  aria-label={dashboardSidebar.toggleLabel}
+                  title={dashboardSidebar.toggleLabel}
+                >
+                  <MenuToggleIcon />
+                </button>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>{dashboardSidebar.title}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, marginTop: 4 }}>{dashboardSidebar.subtitle}</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", flex: "1 1 360px" }}>
+                <span style={badgeStyle(daemonTone)}>daemon: {state.daemonHealth?.status ?? "unknown"}</span>
+                <span style={badgeStyle("#2563eb")}>{summary.pendingTasks} tasks</span>
+                <span style={badgeStyle(summary.pendingApprovals ? "#d97706" : "#059669")}>{summary.pendingApprovals} approvals</span>
+                {activeWorkspace ? <span style={badgeStyle("#334155")}>{activeWorkspace.name}</span> : null}
+                {error ? <span style={{ color: "#fbbf24", fontSize: 12 }}>{error}</span> : <span style={{ color: "#10b981", fontSize: 12 }}>Live updates connected.</span>}
+                {conversationShellHeader.utilityRailToggle ? (
+                  <button
+                    data-testid="conversation-shell-utility-toggle"
+                    style={{ ...buttonStyle("ghost"), width: 42, height: 42, padding: 0, fontSize: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                    disabled={isBusy}
+                    onClick={() => setConversationUtilityRailOpen((current) => !current)}
+                    aria-label={dashboardUtilityRail.toggleLabel}
+                    title={dashboardUtilityRail.toggleLabel}
+                  >
+                    <UtilityRailToggleIcon />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div style={{ color: "#cbd5e1", marginTop: 10, fontSize: 13, display: "grid", gap: 4 }}>
+              <div>Workspace: {activeWorkspace ? activeWorkspace.path : "none"}</div>
+              <div>Run: {state.runContext ? `${state.runContext.currentRunLabel} (${state.runContext.currentRunId})` : "none"}</div>
+            </div>
+          </section>
+
+          {page === "conversations" ? null : <section style={{ ...cardStyle(), padding: 14 }}>
+            <SectionTitle title="Quick prompt" subtitle="Reach the coding agent from anywhere in the dashboard" />
+            <div style={{ display: "grid", gap: 10 }}>
+              <ActionRow
+                title={globalPromptState.targetLabel}
+                subtitle={globalPromptState.helperText}
+                actions={<span style={badgeStyle(selectedConversationId ? "#2563eb" : "#475569")}>{globalPromptState.targetStatus}</span>}
+              />
+              <textarea
+                data-testid="quick-prompt-input"
+                value={promptDraft}
+                onChange={(event) => setPromptDraft(event.target.value)}
+                onKeyDown={handlePromptDraftKeyDown}
+                placeholder={selectedConversationId ? (conversationWorkspace?.composerPlaceholder ?? "Send the next message to Pinchy") : "Describe the next thing Pinchy should do"}
+                rows={5}
+                style={inputStyle(true)}
+              />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button data-testid="quick-prompt-submit" style={buttonStyle("primary")} disabled={isBusy || !promptDraft.trim()} onClick={() => void (selectedConversationId ? handleStartRunFromDraft() : handleSubmitPrompt())}>
+                  {globalPromptState.primaryActionLabel}
+                </button>
+                <button data-testid="quick-prompt-new-thread" style={buttonStyle("ghost")} disabled={isBusy || !promptDraft.trim() || !selectedConversationId} onClick={() => void handleSubmitPrompt()}>
+                  {globalPromptState.secondaryActionLabel}
+                </button>
+                {selectedConversationId ? <button data-testid="quick-prompt-open-conversation" style={buttonStyle("ghost")} disabled={isBusy} onClick={() => setPage("conversations")}>Open conversation</button> : null}
+                <button data-testid="dashboard-refresh" style={buttonStyle("ghost")} onClick={() => void load()}>Refresh</button>
+                <span style={{ color: "#94a3b8", fontSize: 12 }}>Tip: press ⌘/Ctrl + Enter to send</span>
+              </div>
+            </div>
+          </section>}
 
       {page === "overview" ? (
         <div style={{ display: "grid", gap: 16 }}>
@@ -714,6 +1338,19 @@ function App() {
             <MetricCard label="Reload requests" value={String(summary.pendingReloads)} tone="#94a3b8" />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 1.2fr) minmax(320px, 1fr)", gap: 16 }}>
+            <section style={cardStyle()}>
+              <SectionTitle title="Environment health" subtitle="Workspace readiness and setup status" actions={<button style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void load()}>Refresh health</button>} />
+              {!doctorReport ? <p style={{ color: "#94a3b8" }}>Loading doctor report…</p> : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  <ActionRow title={`doctor: ${doctorReport.summary.status}`} subtitle={`ok=${doctorReport.summary.okCount} warn=${doctorReport.summary.warnCount} fail=${doctorReport.summary.failCount}`} actions={<span style={badgeStyle(doctorReport.summary.status === "ok" ? "#059669" : doctorReport.summary.status === "warn" ? "#d97706" : "#dc2626")}>{doctorReport.summary.status}</span>}>
+                    <div style={{ color: "#cbd5e1", display: "grid", gap: 6 }}>
+                      {doctorReport.checks.slice(0, 5).map((check) => <div key={check.name}>{check.name}: {check.status}</div>)}
+                    </div>
+                  </ActionRow>
+                  <div style={{ color: "#94a3b8", fontSize: 13 }}>Recommended flow: pinchy setup → pinchy doctor → pinchy up → pinchy agent</div>
+                </div>
+              )}
+            </section>
             <section style={cardStyle()}>
               <SectionTitle title="Selected conversation" subtitle="Use this like an operator cockpit for one thread" />
               {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation from the Conversations page.</p> : (
@@ -753,98 +1390,28 @@ function App() {
       ) : null}
 
       {page === "conversations" ? (
-        <div style={{ display: "grid", gap: 16 }}>
-          <section style={cardStyle()}>
-            <SectionTitle title="Conversation workspace" subtitle="Switch repos here and keep the chat view anchored to the active workspace" />
-            <ActionRow
-              title={conversationWorkspacePresence.workspaceLabel}
-              subtitle={conversationWorkspacePresence.inventoryLabel}
-              actions={activeWorkspace ? <span style={badgeStyle("#2563eb")}>active workspace</span> : undefined}
-            >
-              <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 8 }}>
-                <div>{conversationWorkspacePresence.selectionLabel}</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <select
-                    data-testid="workspace-select"
-                    value={state.activeWorkspaceId ?? ""}
-                    onChange={(event) => void handleWorkspaceActivate(event.target.value)}
-                    style={{ ...inputStyle(), width: 320 }}
-                    disabled={isBusy || state.workspaces.length === 0}
-                  >
-                    {state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
-                  </select>
-                  <button data-testid="workspace-refresh" style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void Promise.all([load(), loadConversations()])}>Refresh workspace</button>
-                </div>
-              </div>
-            </ActionRow>
-          </section>
-
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gap: 16 }}>
-            <section style={cardStyle()}>
-              <SectionTitle title="Conversations" subtitle="Persistent work threads for the active workspace" actions={<button style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void loadConversations()}>Refresh</button>} />
-              <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
-                <input data-testid="conversation-title-input" value={newConversationTitle} onChange={(event) => setNewConversationTitle(event.target.value)} placeholder="New conversation title" style={inputStyle()} />
-                <button data-testid="conversation-create" style={buttonStyle("primary")} disabled={isBusy || !newConversationTitle.trim()} onClick={() => void handleCreateConversation()}>Create conversation</button>
-              </div>
-              {operatorError ? <p style={{ color: "#fbbf24" }}>{operatorError}</p> : null}
-              <div style={{ display: "grid", gap: 10, maxHeight: 680, overflow: "auto" }}>
-                {conversations.length === 0 ? (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <p style={{ color: "#94a3b8", margin: 0 }}>No conversations in this workspace yet. Create the first thread for this repo.</p>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {onboardingPresets.map((preset) => (
-                        <button
-                          data-testid={`onboarding-preset-${toTestIdSegment(preset.title)}`}
-                          key={preset.title}
-                          style={{ ...buttonStyle("ghost"), textAlign: "left" }}
-                          disabled={isBusy}
-                          onClick={() => void handleSubmitSpecificPrompt(preset.prompt)}
-                        >
-                          <div style={{ fontWeight: 700 }}>{preset.title}</div>
-                          <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 4, whiteSpace: "normal" }}>{preset.prompt}</div>
-                        </button>
-                      ))}
+        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1.35fr) ${dashboardUtilityRail.width}px`, gap: dashboardUtilityRail.isOpen ? 16 : 0, alignItems: "start" }}>
+          <div style={{ display: "grid", gap: 16 }}>
+            <section style={{ ...cardStyle(), background: "linear-gradient(180deg, #08111f 0%, #0b1220 100%)", borderColor: "#1e293b", padding: 14 }}>
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ border: "1px solid #1e3a8a", borderRadius: 16, padding: 12, background: "linear-gradient(180deg, rgba(30, 64, 175, 0.08) 0%, rgba(15, 23, 42, 0.12) 100%)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>{agentChatChrome.eyebrow}</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{agentChatChrome.title}</div>
+                      <div style={{ color: "#cbd5e1", marginTop: 8, fontSize: 14 }}>{agentChatChrome.helper}</div>
                     </div>
+                    <span style={badgeStyle(toneForWorkspaceSummary(agentChatChrome.statusTone))}>{agentChatChrome.statusLabel}</span>
                   </div>
-                ) : conversations.map((conversation) => (
-                  <button
-                    data-testid={`conversation-row-${conversation.id}`}
-                    key={conversation.id}
-                    onClick={() => setSelectedConversationId(conversation.id)}
-                    style={{
-                      ...cardStyle(),
-                      padding: 12,
-                      textAlign: "left",
-                      cursor: "pointer",
-                      background: selectedConversationId === conversation.id ? "#1e293b" : "#111827",
-                      borderColor: selectedConversationId === conversation.id ? "#2563eb" : "#334155",
-                    }}
-                  >
-                    <div style={{ fontWeight: 700 }}>{conversation.title}</div>
-                    <div style={{ color: "#94a3b8", marginTop: 4, fontSize: 13 }}>updated {formatTs(conversation.updatedAt)}</div>
-                    <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <span style={badgeStyle("#475569")}>{conversation.status}</span>
-                      {conversation.latestRunId ? <span style={badgeStyle("#2563eb")}>latest run</span> : null}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </section>
+                </div>
 
-            <div style={{ display: "grid", gap: 16 }}>
-              <section style={cardStyle()}>
-                <SectionTitle title="Talk to agent" subtitle="Use the active workspace like a persistent chat surface with Pinchy" />
-                <div style={{ display: "grid", gap: 12 }}>
-                  <ActionRow
-                    title={conversationComposerState.title}
-                    subtitle={conversationComposerState.subtitle}
-                    actions={conversationComposerState.statusLabel ? <span style={badgeStyle(toneForWorkspaceSummary(conversationWorkspace?.statusTone ?? "idle"))}>{conversationComposerState.statusLabel}</span> : undefined}
-                  >
-                    <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 4 }}>
-                      {selectedConversationState ? <div>conversation: {selectedConversationState.conversation.id}</div> : <div>Active workspace: {conversationWorkspacePresence.workspaceLabel}</div>}
-                      {conversationComposerState.latestMessagePreview ? <div>latest: {conversationComposerState.latestMessagePreview}</div> : <div>{conversationWorkspacePresence.selectionLabel}</div>}
-                    </div>
-                  </ActionRow>
+                <section style={{ ...cardStyle(), background: "linear-gradient(180deg, #0b1220 0%, #0f172a 100%)", borderColor: "#1e293b", padding: 14, minHeight: 500 }}>
+                  <SectionTitle title="Conversation transcript" subtitle="A calmer, chat-first thread between you and Pinchy" />
+                  {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to inspect the transcript.</p> : <ConversationMessages messages={selectedConversationState.messages} onSaveMemory={handleSaveMessageToMemory} isBusy={isBusy} transcriptState={conversationTranscriptState} scrollContainerRef={transcriptScrollRef} onScroll={handleTranscriptScroll} onJumpToLatest={() => scrollTranscriptToBottom("smooth")} />}
+                </section>
+
+                <div style={{ border: "1px solid #334155", borderRadius: 18, background: "#020617", padding: 14, boxShadow: "inset 0 1px 0 rgba(148, 163, 184, 0.08)" }}>
+                  <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700, marginBottom: 8 }}>{agentChatChrome.composerLabel}</div>
                   <textarea
                     data-testid="conversation-composer-input"
                     value={promptDraft}
@@ -852,15 +1419,16 @@ function App() {
                     onKeyDown={handlePromptDraftKeyDown}
                     placeholder={conversationComposerState.placeholder}
                     rows={4}
-                    style={inputStyle(true)}
+                    style={{ ...inputStyle(true), border: "none", background: "transparent", padding: 0, boxShadow: "none", minHeight: 96 }}
                   />
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
                     <button data-testid="conversation-composer-submit" style={buttonStyle("primary")} disabled={isBusy || !promptDraft.trim()} onClick={() => void (selectedConversationId ? handleStartRunFromDraft() : handleSubmitPrompt())}>{conversationComposerState.primaryActionLabel}</button>
                     {selectedConversationId ? <button data-testid="conversation-composer-new-thread" style={buttonStyle("ghost")} disabled={isBusy || !promptDraft.trim()} onClick={() => void handleSubmitPrompt()}>Start new thread</button> : null}
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Tip: press ⌘/Ctrl + Enter to send</span>
+                    <span style={{ color: "#94a3b8", fontSize: 12 }}>{conversationComposerState.subtitle}</span>
+                    <span style={{ color: "#64748b", fontSize: 12 }}>⌘/Ctrl + Enter to send</span>
                   </div>
                   {!selectedConversationId && conversations.length === 0 ? (
-                    <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
                       <div style={{ color: "#94a3b8", fontSize: 12 }}>Or start from a preset:</div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {onboardingPresets.map((preset) => (
@@ -870,119 +1438,157 @@ function App() {
                     </div>
                   ) : null}
                 </div>
-              </section>
-
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.3fr) minmax(320px, 0.9fr)", gap: 16 }}>
-              <section style={cardStyle()}>
-                <SectionTitle title="Conversation transcript" subtitle="Messages between you and Pinchy in this thread" />
-                {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to inspect the transcript.</p> : <ConversationMessages messages={selectedConversationState.messages} onSaveMemory={handleSaveMessageToMemory} isBusy={isBusy} />}
-              </section>
-
-              <div style={{ display: "grid", gap: 16 }}>
-                <section style={cardStyle()}>
-                  <SectionTitle title="Runs" subtitle="Queue, status, and save-to-memory actions" />
-                  {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to inspect runs.</p> : (
-                    <div style={{ display: "grid", gap: 10, maxHeight: 320, overflow: "auto" }}>
-                      {visibleRuns.length === 0 ? <p style={{ color: "#94a3b8" }}>No runs yet.</p> : visibleRuns.map((run) => (
-                        <ActionRow
-                          key={run.id}
-                          title={buildRunHeadline(run, 84)}
-                          subtitle={`${run.kind} • ${run.id}`}
-                          actions={
-                            <>
-                              <span style={badgeStyle(toneForRunStatus(run.status))}>{run.status}</span>
-                              <button data-testid={`run-save-memory-${run.id}`} style={buttonStyle("ghost")} disabled={isBusy || !(run.summary || run.goal)} onClick={() => void handleSaveRunToMemory(run)}>Save memory</button>
-                              {run.status === "completed" || run.status === "failed" || run.status === "cancelled" ? null : <button data-testid={`run-cancel-${run.id}`} style={buttonStyle("danger")} disabled={isBusy} onClick={() => void handleRunCancel(run.id)}>Cancel</button>}
-                            </>
-                          }
-                        >
-                          <div style={{ color: "#cbd5e1", display: "grid", gap: 4, fontSize: 13 }}>
-                            <div>created: {formatTs(run.createdAt)}</div>
-                            <div>updated: {formatTs(run.updatedAt)}</div>
-                            {run.blockedReason ? <div>blocked: {run.blockedReason}</div> : null}
-                            {run.summary ? <div>summary: {run.summary}</div> : null}
-                          </div>
-                        </ActionRow>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section style={cardStyle()}>
-                  <SectionTitle title="Question inbox" subtitle="Reply when the agent is blocked and waiting" />
-                  {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to review blocked questions.</p> : visibleQuestions.length === 0 ? <p style={{ color: "#94a3b8" }}>No pending or waiting questions for this conversation.</p> : (
-                    <div style={{ display: "grid", gap: 10, maxHeight: 320, overflow: "auto" }}>
-                      {visibleQuestions.map((question) => (
-                        <ActionRow
-                          key={question.id}
-                          title={question.prompt}
-                          subtitle={`priority: ${question.priority} • ${question.id}`}
-                          actions={<span style={badgeStyle(toneForQuestionStatus(question.status))}>{question.status}</span>}
-                        >
-                          <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 8 }}>
-                            <div>created: {formatTs(question.createdAt)}</div>
-                            {question.channelHints?.length ? <div>channels: {question.channelHints.join(", ")}</div> : null}
-                            <textarea
-                              data-testid={`question-reply-input-${question.id}`}
-                              rows={3}
-                              value={replyDrafts[question.id] ?? ""}
-                              onChange={(event) => setReplyDrafts((current) => ({ ...current, [question.id]: event.target.value }))}
-                              placeholder="Send a dashboard reply to resume this run"
-                              style={inputStyle(true)}
-                            />
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button data-testid={`question-reply-submit-${question.id}`} style={buttonStyle("success")} disabled={isBusy || !(replyDrafts[question.id] ?? "").trim()} onClick={() => void handleReplySubmit(question.id)}>Reply</button>
-                              <button data-testid={`question-save-memory-${question.id}`} style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void handleSaveQuestionToMemory(question)}>Save memory</button>
-                            </div>
-                          </div>
-                        </ActionRow>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section style={cardStyle()}>
-                  <SectionTitle title="Replies & deliveries" subtitle="Async messaging state for the selected conversation" />
-                  {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to inspect async state.</p> : (
-                    <div style={{ display: "grid", gap: 16 }}>
-                      <div>
-                        <h3 style={{ marginTop: 0 }}>Replies</h3>
-                        <div style={{ display: "grid", gap: 10, maxHeight: 140, overflow: "auto" }}>
-                          {visibleReplies.length === 0 ? <p style={{ color: "#94a3b8" }}>No replies yet.</p> : visibleReplies.map((reply) => (
-                            <ActionRow key={reply.id} title={reply.content} subtitle={`${reply.channel} • ${formatTs(reply.receivedAt)}`}>
-                              <div style={{ color: "#94a3b8", fontSize: 13 }}>question: {reply.questionId}</div>
-                            </ActionRow>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <h3 style={{ marginTop: 0 }}>Deliveries</h3>
-                        <div style={{ display: "grid", gap: 10, maxHeight: 140, overflow: "auto" }}>
-                          {visibleDeliveries.length === 0 ? <p style={{ color: "#94a3b8" }}>No deliveries yet.</p> : visibleDeliveries.map((delivery) => (
-                            <ActionRow
-                              key={delivery.id}
-                              title={`${delivery.channel} delivery`}
-                              subtitle={`question: ${delivery.questionId ?? "—"} • run: ${delivery.runId ?? "—"}`}
-                              actions={<span style={badgeStyle(toneForDeliveryStatus(delivery.status))}>{delivery.status}</span>}
-                            >
-                              <div style={{ color: "#cbd5e1", display: "grid", gap: 4, fontSize: 13 }}>
-                                <div>sent: {formatTs(delivery.sentAt)}</div>
-                                <div>delivered: {formatTs(delivery.deliveredAt)}</div>
-                                <div>failed: {formatTs(delivery.failedAt)}</div>
-                                {delivery.error ? <div>error: {delivery.error}</div> : null}
-                              </div>
-                            </ActionRow>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </section>
               </div>
-            </div>
+            </section>
+          </div>
+
+          <div style={{ width: dashboardUtilityRail.width, overflow: "hidden", opacity: dashboardUtilityRail.isOpen ? 1 : 0, pointerEvents: dashboardUtilityRail.isOpen ? "auto" : "none", transition: "width 180ms ease, opacity 140ms ease", display: "grid", gap: 16 }}>
+            <section style={{ ...cardStyle(), background: "linear-gradient(180deg, #0b1220 0%, #111827 100%)", borderColor: "#1e293b", padding: 14 }}>
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{chatWorkspacePanels.tools.title}</div>
+                    <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4 }}>{chatWorkspacePanels.tools.summary}</div>
+                  </div>
+                  <button data-testid="chat-tools-toggle" style={buttonStyle("ghost")} disabled={isBusy} onClick={() => setChatToolsExpanded((current) => !current)}>{chatToolsExpanded ? "Hide tools" : chatWorkspacePanels.tools.toggleLabel}</button>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {chatWorkbench.badges.map((badge) => (
+                    <span key={badge.label} style={badgeStyle(toneForWorkspaceSummary(badge.tone))}>{badge.label}</span>
+                  ))}
+                </div>
+                {chatToolsExpanded ? (
+                  <div style={{ display: "grid", gap: 12, borderTop: "1px solid #1e293b", paddingTop: 12 }}>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <input data-testid="chat-task-title-input" value={queueTaskTitle} onChange={(event) => setQueueTaskTitle(event.target.value)} placeholder="Background task title" style={inputStyle()} />
+                      <textarea data-testid="chat-task-prompt-input" value={queueTaskPrompt} onChange={(event) => setQueueTaskPrompt(event.target.value)} placeholder="Queue a focused task for parallel execution while you keep chatting here" rows={4} style={inputStyle(true)} />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <button data-testid="chat-task-submit" style={buttonStyle("ghost")} disabled={isBusy || !queueTaskTitle.trim() || !queueTaskPrompt.trim() || !selectedConversationId} onClick={() => void handleSpawnBackgroundTask()}>Spawn bounded task</button>
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>{selectedConversationId ? "Use this to spin off parallel work without leaving the thread." : "Select a conversation first so Pinchy can orchestrate subtasks from the active thread."}</span>
+                      </div>
+                    </div>
+                    <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12, display: "grid", gap: 8 }}>
+                      <div style={{ color: "#93c5fd", fontSize: 12, fontWeight: 700 }}>Delegate a multi-task plan</div>
+                      <textarea data-testid="chat-delegation-plan-input" value={delegationPlanDraft} onChange={(event) => setDelegationPlanDraft(event.target.value)} placeholder={`Audit worker logs :: Inspect the worker logs and summarize failures.
+Review dashboard smoke :: Run the dashboard smoke checks and report actionable issues.`} rows={5} style={inputStyle(true)} />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <button data-testid="chat-delegation-submit" style={buttonStyle("primary")} disabled={isBusy || !selectedConversationId || parsedDelegationTasks.length === 0} onClick={() => void handleDelegatePlan()}>Delegate plan</button>
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>
+                          {selectedConversationId
+                            ? `${parsedDelegationTasks.length} bounded task${parsedDelegationTasks.length === 1 ? "" : "s"} ready. Format each line as Title :: Prompt.`
+                            : "Select a conversation first, then add one subtask per line as Title :: Prompt."}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : <div style={{ color: "#64748b", fontSize: 12 }}>{chatWorkbench.helper}</div>}
+              </div>
+            </section>
+
+            <section style={{ ...cardStyle(), padding: 12 }}>
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{chatWorkspacePanels.workflows.title}</div>
+                    <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4 }}>{chatWorkspacePanels.workflows.summary}</div>
+                  </div>
+                  <button data-testid="chat-workflows-toggle" style={buttonStyle("ghost")} disabled={isBusy || !selectedConversationId} onClick={() => setChatWorkflowsExpanded((current) => !current)}>{chatWorkflowsExpanded ? "Hide workflows" : chatWorkspacePanels.workflows.toggleLabel}</button>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={badgeStyle("#2563eb")}>{conversationOrchestration.counts.running} running</span>
+                  <span style={badgeStyle("#475569")}>{conversationOrchestration.counts.pending} pending</span>
+                  <span style={badgeStyle("#d97706")}>{conversationOrchestration.counts.blocked} blocked</span>
+                  <span style={badgeStyle("#059669")}>{conversationOrchestration.counts.done} done</span>
+                </div>
+                {!selectedConversationId ? <p style={{ color: "#94a3b8", margin: 0 }}>Select a conversation to see linked parallel workflows.</p> : chatWorkflowsExpanded ? (conversationOrchestration.linkedTasks.length === 0 ? <p style={{ color: "#94a3b8", margin: 0 }}>{conversationOrchestration.helper}</p> : (
+                  <div style={{ display: "grid", gap: 10, maxHeight: 260, overflow: "auto" }}>
+                    {conversationOrchestration.linkedTasks.map((task) => (
+                      <ActionRow key={task.id} title={task.title} subtitle={`${task.source ?? "task"} • ${task.id}`} actions={<span style={badgeStyle(task.status === "running" ? "#2563eb" : task.status === "blocked" ? "#d97706" : task.status === "done" ? "#059669" : "#475569")}>{task.status}</span>}>
+                        <div style={{ color: "#cbd5e1", display: "grid", gap: 4, fontSize: 13 }}>
+                          <div>{task.prompt}</div>
+                          {task.runId ? <div>linked run: {task.runId}</div> : null}
+                          <div>updated: {formatTs(task.updatedAt)}</div>
+                        </div>
+                      </ActionRow>
+                    ))}
+                  </div>
+                )) : <div style={{ color: "#64748b", fontSize: 12 }}>Open this panel only when you want the detailed workflow rail.</div>}
+              </div>
+            </section>
+
+            <section style={{ ...cardStyle(), padding: 12 }}>
+              <SectionTitle title="Runs" subtitle="Queue, status, and save-to-memory actions" />
+              {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to inspect runs.</p> : (
+                <div style={{ display: "grid", gap: 10, maxHeight: 320, overflow: "auto" }}>
+                  {visibleRuns.length === 0 ? <p style={{ color: "#94a3b8" }}>No runs yet.</p> : visibleRuns.map((run) => (
+                    <ActionRow key={run.id} title={buildRunHeadline(run, 84)} subtitle={`${run.kind} • ${run.id}`} actions={<><span style={{ ...badgeStyle(toneForRunStatus(run.status)), padding: "3px 7px", fontSize: 11, fontWeight: 600 }}>{run.status}</span><button data-testid={`run-save-memory-${run.id}`} style={{ ...buttonStyle("ghost"), padding: "6px 10px", fontSize: 12 }} disabled={isBusy || !(run.summary || run.goal)} onClick={() => void handleSaveRunToMemory(run)}>Save</button>{run.status === "completed" || run.status === "failed" || run.status === "cancelled" ? null : <button data-testid={`run-cancel-${run.id}`} style={{ ...buttonStyle("danger"), padding: "6px 10px", fontSize: 12 }} disabled={isBusy} onClick={() => void handleRunCancel(run.id)}>Cancel</button>}</>}>
+                      <div style={{ color: "#cbd5e1", display: "grid", gap: 4, fontSize: 13 }}>
+                        <div>created: {formatTs(run.createdAt)}</div>
+                        <div>updated: {formatTs(run.updatedAt)}</div>
+                        {run.blockedReason ? <div>blocked: {run.blockedReason}</div> : null}
+                        {run.summary ? <div>summary: {run.summary}</div> : null}
+                      </div>
+                    </ActionRow>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section style={{ ...cardStyle(), padding: 12 }}>
+              <SectionTitle title="Question inbox" subtitle="Reply when the agent is blocked and waiting" />
+              {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to review blocked questions.</p> : visibleQuestions.length === 0 ? <p style={{ color: "#94a3b8" }}>No pending or waiting questions for this conversation.</p> : (
+                <div style={{ display: "grid", gap: 10, maxHeight: 320, overflow: "auto" }}>
+                  {visibleQuestions.map((question) => (
+                    <ActionRow key={question.id} title={question.prompt} subtitle={`priority: ${question.priority} • ${question.id}`} actions={<span style={badgeStyle(toneForQuestionStatus(question.status))}>{question.status}</span>}>
+                      <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 8 }}>
+                        <div>created: {formatTs(question.createdAt)}</div>
+                        {question.channelHints?.length ? <div>channels: {question.channelHints.join(", ")}</div> : null}
+                        <textarea data-testid={`question-reply-input-${question.id}`} rows={3} value={replyDrafts[question.id] ?? ""} onChange={(event) => setReplyDrafts((current) => ({ ...current, [question.id]: event.target.value }))} placeholder="Send a dashboard reply to resume this run" style={inputStyle(true)} />
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button data-testid={`question-reply-submit-${question.id}`} style={buttonStyle("success")} disabled={isBusy || !(replyDrafts[question.id] ?? "").trim()} onClick={() => void handleReplySubmit(question.id)}>Reply</button>
+                          <button data-testid={`question-save-memory-${question.id}`} style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void handleSaveQuestionToMemory(question)}>Save memory</button>
+                        </div>
+                      </div>
+                    </ActionRow>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section style={cardStyle()}>
+              <SectionTitle title="Replies & deliveries" subtitle="Async messaging state for the selected conversation" />
+              {!selectedConversationState ? <p style={{ color: "#94a3b8" }}>Select a conversation to inspect async state.</p> : (
+                <div style={{ display: "grid", gap: 16 }}>
+                  <div>
+                    <h3 style={{ marginTop: 0 }}>Replies</h3>
+                    <div style={{ display: "grid", gap: 10, maxHeight: 140, overflow: "auto" }}>
+                      {visibleReplies.length === 0 ? <p style={{ color: "#94a3b8" }}>No replies yet.</p> : visibleReplies.map((reply) => (
+                        <ActionRow key={reply.id} title={reply.content} subtitle={`${reply.channel} • ${formatTs(reply.receivedAt)}`}>
+                          <div style={{ color: "#94a3b8", fontSize: 13 }}>question: {reply.questionId}</div>
+                        </ActionRow>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 style={{ marginTop: 0 }}>Deliveries</h3>
+                    <div style={{ display: "grid", gap: 10, maxHeight: 140, overflow: "auto" }}>
+                      {visibleDeliveries.length === 0 ? <p style={{ color: "#94a3b8" }}>No deliveries yet.</p> : visibleDeliveries.map((delivery) => (
+                        <ActionRow key={delivery.id} title={`${delivery.channel} delivery`} subtitle={`question: ${delivery.questionId ?? "—"} • run: ${delivery.runId ?? "—"}`} actions={<span style={badgeStyle(toneForDeliveryStatus(delivery.status))}>{delivery.status}</span>}>
+                          <div style={{ color: "#cbd5e1", display: "grid", gap: 4, fontSize: 13 }}>
+                            <div>sent: {formatTs(delivery.sentAt)}</div>
+                            <div>delivered: {formatTs(delivery.deliveredAt)}</div>
+                            <div>failed: {formatTs(delivery.failedAt)}</div>
+                            {delivery.error ? <div>error: {delivery.error}</div> : null}
+                          </div>
+                        </ActionRow>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         </div>
-      </div>
       ) : null}
 
       {page === "memory" ? (
@@ -1061,7 +1667,12 @@ function App() {
                     key={workspace.id}
                     title={workspace.name}
                     subtitle={workspace.path}
-                    actions={workspace.id === state.activeWorkspaceId ? <span style={badgeStyle("#2563eb")}>active</span> : <button data-testid={`workspace-activate-${workspace.id}`} style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void handleWorkspaceActivate(workspace.id)}>Activate</button>}
+                    actions={
+                      <>
+                        {workspace.id === state.activeWorkspaceId ? <span style={badgeStyle("#2563eb")}>active</span> : <button data-testid={`workspace-activate-${workspace.id}`} style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void handleWorkspaceActivate(workspace.id)}>Activate</button>}
+                        <button data-testid={`workspace-delete-${workspace.id}`} style={buttonStyle("danger")} disabled={isBusy || state.workspaces.length <= 1} onClick={() => void handleWorkspaceDelete(workspace.id)}>Delete</button>
+                      </>
+                    }
                   >
                     <div style={{ color: "#94a3b8", fontSize: 12 }}>updated {formatTs(workspace.updatedAt)}</div>
                   </ActionRow>
@@ -1146,6 +1757,33 @@ function App() {
 
       {page === "tools" ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16 }}>
+          <section style={cardStyle()}>
+            <SectionTitle title="Pi agent resources" subtitle="Synced resource inventory for the current Pinchy + Pi runtime" />
+            <div style={{ display: "grid", gap: 12 }}>
+              <ActionRow title="Skills" subtitle="Loaded slash-command and explicit skill resources available to Pinchy and Pi.">
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {state.agentResources.filter((entry) => entry.type === "skill").map((entry, index) => (
+                    <span key={`${entry.scope}-${entry.type}-${entry.name}`} data-testid={index === 0 ? "tools-agent-resource-skill" : undefined} style={badgeStyle(entry.scope === "workspace" ? "#2563eb" : "#475569")}>{entry.name}</span>
+                  ))}
+                </div>
+              </ActionRow>
+              <ActionRow title="Extensions" subtitle="Pi extension/tool surfaces currently available in this workspace and user agent scope.">
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {state.agentResources.filter((entry) => entry.type === "extension").map((entry) => (
+                    <span key={`${entry.scope}-${entry.type}-${entry.name}`} style={badgeStyle(entry.scope === "workspace" ? "#059669" : "#475569")}>{entry.name}</span>
+                  ))}
+                </div>
+              </ActionRow>
+              <ActionRow title="Prompt templates" subtitle="Prompt shortcuts and reusable Pi prompt resources.">
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {state.agentResources.filter((entry) => entry.type === "prompt").map((entry) => (
+                    <span key={`${entry.scope}-${entry.type}-${entry.name}`} style={badgeStyle(entry.scope === "workspace" ? "#7c3aed" : "#475569")}>{entry.name}</span>
+                  ))}
+                </div>
+              </ActionRow>
+            </div>
+          </section>
+
           <section style={cardStyle()}>
             <SectionTitle title="Generated tools" subtitle="Review source + diff before reload" />
             {state.generatedTools.length === 0 ? <p style={{ color: "#94a3b8" }}>No generated tools yet.</p> : state.generatedTools.map((tool) => (
@@ -1232,6 +1870,136 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {page === "settings" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(340px, 420px) minmax(0, 1fr)", gap: 16 }}>
+          <section style={cardStyle()}>
+            <SectionTitle title={settingsConfiguration.title} subtitle={settingsConfiguration.subtitle} />
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ color: "#94a3b8", fontSize: 12 }}>Provider presets</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {settingsConfiguration.providerPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      data-testid={`settings-preset-${preset.id}`}
+                      style={buttonStyle("ghost")}
+                      disabled={isBusy}
+                      onClick={() => {
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          defaultProvider: preset.provider,
+                          defaultModel: current.defaultModel.trim() ? current.defaultModel : preset.suggestedModel,
+                        }));
+                        setSettingsStatus({ tone: "idle", message: preset.helper });
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>Provider</div>
+                <input
+                  data-testid="settings-provider-input"
+                  value={settingsDraft.defaultProvider}
+                  onChange={(event) => {
+                    setSettingsDraft((current) => ({ ...current, defaultProvider: event.target.value }));
+                    setSettingsStatus(EMPTY_SETTINGS_STATUS);
+                  }}
+                  placeholder="openai-compatible"
+                  style={inputStyle()}
+                />
+              </div>
+              <div>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>Model</div>
+                <input
+                  data-testid="settings-model-input"
+                  value={settingsDraft.defaultModel}
+                  onChange={(event) => {
+                    setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }));
+                    setSettingsStatus(EMPTY_SETTINGS_STATUS);
+                  }}
+                  placeholder="Auto-detected from the local server"
+                  style={inputStyle()}
+                />
+              </div>
+              <div>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>Endpoint / base URL</div>
+                <input
+                  data-testid="settings-base-url-input"
+                  value={settingsDraft.defaultBaseUrl}
+                  onChange={(event) => {
+                    setSettingsDraft((current) => ({ ...current, defaultBaseUrl: event.target.value }));
+                    setSettingsStatus(EMPTY_SETTINGS_STATUS);
+                  }}
+                  placeholder="http://127.0.0.1:11434/v1"
+                  style={inputStyle()}
+                />
+                <div data-testid="settings-detected-model" style={{ color: localServerDiscovery.state === "error" ? "#fca5a5" : localServerDiscovery.state === "success" ? "#93c5fd" : "#94a3b8", fontSize: 12, marginTop: 6 }}>
+                  {localServerDiscovery.message}
+                  {localServerDiscovery.models.length > 1 ? ` (${localServerDiscovery.models.length} models found)` : ""}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>Thinking level</div>
+                <select
+                  data-testid="settings-thinking-select"
+                  value={settingsDraft.defaultThinkingLevel}
+                  onChange={(event) => {
+                    setSettingsDraft((current) => ({ ...current, defaultThinkingLevel: event.target.value as SettingsDraft["defaultThinkingLevel"] }));
+                    setSettingsStatus(EMPTY_SETTINGS_STATUS);
+                  }}
+                  style={inputStyle()}
+                >
+                  <option value="off">off</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button data-testid="settings-save" style={buttonStyle("primary")} disabled={isBusy} onClick={() => void handleSettingsSave()}>Save settings</button>
+                <button data-testid="settings-refresh" style={buttonStyle("ghost")} disabled={isBusy} onClick={() => void load({ preserveUnsavedSettingsDraft: false })}>Reload</button>
+                <span style={{ color: settingsStatus.tone === "success" ? "#34d399" : "#94a3b8", fontSize: 12 }}>{settingsStatus.message}</span>
+              </div>
+            </div>
+          </section>
+
+          <section style={cardStyle()}>
+            <SectionTitle title="Configuration guidance" subtitle="Keep Pinchy as the shell and Pi as the execution substrate" />
+            <div style={{ display: "grid", gap: 10 }}>
+              <ActionRow title="Workspace-local runtime config" subtitle={settingsConfiguration.guidance[0]}>
+                <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 4 }}>
+                  <div>Use this page to steer the default provider/model/endpoint/thinking level without editing files manually.</div>
+                  <div style={{ color: "#94a3b8" }}>{settingsConfiguration.workspaceOverrideSummary}</div>
+                </div>
+              </ActionRow>
+              <ActionRow title="Recommended local-model flow" subtitle={settingsConfiguration.guidance[1]}>
+                <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 4 }}>
+                  <div>1. provider: ollama</div>
+                  <div>2. model: your preferred coding model</div>
+                  <div>3. endpoint: set this when using a non-default local server URL</div>
+                  <div>4. thinking: medium or high for harder code tasks</div>
+                </div>
+              </ActionRow>
+              <ActionRow title="Current effective defaults" subtitle={settingsConfiguration.guidance[3]}>
+                <div style={{ color: "#cbd5e1", fontSize: 13, display: "grid", gap: 8 }}>
+                  {settingsConfiguration.summaryRows.map((row) => (
+                    <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <span>{row.label}: {row.value}</span>
+                      <span style={{ color: "#94a3b8" }}>{row.sourceLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              </ActionRow>
+            </div>
+          </section>
+        </div>
+      ) : null}
+        </div>
+      </div>
     </div>
   );
 }

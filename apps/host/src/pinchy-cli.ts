@@ -2,6 +2,7 @@ export const PINCHY_CLI_COMMANDS = [
   "init",
   "setup",
   "version",
+  "config",
   "up",
   "down",
   "status",

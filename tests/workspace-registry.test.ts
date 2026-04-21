@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
+  deleteWorkspace,
   getActiveWorkspace,
   listWorkspaces,
   registerWorkspace,
@@ -52,5 +53,29 @@ test("workspace registry de-duplicates paths when the same repo is registered tw
     assert.equal(first.id, second.id);
     assert.equal(second.name, "Renamed demo repo");
     assert.equal(listWorkspaces(cwd).filter((entry) => entry.path === "/tmp/demo-repo").length, 1);
+  });
+});
+
+test("workspace registry deletes a workspace and falls back active selection when needed", () => {
+  withTempDir((cwd) => {
+    const demo = registerWorkspace(cwd, { path: "/tmp/demo-repo", name: "Demo repo" });
+    const docs = registerWorkspace(cwd, { path: "/tmp/docs-repo", name: "Docs repo" });
+
+    setActiveWorkspace(cwd, demo.id);
+    const deleted = deleteWorkspace(cwd, demo.id);
+
+    assert.equal(deleted?.id, demo.id);
+    assert.equal(listWorkspaces(cwd).some((entry) => entry.id === demo.id), false);
+    assert.equal(getActiveWorkspace(cwd)?.id, listWorkspaces(cwd)[0]?.id);
+    assert.equal(listWorkspaces(cwd).some((entry) => entry.id === docs.id), true);
+  });
+});
+
+test("workspace registry refuses to delete the last remaining workspace", () => {
+  withTempDir((cwd) => {
+    const seeded = listWorkspaces(cwd)[0];
+    assert.equal(deleteWorkspace(cwd, seeded.id), undefined);
+    assert.equal(listWorkspaces(cwd).length, 1);
+    assert.equal(getActiveWorkspace(cwd)?.id, seeded.id);
   });
 });

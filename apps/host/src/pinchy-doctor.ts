@@ -27,6 +27,10 @@ export type PinchyDoctorDependencies = {
   commandExists?: (command: string) => boolean;
 };
 
+function hasLocalModelSupport(hasCommand: (command: string) => boolean) {
+  return hasCommand("ollama") || hasCommand("lmstudio") || hasCommand("lms");
+}
+
 function summarizeDoctorStatus(checks: PinchyDoctorCheck[]): PinchyDoctorReport["summary"] {
   const failCount = checks.filter((check) => check.status === "fail").length;
   const warnCount = checks.filter((check) => check.status === "warn").length;
@@ -77,6 +81,21 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
     hint: hasCommand("git") ? undefined : "Install Git so Pinchy can work with repository state reliably.",
   });
 
+  const hasPlaywrightChromium = pathExists(resolve(cwd, "node_modules/.bin/playwright"));
+  checks.push({
+    name: "playwright_chromium",
+    status: hasPlaywrightChromium ? "ok" : "warn",
+    message: hasPlaywrightChromium ? "Playwright tooling is available for browser debugging." : "Playwright tooling is missing for browser debugging.",
+    hint: hasPlaywrightChromium ? undefined : "Run `pinchy setup` or `npm run playwright:install`.",
+  });
+
+  checks.push({
+    name: "local_models",
+    status: hasLocalModelSupport(hasCommand) ? "ok" : "warn",
+    message: hasLocalModelSupport(hasCommand) ? "A local model provider appears available." : "No local model provider was detected.",
+    hint: hasLocalModelSupport(hasCommand) ? undefined : "Install or start Ollama / LM Studio, then set runtime defaults with `pinchy config set defaultProvider ...`.",
+  });
+
   checks.push({
     name: "cliclick",
     status: hasCommand("cliclick") ? "ok" : "warn",
@@ -96,6 +115,10 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
     checks,
     summary: summarizeDoctorStatus(checks),
   };
+}
+
+export function summarizePinchyDoctorReportJson(report: PinchyDoctorReport) {
+  return `${JSON.stringify(report, null, 2)}\n`;
 }
 
 export function summarizePinchyDoctorReport(report: PinchyDoctorReport) {

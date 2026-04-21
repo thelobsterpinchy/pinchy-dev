@@ -24,7 +24,12 @@ export function saveTasks(cwd: string, tasks: PinchyTask[]) {
   writeFileSync(path, JSON.stringify(tasks, null, 2), "utf8");
 }
 
-export function enqueueTask(cwd: string, title: string, prompt: string): PinchyTask {
+export function enqueueTask(
+  cwd: string,
+  title: string,
+  prompt: string,
+  options: Partial<Pick<PinchyTask, "source" | "conversationId" | "runId">> = {},
+): PinchyTask {
   const tasks = loadTasks(cwd);
   const now = new Date().toISOString();
   const task: PinchyTask = {
@@ -34,6 +39,9 @@ export function enqueueTask(cwd: string, title: string, prompt: string): PinchyT
     status: "pending",
     createdAt: now,
     updatedAt: now,
+    source: options.source,
+    conversationId: options.conversationId,
+    runId: options.runId,
   };
   tasks.push(task);
   saveTasks(cwd, tasks);

@@ -18,6 +18,7 @@ test("buildPinchySetupPlan provisions Playwright and reports optional local tool
   assert.equal(plan.optionalChecks.find((check) => check.name === "git")?.status, "ok");
   assert.equal(plan.optionalChecks.find((check) => check.name === "cliclick")?.status, "warn");
   assert.equal(plan.optionalChecks.find((check) => check.name === "tesseract")?.status, "warn");
+  assert.equal(plan.optionalChecks.find((check) => check.name === "local_models")?.status, "warn");
 });
 
 test("summarizePinchySetupPlan explains what setup will do and what remains optional", () => {
@@ -41,4 +42,5 @@ test("summarizePinchySetupPlan explains what setup will do and what remains opti
   assert.match(text, /Optional local tools/);
   assert.match(text, /brew install cliclick/);
   assert.match(text, /pinchy doctor/);
+  assert.match(text, /Optional local tools/);
 });

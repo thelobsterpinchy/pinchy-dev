@@ -16,6 +16,10 @@ export function formatPinchyVersion(version: string) {
   return `[pinchy] version ${version}\n`;
 }
 
+export function summarizeStatusJson(inspections: ManagedServiceInspection[]) {
+  return `${JSON.stringify({ services: inspections }, null, 2)}\n`;
+}
+
 export function summarizeStatus(inspections: ManagedServiceInspection[]) {
   const runningCount = inspections.filter((inspection) => inspection.status === "running").length;
   const stoppedCount = inspections.length - runningCount;
@@ -26,6 +30,10 @@ export function summarizeStatus(inspections: ManagedServiceInspection[]) {
     "[pinchy] Next steps: pinchy up | pinchy logs dashboard | pinchy agent",
   ];
   return `${lines.join("\n")}\n`;
+}
+
+export function summarizeLogsJson(sections: LogSection[]) {
+  return `${JSON.stringify({ sections }, null, 2)}\n`;
 }
 
 export function summarizeLogs(sections: LogSection[]) {

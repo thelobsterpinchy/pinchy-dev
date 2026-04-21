@@ -50,6 +50,35 @@ test("api server honors a workspace override header for control-plane state", as
   });
 });
 
+test("api server decodes an encoded workspace override header for unicode paths", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const workspaceCwd = `${cwd}/Brandon’s workspace`;
+    try {
+      const encodedWorkspaceCwd = encodeURIComponent(workspaceCwd);
+      const response = await fetch(`${baseUrl}/conversations`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-pinchy-workspace-path": encodedWorkspaceCwd,
+        },
+        body: JSON.stringify({ title: "Unicode workspace conversation" }),
+      });
+      assert.equal(response.status, 201);
+
+      const workspaceConversations = await fetch(`${baseUrl}/conversations`, {
+        headers: { "x-pinchy-workspace-path": encodedWorkspaceCwd },
+      }).then((result) => result.json() as Promise<Array<{ title: string }>>);
+      const rootConversations = await fetch(`${baseUrl}/conversations`).then((result) => result.json() as Promise<Array<{ title: string }>>);
+
+      assert.equal(workspaceConversations.length, 1);
+      assert.equal(workspaceConversations[0]?.title, "Unicode workspace conversation");
+      assert.equal(rootConversations.length, 0);
+    } finally {
+      rmSync(workspaceCwd, { recursive: true, force: true });
+    }
+  });
+});
+
 test("api server exposes health and conversation endpoints", async () => {
   await withServer(async ({ baseUrl }) => {
     const health = await fetch(`${baseUrl}/health`).then((response) => response.json() as Promise<{ ok: boolean }>);
@@ -67,6 +96,41 @@ test("api server exposes health and conversation endpoints", async () => {
     const conversations = await fetch(`${baseUrl}/conversations`).then((response) => response.json() as Promise<Array<{ id: string }>>);
     assert.equal(conversations.length, 1);
     assert.equal(conversations[0]?.id, conversation.id);
+  });
+});
+
+
+test("api server deletes a conversation session and its linked records", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const conversation = await fetch(`${baseUrl}/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Delete session" }),
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    await fetch(`${baseUrl}/conversations/${conversation.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "user", content: "delete this chat" }),
+    });
+
+    await fetch(`${baseUrl}/conversations/${conversation.id}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ goal: "delete this chat session" }),
+    });
+
+    const deleteResponse = await fetch(`${baseUrl}/conversations/${conversation.id}`, {
+      method: "DELETE",
+    });
+    assert.equal(deleteResponse.status, 200);
+    assert.deepEqual(await deleteResponse.json(), { ok: true });
+
+    const conversations = await fetch(`${baseUrl}/conversations`).then((response) => response.json() as Promise<Array<{ id: string }>>);
+    assert.equal(conversations.length, 0);
+
+    const aggregateResponse = await fetch(`${baseUrl}/conversations/${conversation.id}/state`);
+    assert.equal(aggregateResponse.status, 404);
   });
 });
 

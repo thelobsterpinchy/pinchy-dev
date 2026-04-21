@@ -158,6 +158,16 @@ export type SavedMemory = {
   sourceRunId?: string;
 };
 
+export type AgentResourceType = "extension" | "skill" | "prompt";
+export type AgentResourceScope = "workspace" | "user";
+
+export type AgentResourceEntry = {
+  type: AgentResourceType;
+  name: string;
+  scope: AgentResourceScope;
+  path: string;
+};
+
 export type DashboardState = {
   runContext?: RunContext;
   workspaces: WorkspaceEntry[];
@@ -165,6 +175,7 @@ export type DashboardState = {
   tasks: PinchyTask[];
   approvals: ApprovalRecord[];
   generatedTools: string[];
+  agentResources: AgentResourceEntry[];
   routines: RoutineRecord[];
   artifacts: DashboardArtifact[];
   memories: SavedMemory[];

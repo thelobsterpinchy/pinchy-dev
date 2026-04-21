@@ -4,6 +4,7 @@ import {
   createConversation,
   createQuestion,
   createRun,
+  deleteConversation,
   getQuestionById,
   getRunById,
   listConversations,
@@ -23,9 +24,20 @@ type ApiServerOptions = {
   cwd: string;
 };
 
+function decodeWorkspaceOverrideHeaderValue(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function resolveRequestCwd(defaultCwd: string, req: http.IncomingMessage) {
   const header = req.headers["x-pinchy-workspace-path"];
-  return typeof header === "string" && header.trim() ? header.trim() : defaultCwd;
+  if (typeof header !== "string" || !header.trim()) {
+    return defaultCwd;
+  }
+  return decodeWorkspaceOverrideHeaderValue(header.trim());
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown) {
@@ -94,6 +106,16 @@ export function createApiServer({ cwd }: ApiServerOptions) {
           sendJson(res, 201, createConversation(requestCwd, { title: payload.title.trim() }));
         })
         .catch((error) => sendJsonBodyError(res, error));
+      return;
+    }
+
+    const conversationIdForDetail = getRouteParams(pathname, "/conversations/");
+    if (conversationIdForDetail && req.method === "DELETE") {
+      if (!deleteConversation(requestCwd, conversationIdForDetail)) {
+        sendJson(res, 404, { ok: false, error: `Conversation not found: ${conversationIdForDetail}` });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
       return;
     }
 

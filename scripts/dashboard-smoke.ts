@@ -77,6 +77,14 @@ async function verifySpec(page: Page, pageName: string) {
   if (pageName !== "conversations") {
     await openPage(page, pageName);
   }
+  if (pageName === "conversations") {
+    await expectVisible(page, "[data-testid='conversation-shell-sidebar-toggle']");
+    await page.click("[data-testid='conversation-shell-sidebar-toggle']");
+    await page.waitForTimeout(300);
+    await expectVisible(page, "[data-testid='conversation-shell-utility-toggle']");
+    await page.click("[data-testid='conversation-shell-utility-toggle']");
+    await page.waitForTimeout(300);
+  }
   for (const selector of spec.selectors) {
     await expectVisible(page, selector.selector);
   }
@@ -113,6 +121,7 @@ async function main() {
     log(`created conversation ${createdConversation.id}`);
 
     await expectVisible(page, `[data-testid='conversation-row-${createdConversation.id}']`);
+    await expectVisible(page, `[data-testid='conversation-delete-${createdConversation.id}']`);
     await expectVisible(page, "[data-testid='conversation-composer-input']");
 
     log("creating a saved memory through the Memory page");

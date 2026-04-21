@@ -10,6 +10,7 @@ import {
   createNotificationDelivery,
   createQuestion,
   createRun,
+  deleteConversation,
   getQuestionById,
   getRunById,
   listConversations,
@@ -205,5 +206,61 @@ test("agent state store returns newest notification deliveries first", () => {
     assert.equal(deliveries.length, 2);
     assert.equal(deliveries[0]?.id, second.id);
     assert.equal(deliveries[1]?.id, first.id);
+  });
+});
+
+test("agent state store deletes a conversation session and its linked records", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Delete me" });
+    const otherConversation = createConversation(cwd, { title: "Keep me" });
+    appendMessage(cwd, {
+      conversationId: conversation.id,
+      role: "user",
+      content: "remove this thread",
+    });
+    appendMessage(cwd, {
+      conversationId: otherConversation.id,
+      role: "user",
+      content: "keep this thread",
+    });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "delete thread data",
+    });
+    createRun(cwd, {
+      conversationId: otherConversation.id,
+      goal: "keep thread data",
+    });
+    const question = createQuestion(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      prompt: "delete?",
+      priority: "normal",
+      channelHints: ["dashboard"],
+    });
+    createHumanReply(cwd, {
+      questionId: question.id,
+      conversationId: conversation.id,
+      channel: "dashboard",
+      content: "yes",
+    });
+    createNotificationDelivery(cwd, {
+      channel: "dashboard",
+      status: "sent",
+      questionId: question.id,
+      runId: run.id,
+    });
+
+    const deleted = deleteConversation(cwd, conversation.id);
+
+    assert.equal(deleted, true);
+    assert.deepEqual(listConversations(cwd).map((entry) => entry.id), [otherConversation.id]);
+    assert.equal(listMessages(cwd, conversation.id).length, 0);
+    assert.equal(listRuns(cwd, conversation.id).length, 0);
+    assert.equal(listQuestions(cwd, conversation.id).length, 0);
+    assert.equal(listReplies(cwd, question.id).length, 0);
+    assert.equal(listNotificationDeliveries(cwd, { runId: run.id }).length, 0);
+    assert.equal(listMessages(cwd, otherConversation.id).length, 1);
+    assert.equal(listRuns(cwd, otherConversation.id).length, 1);
   });
 });

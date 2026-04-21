@@ -10,6 +10,7 @@ test("parsePinchyCliArgs defaults to help and recognizes core product commands",
   assert.equal(parsePinchyCliArgs(["logs"]).command, "logs");
   assert.equal(parsePinchyCliArgs(["setup"]).command, "setup");
   assert.equal(parsePinchyCliArgs(["version"]).command, "version");
+  assert.equal(parsePinchyCliArgs(["config"]).command, "config");
   assert.equal(parsePinchyCliArgs(["doctor"]).command, "doctor");
   assert.equal(parsePinchyCliArgs(["dashboard"]).command, "dashboard");
   assert.equal(parsePinchyCliArgs(["api"]).command, "api");
@@ -33,11 +34,12 @@ test("parsePinchyCliArgs treats unknown commands as help with an error", () => {
 });
 
 test("summarizePinchyCliHelp documents the npm-installable command surface", () => {
-  const help = summarizePinchyCliHelp(["init", "setup", "version", "up", "down", "status", "logs", "doctor", "dashboard", "api", "worker", "daemon", "agent", "smoke", "help"] satisfies PinchyCliCommandName[]);
+  const help = summarizePinchyCliHelp(["init", "setup", "version", "config", "up", "down", "status", "logs", "doctor", "dashboard", "api", "worker", "daemon", "agent", "smoke", "help"] satisfies PinchyCliCommandName[]);
   assert.match(help, /pinchy <command>/);
   assert.match(help, /pinchy init/);
   assert.match(help, /pinchy setup/);
   assert.match(help, /pinchy version/);
+  assert.match(help, /pinchy config/);
   assert.match(help, /pinchy up/);
   assert.match(help, /pinchy down/);
   assert.match(help, /pinchy status/);

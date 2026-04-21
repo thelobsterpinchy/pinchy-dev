@@ -1,13 +1,388 @@
-import type { DashboardArtifact, DashboardState, Message, Question, Run, SavedMemory } from "../../../packages/shared/src/contracts.js";
+import type { DashboardArtifact, DashboardState, Message, PinchyTask, Question, Run, SavedMemory } from "../../../packages/shared/src/contracts.js";
+import type { DashboardSettings } from "./control-plane-client.js";
+
+export function buildAgentChatChromeState(input: {
+  selectedConversationTitle?: string;
+  selectedConversationStatusLabel?: string;
+  selectedConversationStatusTone?: "info" | "warning" | "idle";
+  latestMessagePreview?: string;
+}) {
+  return {
+    title: input.selectedConversationTitle ?? "No conversation selected",
+    eyebrow: "Pinchy chat",
+    statusLabel: input.selectedConversationStatusLabel ?? "Start a thread",
+    statusTone: input.selectedConversationStatusTone ?? "idle",
+    helper: input.latestMessagePreview
+      ? `Latest: ${input.latestMessagePreview}`
+      : "Select a thread or send a prompt to start talking to Pinchy.",
+    composerLabel: input.selectedConversationTitle ? "Message Pinchy" : "Start talking",
+  };
+}
+
+export function buildTranscriptMessagePresentation(message: Pick<Message, "role">) {
+  if (message.role === "agent") {
+    return {
+      roleLabel: "Pinchy",
+      align: "start" as const,
+      accentColor: "#38bdf8",
+      background: "linear-gradient(180deg, #0f172a 0%, #111827 100%)",
+      borderColor: "#1d4ed8",
+      surfaceTone: "agent" as const,
+      bubbleWidth: "min(720px, 90%)",
+      bubblePadding: 12,
+      metaGap: 8,
+      shadow: "0 10px 22px rgba(15, 23, 42, 0.22)",
+    };
+  }
+
+  if (message.role === "user") {
+    return {
+      roleLabel: "You",
+      align: "end" as const,
+      accentColor: "#22c55e",
+      background: "linear-gradient(180deg, #052e16 0%, #14532d 100%)",
+      borderColor: "#15803d",
+      surfaceTone: "user" as const,
+      bubbleWidth: "min(720px, 90%)",
+      bubblePadding: 12,
+      metaGap: 8,
+      shadow: "0 10px 22px rgba(20, 83, 45, 0.16)",
+    };
+  }
+
+  return {
+    roleLabel: "System",
+    align: "center" as const,
+    accentColor: "#94a3b8",
+    background: "#0f172a",
+    borderColor: "#334155",
+    surfaceTone: "system" as const,
+    bubbleWidth: "min(640px, 100%)",
+    bubblePadding: 10,
+    metaGap: 6,
+    shadow: "0 6px 14px rgba(15, 23, 42, 0.14)",
+  };
+}
+
+export function buildConversationTranscriptState(input: {
+  messages: Array<Pick<Message, "id">>;
+  runs: Array<Pick<Run, "status">>;
+  hasUnreadLatestMessages: boolean;
+}) {
+  return {
+    showTypingIndicator: input.runs.some((run) => run.status === "running"),
+    typingLabel: "Pinchy is typing",
+    showNewMessagesNotice: input.hasUnreadLatestMessages && input.messages.length > 0,
+    newMessagesLabel: "New messages ↓",
+  };
+}
+
+export function decideTranscriptFollowUp(input: {
+  changedConversation: boolean;
+  messageCountChanged: boolean;
+  latestMessageChanged: boolean;
+  isNearBottom: boolean;
+}) {
+  const hasTranscriptUpdate = input.messageCountChanged || input.latestMessageChanged;
+  if (input.changedConversation || !hasTranscriptUpdate) {
+    return {
+      shouldScrollToBottom: false,
+      shouldMarkUnread: false,
+    };
+  }
+
+  if (input.isNearBottom) {
+    return {
+      shouldScrollToBottom: true,
+      shouldMarkUnread: false,
+    };
+  }
+
+  return {
+    shouldScrollToBottom: false,
+    shouldMarkUnread: true,
+  };
+}
+
+export function buildConversationListEntryPresentation(input: {
+  title: string;
+  status: string;
+  updatedAtLabel: string;
+  hasLatestRun: boolean;
+  isSelected: boolean;
+}) {
+  return {
+    title: input.title,
+    metaLabel: `updated ${input.updatedAtLabel}`,
+    badges: [
+      { label: input.status, tone: "status" as const },
+      ...(input.hasLatestRun ? [{ label: "latest run", tone: "accent" as const }] : []),
+    ],
+    containerTone: input.isSelected ? "selected" as const : "default" as const,
+    deleteLabel: "Delete",
+  };
+}
+
+export type SettingsDraftState = {
+  defaultProvider: string;
+  defaultModel: string;
+  defaultThinkingLevel: "off" | "low" | "medium" | "high";
+  defaultBaseUrl: string;
+};
+
+export function buildSettingsDraftFromSettings(settings?: DashboardSettings): SettingsDraftState {
+  return {
+    defaultProvider: settings?.defaultProvider ?? "",
+    defaultModel: settings?.defaultModel ?? "",
+    defaultThinkingLevel: settings?.defaultThinkingLevel ?? "medium",
+    defaultBaseUrl: settings?.defaultBaseUrl ?? "",
+  };
+}
+
+export function mergeSettingsDraftWithFetchedSettings(input: {
+  currentDraft: SettingsDraftState;
+  previousFetchedSettings?: DashboardSettings;
+  incomingSettings: DashboardSettings;
+  preserveUnsavedChanges: boolean;
+}): SettingsDraftState {
+  const incomingDraft = buildSettingsDraftFromSettings(input.incomingSettings);
+  if (!input.preserveUnsavedChanges) {
+    return incomingDraft;
+  }
+
+  const previousDraft = buildSettingsDraftFromSettings(input.previousFetchedSettings);
+  const hasUnsavedChanges = JSON.stringify(input.currentDraft) !== JSON.stringify(previousDraft);
+  return hasUnsavedChanges ? input.currentDraft : incomingDraft;
+}
+
+function formatSettingsSourceLabel(source?: "env" | "workspace" | "pi-agent" | "unset") {
+  if (source === "env") return "Environment override";
+  if (source === "workspace") return "Workspace override";
+  if (source === "pi-agent") return "Pi agent default";
+  return "Not set";
+}
+
+export function buildSettingsConfigurationState(input: {
+  defaultProvider?: string;
+  defaultModel?: string;
+  defaultThinkingLevel?: "off" | "low" | "medium" | "high";
+  defaultBaseUrl?: string;
+  workspaceDefaults?: {
+    defaultProvider?: string;
+    defaultModel?: string;
+    defaultThinkingLevel?: "off" | "low" | "medium" | "high";
+    defaultBaseUrl?: string;
+  };
+  sources?: {
+    defaultProvider?: "env" | "workspace" | "pi-agent" | "unset";
+    defaultModel?: "env" | "workspace" | "pi-agent" | "unset";
+    defaultThinkingLevel?: "env" | "workspace" | "pi-agent" | "unset";
+    defaultBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
+  };
+}) {
+  const workspaceOverrideSummary = input.workspaceDefaults?.defaultProvider || input.workspaceDefaults?.defaultModel || input.workspaceDefaults?.defaultThinkingLevel || input.workspaceDefaults?.defaultBaseUrl
+    ? "This workspace has saved runtime overrides in .pinchy-runtime.json."
+    : "No workspace override is saved yet. Pinchy is inheriting the backend runtime defaults above.";
+
+  return {
+    title: "Agent settings",
+    subtitle: "OpenClaw-style runtime defaults for how Pinchy launches Pi-backed work in this workspace",
+    providerPresets: [
+      {
+        id: "local-server",
+        label: "Local server",
+        provider: "openai-compatible",
+        suggestedModel: "",
+        helper: "Point Pinchy at a local OpenAI-compatible endpoint and auto-detect its model list.",
+      },
+      {
+        id: "codex-cloud",
+        label: "Codex cloud",
+        provider: "openai-codex",
+        suggestedModel: "gpt-5.4",
+        helper: "Matches the current Pi agent Codex-style default on this machine.",
+      },
+      {
+        id: "openai-compatible",
+        label: "OpenAI-compatible",
+        provider: "openai-compatible",
+        suggestedModel: "gpt-4.1",
+        helper: "Use when routing Pinchy through an OpenAI-compatible endpoint.",
+      },
+    ],
+    summaryRows: [
+      { label: "provider", value: input.defaultProvider || "—", sourceLabel: formatSettingsSourceLabel(input.sources?.defaultProvider) },
+      { label: "model", value: input.defaultModel || "—", sourceLabel: formatSettingsSourceLabel(input.sources?.defaultModel) },
+      { label: "thinking", value: input.defaultThinkingLevel || "medium", sourceLabel: formatSettingsSourceLabel(input.sources?.defaultThinkingLevel) },
+      { label: "endpoint", value: input.defaultBaseUrl || "—", sourceLabel: formatSettingsSourceLabel(input.sources?.defaultBaseUrl) },
+    ],
+    workspaceOverrideSummary,
+    guidance: [
+      "These values are stored in .pinchy-runtime.json for the active workspace when you save an override.",
+      "Use Ollama for the closest OpenClaw-style local-model setup, or keep Codex if you want the current cloud-backed Pi default.",
+      "You can point Pinchy at a local OpenAI-compatible server by setting an endpoint/base URL for the active workspace.",
+      "Raise thinking level for harder code tasks; lower it for fast iteration.",
+    ],
+  };
+}
 
 type ConversationWorkspaceSummary = ReturnType<typeof summarizeConversationWorkspace>;
 
-export type DashboardPage = "overview" | "conversations" | "memory" | "operations" | "tools";
+export type DashboardPage = "overview" | "conversations" | "memory" | "operations" | "tools" | "settings";
 
-export const DASHBOARD_PAGES: DashboardPage[] = ["overview", "conversations", "memory", "operations", "tools"];
+export const DASHBOARD_PAGES: DashboardPage[] = ["overview", "conversations", "memory", "operations", "tools", "settings"];
 
-export function resolveDashboardLandingPage(lastVisitedPage?: DashboardPage) {
-  return lastVisitedPage ?? "conversations";
+export function resolveDashboardLandingPage(_lastVisitedPage?: DashboardPage) {
+  return "conversations";
+}
+
+export function buildDashboardSidebarState(input: {
+  isOpen: boolean;
+  page: DashboardPage;
+}) {
+  return {
+    isOpen: input.isOpen,
+    width: input.isOpen ? 320 : 0,
+    toggleLabel: input.isOpen ? "Hide menu" : "Show menu",
+    title: input.page === "conversations" ? "Pinchy chat" : "Pinchy",
+    subtitle: input.page === "conversations"
+      ? "Chat-first workspace"
+      : "Local coding control surface",
+  };
+}
+
+export function buildDashboardUtilityRailState(input: {
+  isOpen: boolean;
+  page: DashboardPage;
+}) {
+  const isConversationPage = input.page === "conversations";
+  return {
+    isOpen: isConversationPage ? input.isOpen : false,
+    width: isConversationPage && input.isOpen ? 380 : 0,
+    toggleLabel: input.isOpen ? "Hide tools rail" : "Show tools rail",
+    title: "Parallel workbench",
+    subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
+  };
+}
+
+export function buildConversationShellHeaderState(input: {
+  page: DashboardPage;
+  utilityRailToggleLabel: string;
+}) {
+  return {
+    sidebarToggle: {
+      icon: "menu" as const,
+      align: "left" as const,
+      label: "Show menu",
+    },
+    utilityRailToggle: input.page === "conversations"
+      ? {
+        icon: "utility-rail" as const,
+        align: "right" as const,
+        label: input.utilityRailToggleLabel,
+      }
+      : undefined,
+  };
+}
+
+export function buildChatWorkbenchState(input: {
+  pendingTasks: number;
+  pendingApprovals: number;
+  recentRuns: number;
+  hasActiveConversationRun: boolean;
+}) {
+  return {
+    title: "Parallel workbench",
+    subtitle: "Chat with Pinchy while tasks, approvals, and background runs continue alongside this thread.",
+    badges: [
+      { label: `${input.pendingTasks} queued task${input.pendingTasks === 1 ? "" : "s"}`, tone: "info" as const },
+      { label: `${input.pendingApprovals} approval${input.pendingApprovals === 1 ? " waiting" : "s waiting"}`, tone: input.pendingApprovals > 0 ? "warning" as const : "idle" as const },
+      { label: `${input.recentRuns} recent run${input.recentRuns === 1 ? "" : "s"}`, tone: "idle" as const },
+      { label: input.hasActiveConversationRun ? "thread active" : "thread idle", tone: input.hasActiveConversationRun ? "info" as const : "idle" as const },
+    ],
+    helper: "Queue focused background work here without leaving the main conversation.",
+  };
+}
+
+export function parseDelegationPlanDraft(draft: string) {
+  return draft
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separatorIndex = line.indexOf("::");
+      if (separatorIndex < 0) return undefined;
+      const title = line.slice(0, separatorIndex).trim();
+      const prompt = line.slice(separatorIndex + 2).trim();
+      if (!title || !prompt) return undefined;
+      return { title, prompt };
+    })
+    .filter((entry): entry is { title: string; prompt: string } => Boolean(entry));
+}
+
+export function buildChatWorkspacePanelState(input: {
+  hasSelectedConversation: boolean;
+  linkedTaskCounts: {
+    pending: number;
+    running: number;
+    blocked: number;
+    done: number;
+  };
+  queuedTaskCount: number;
+  delegationTaskCount: number;
+}) {
+  const activeWorkflowCount = input.linkedTaskCounts.pending + input.linkedTaskCounts.running + input.linkedTaskCounts.blocked;
+  const completedWorkflowCount = input.linkedTaskCounts.done;
+  const queuedTaskLabel = `${input.queuedTaskCount} queued task draft${input.queuedTaskCount === 1 ? "" : "s"}`;
+  const delegationTaskLabel = `${input.delegationTaskCount} delegation task${input.delegationTaskCount === 1 ? "" : "s"} ready`;
+
+  return {
+    tools: {
+      title: "Tools & delegation",
+      summary: input.hasSelectedConversation
+        ? `${queuedTaskLabel} • ${delegationTaskLabel}`
+        : "Select a conversation to unlock bounded task tools for this thread.",
+      defaultExpanded: false,
+      toggleLabel: "Show tools",
+    },
+    workflows: {
+      title: "Linked workflows",
+      summary: activeWorkflowCount > 0
+        ? `${activeWorkflowCount} active workflow${activeWorkflowCount === 1 ? "" : "s"} • ${completedWorkflowCount} completed for this thread.`
+        : "No linked workflows for this conversation yet.",
+      defaultExpanded: activeWorkflowCount > 0,
+      toggleLabel: "Show workflows",
+      activeCount: activeWorkflowCount,
+    },
+  };
+}
+
+export function buildConversationOrchestrationState(input: {
+  conversationId?: string;
+  tasks: PinchyTask[];
+}) {
+  const linkedTasks = input.conversationId
+    ? input.tasks.filter((task) => task.conversationId === input.conversationId)
+      .sort((left, right) => {
+        const leftActive = left.status === "running" ? 0 : left.status === "pending" ? 1 : left.status === "blocked" ? 2 : 3;
+        const rightActive = right.status === "running" ? 0 : right.status === "pending" ? 1 : right.status === "blocked" ? 2 : 3;
+        if (leftActive !== rightActive) return leftActive - rightActive;
+        return right.updatedAt.localeCompare(left.updatedAt);
+      })
+    : [];
+
+  return {
+    title: "Parallel workflows",
+    subtitle: "Pinchy can keep orchestrating this thread while bounded tasks run in parallel.",
+    helper: `${linkedTasks.length} linked background task${linkedTasks.length === 1 ? "" : "s"} for this conversation.`,
+    linkedTasks,
+    counts: {
+      pending: linkedTasks.filter((task) => task.status === "pending").length,
+      running: linkedTasks.filter((task) => task.status === "running").length,
+      blocked: linkedTasks.filter((task) => task.status === "blocked").length,
+      done: linkedTasks.filter((task) => task.status === "done").length,
+    },
+  };
 }
 
 export function workspaceConversationSelectionStorageKey(workspaceId: string) {

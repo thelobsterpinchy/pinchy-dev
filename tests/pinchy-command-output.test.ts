@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   formatPinchyVersion,
   summarizeStatus,
+  summarizeStatusJson,
   summarizeLogs,
+  summarizeLogsJson,
   summarizeStopResults,
 } from "../apps/host/src/pinchy-command-output.js";
 
@@ -24,6 +26,14 @@ test("summarizeStatus includes counts and next-step hints", () => {
   assert.match(summary, /pinchy logs dashboard/);
 });
 
+test("summarizeStatusJson returns a machine-readable status payload", () => {
+  const summary = summarizeStatusJson([
+    { name: "api", status: "running", pid: 1001, logPath: "/repo/.pinchy/run/api.log" },
+  ]);
+  const parsed = JSON.parse(summary) as { services: Array<{ name: string }> };
+  assert.equal(parsed.services[0]?.name, "api");
+});
+
 test("summarizeLogs renders per-service headers and a fallback for empty logs", () => {
   const summary = summarizeLogs([
     { name: "api", logPath: "/repo/.pinchy/run/api.log", content: "api line" },
@@ -34,6 +44,14 @@ test("summarizeLogs renders per-service headers and a fallback for empty logs", 
   assert.match(summary, /api line/);
   assert.match(summary, /worker/);
   assert.match(summary, /no log output yet/);
+});
+
+test("summarizeLogsJson returns machine-readable log sections", () => {
+  const summary = summarizeLogsJson([
+    { name: "api", logPath: "/repo/.pinchy/run/api.log", content: "api line" },
+  ]);
+  const parsed = JSON.parse(summary) as { sections: Array<{ name: string }> };
+  assert.equal(parsed.sections[0]?.name, "api");
 });
 
 test("summarizeStopResults reports whether services were stopped or already inactive", () => {

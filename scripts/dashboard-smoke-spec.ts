@@ -28,10 +28,14 @@ export const DASHBOARD_SMOKE_SPECS: DashboardSmokePageSpec[] = [
     selectors: [
       { name: "nav-conversations", selector: testIdSelector("nav-page-conversations") },
       { name: "workspace-select", selector: testIdSelector("workspace-select") },
+      { name: "conversation-shell-sidebar-toggle", selector: testIdSelector("conversation-shell-sidebar-toggle") },
+      { name: "conversation-shell-utility-toggle", selector: testIdSelector("conversation-shell-utility-toggle") },
       { name: "conversation-title-input", selector: testIdSelector("conversation-title-input") },
       { name: "conversation-create", selector: testIdSelector("conversation-create") },
       { name: "conversation-composer-input", selector: testIdSelector("conversation-composer-input") },
       { name: "conversation-composer-submit", selector: testIdSelector("conversation-composer-submit") },
+      { name: "chat-tools-toggle", selector: testIdSelector("chat-tools-toggle") },
+      { name: "chat-workflows-toggle", selector: testIdSelector("chat-workflows-toggle") },
       { name: "onboarding-preset-debug-current-issue", selector: testIdSelector("onboarding-preset-debug-current-issue") },
     ],
   },
@@ -63,6 +67,20 @@ export const DASHBOARD_SMOKE_SPECS: DashboardSmokePageSpec[] = [
     selectors: [
       { name: "nav-tools", selector: testIdSelector("nav-page-tools") },
       { name: "artifact-search", selector: testIdSelector("artifact-search") },
+      { name: "tools-agent-resource-skill", selector: testIdSelector("tools-agent-resource-skill") },
+    ],
+  },
+  {
+    page: "settings",
+    selectors: [
+      { name: "nav-settings", selector: testIdSelector("nav-page-settings") },
+      { name: "settings-provider-input", selector: testIdSelector("settings-provider-input") },
+      { name: "settings-preset-local-server", selector: testIdSelector("settings-preset-local-server") },
+      { name: "settings-model-input", selector: testIdSelector("settings-model-input") },
+      { name: "settings-base-url-input", selector: testIdSelector("settings-base-url-input") },
+      { name: "settings-detected-model", selector: testIdSelector("settings-detected-model") },
+      { name: "settings-thinking-select", selector: testIdSelector("settings-thinking-select") },
+      { name: "settings-save", selector: testIdSelector("settings-save") },
     ],
   },
 ];

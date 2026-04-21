@@ -62,6 +62,7 @@ test("shared contracts provide a reusable dashboard state shape", () => {
     tasks: [{ id: "task-1", title: "Demo", prompt: "Do work", status: "pending", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:00.000Z" }],
     approvals: [{ id: "approval-1", toolName: "desktop_click", reason: "Need approval", status: "pending", payload: {} }],
     generatedTools: ["demo-tool"],
+    agentResources: [{ type: "skill", name: "tdd-implementation", scope: "workspace", path: "/repo/.pi/skills/tdd-implementation/SKILL.md" }],
     routines: [{ name: "demo-routine", steps: [] }],
     artifacts: [{ name: "artifact.png", size: 123, mtimeMs: 456, toolName: "browser_debug_scan", note: "demo", tags: ["qa"] }],
     memories: [{ id: "memory-1", title: "Decision", content: "Pinchy wraps Pi", kind: "decision", tags: ["architecture"], pinned: true, createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:00.000Z" }],

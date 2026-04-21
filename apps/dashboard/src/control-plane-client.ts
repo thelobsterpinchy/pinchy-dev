@@ -22,6 +22,30 @@ export type ConversationState = {
 const CONTROL_PLANE_PREFIX = "/api/control-plane";
 const DASHBOARD_PREFIX = "/api";
 
+export type LocalServerModelDiscovery = {
+  models: string[];
+  detectedModel?: string;
+};
+
+export type DashboardSettings = {
+  defaultProvider?: string;
+  defaultModel?: string;
+  defaultThinkingLevel?: "off" | "low" | "medium" | "high";
+  defaultBaseUrl?: string;
+  workspaceDefaults?: {
+    defaultProvider?: string;
+    defaultModel?: string;
+    defaultThinkingLevel?: "off" | "low" | "medium" | "high";
+    defaultBaseUrl?: string;
+  };
+  sources?: {
+    defaultProvider?: "env" | "workspace" | "pi-agent" | "unset";
+    defaultModel?: "env" | "workspace" | "pi-agent" | "unset";
+    defaultThinkingLevel?: "env" | "workspace" | "pi-agent" | "unset";
+    defaultBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
+  };
+};
+
 async function fetchJson<T>(path: string, init?: RequestInit, fetchImpl: typeof fetch = fetch): Promise<T> {
   const response = await fetchImpl(path, init);
   if (!response.ok) {
@@ -46,6 +70,12 @@ export function createConversation(title: string, fetchImpl?: typeof fetch) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ title }),
+  }, fetchImpl);
+}
+
+export function deleteConversation(conversationId: string, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${CONTROL_PLANE_PREFIX}/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
   }, fetchImpl);
 }
 
@@ -108,6 +138,26 @@ export function cancelRun(runId: string, fetchImpl?: typeof fetch) {
   }, fetchImpl);
 }
 
+export function fetchSettings(fetchImpl?: typeof fetch) {
+  return fetchJson<DashboardSettings>(`${DASHBOARD_PREFIX}/settings`, undefined, fetchImpl);
+}
+
+export function updateSettings(patch: DashboardSettings, fetchImpl?: typeof fetch) {
+  return fetchJson<DashboardSettings>(`${DASHBOARD_PREFIX}/settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  }, fetchImpl);
+}
+
+export function discoverLocalServerModel(baseUrl: string, fetchImpl?: typeof fetch) {
+  return fetchJson<LocalServerModelDiscovery>(`${DASHBOARD_PREFIX}/settings/discover-model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ baseUrl }),
+  }, fetchImpl);
+}
+
 export function fetchWorkspaces(fetchImpl?: typeof fetch) {
   return fetchJson<WorkspaceEntry[]>(`${DASHBOARD_PREFIX}/workspaces`, undefined, fetchImpl);
 }
@@ -123,6 +173,12 @@ export function registerWorkspace(input: { path: string; name?: string }, fetchI
 export function setActiveWorkspace(workspaceId: string, fetchImpl?: typeof fetch) {
   return fetchJson<{ ok: true; workspace: WorkspaceEntry }>(`${DASHBOARD_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/activate`, {
     method: "POST",
+  }, fetchImpl);
+}
+
+export function deleteWorkspace(workspaceId: string, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true; workspace: WorkspaceEntry; activeWorkspaceId?: string }>(`${DASHBOARD_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}`, {
+    method: "DELETE",
   }, fetchImpl);
 }
 
@@ -143,6 +199,18 @@ export function updateMemory(id: string, patch: Partial<Pick<SavedMemory, "title
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(patch),
+  }, fetchImpl);
+}
+
+export function submitTaskDelegationPlan(input: {
+  conversationId: string;
+  runId?: string;
+  tasks: Array<{ title: string; prompt: string }>;
+}, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/delegate-plan`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
   }, fetchImpl);
 }
 

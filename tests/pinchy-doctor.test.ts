@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPinchyDoctorReport, summarizePinchyDoctorReport } from "../apps/host/src/pinchy-doctor.js";
+import { buildPinchyDoctorReport, summarizePinchyDoctorReport, summarizePinchyDoctorReportJson } from "../apps/host/src/pinchy-doctor.js";
 
 test("buildPinchyDoctorReport flags missing workspace initialization and optional local tools", () => {
   const report = buildPinchyDoctorReport("/tmp/project", {
@@ -22,23 +22,54 @@ test("buildPinchyDoctorReport flags missing workspace initialization and optiona
   assert.match(tesseractCheck?.hint ?? "", /brew install tesseract/);
 });
 
+test("buildPinchyDoctorReport detects Playwright and local model readiness", () => {
+  const existingPaths = new Set([
+    "/tmp/project/.pi/settings.json",
+    "/tmp/project/.pinchy-runtime.json",
+    "/tmp/project/.pinchy-goals.json",
+    "/tmp/project/.pinchy-watch.json",
+    "/tmp/project/node_modules/.bin/playwright",
+  ]);
+
+  const report = buildPinchyDoctorReport("/tmp/project", {
+    pathExists: (path) => existingPaths.has(path),
+    commandExists: (command) => ["git", "ollama"].includes(command),
+  });
+
+  assert.equal(report.checks.find((check) => check.name === "playwright_chromium")?.status, "ok");
+  assert.equal(report.checks.find((check) => check.name === "local_models")?.status, "ok");
+});
+
 test("buildPinchyDoctorReport reports a healthy initialized workspace when core files and tools are available", () => {
   const existingPaths = new Set([
     "/tmp/project/.pi/settings.json",
     "/tmp/project/.pinchy-runtime.json",
     "/tmp/project/.pinchy-goals.json",
     "/tmp/project/.pinchy-watch.json",
+    "/tmp/project/node_modules/.bin/playwright",
   ]);
 
   const report = buildPinchyDoctorReport("/tmp/project", {
     pathExists: (path) => existingPaths.has(path),
-    commandExists: (command) => ["git", "cliclick", "tesseract"].includes(command),
+    commandExists: (command) => ["git", "cliclick", "tesseract", "ollama"].includes(command),
   });
 
   assert.equal(report.summary.status, "ok");
   assert.equal(report.summary.failCount, 0);
   assert.equal(report.summary.warnCount, 0);
   assert.ok(report.checks.every((check) => check.status === "ok"));
+});
+
+test("summarizePinchyDoctorReportJson returns machine-readable doctor output", () => {
+  const report = buildPinchyDoctorReport("/tmp/project", {
+    pathExists: () => true,
+    commandExists: () => true,
+  });
+
+  const json = summarizePinchyDoctorReportJson(report);
+  const parsed = JSON.parse(json) as { cwd: string; summary: { status: string } };
+  assert.equal(parsed.cwd, "/tmp/project");
+  assert.equal(parsed.summary.status, "ok");
 });
 
 test("summarizePinchyDoctorReport renders actionable doctor output", () => {
@@ -52,5 +83,6 @@ test("summarizePinchyDoctorReport renders actionable doctor output", () => {
   assert.match(summary, /workspace_init: ok/);
   assert.match(summary, /cliclick: warn/);
   assert.match(summary, /tesseract: warn/);
+  assert.match(summary, /local_models:/);
   assert.match(summary, /brew install cliclick/);
 });

@@ -23,6 +23,21 @@ test("enqueueTask stores a pending task", () => {
   });
 });
 
+test("enqueueTask can persist orchestration links when a task is spawned from chat", () => {
+  withTempDir((cwd) => {
+    const task = enqueueTask(cwd, "Audit worker logs", "Inspect the worker logs and report bounded findings.", {
+      source: "user",
+      conversationId: "conversation-1",
+      runId: "run-1",
+    });
+
+    assert.equal(task.source, "user");
+    assert.equal(task.conversationId, "conversation-1");
+    assert.equal(task.runId, "run-1");
+    assert.equal(loadTasks(cwd)[0]?.conversationId, "conversation-1");
+  });
+});
+
 test("updateTaskStatus updates a queued task", () => {
   withTempDir((cwd) => {
     const task = enqueueTask(cwd, "Test task", "Do a thing");

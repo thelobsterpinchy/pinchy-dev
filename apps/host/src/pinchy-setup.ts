@@ -33,6 +33,10 @@ export function resolvePlaywrightInstallCommand(packageRoot = getPinchyPackageRo
   };
 }
 
+function hasLocalModelSupport(hasCommand: (command: string) => boolean) {
+  return hasCommand("ollama") || hasCommand("lmstudio") || hasCommand("lms");
+}
+
 export function buildPinchySetupPlan(input: {
   playwrightCommand?: { command: string; args: string[] };
   commandExists?: (command: string) => boolean;
@@ -51,6 +55,7 @@ export function buildPinchySetupPlan(input: {
       { name: "git", status: hasCommand("git") ? "ok" : "warn", hint: hasCommand("git") ? undefined : "Install Git." },
       { name: "cliclick", status: hasCommand("cliclick") ? "ok" : "warn", hint: hasCommand("cliclick") ? undefined : "brew install cliclick" },
       { name: "tesseract", status: hasCommand("tesseract") ? "ok" : "warn", hint: hasCommand("tesseract") ? undefined : "brew install tesseract" },
+      { name: "local_models", status: hasLocalModelSupport(hasCommand) ? "ok" : "warn", hint: hasLocalModelSupport(hasCommand) ? undefined : "Install or start Ollama / LM Studio." },
     ],
   };
 }

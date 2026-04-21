@@ -49,6 +49,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function readCompletedMessage(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
 function readString(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
@@ -74,7 +78,12 @@ function readQuestion(value: unknown): WaitingForHumanRunOutcome["question"] | u
 
 export function normalizeRunOutcome(value: unknown, fallback: LegacyRunExecutionResult): RunOutcome {
   if (!isObject(value)) {
-    return { kind: "completed", ...fallback };
+    return {
+      kind: "completed",
+      summary: fallback.summary,
+      message: readCompletedMessage(value, fallback.message),
+      piSessionPath: fallback.piSessionPath,
+    };
   }
 
   const kind = value.kind;

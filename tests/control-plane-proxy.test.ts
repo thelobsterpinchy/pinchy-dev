@@ -29,7 +29,7 @@ test("control plane proxy forwards method, body, and content type to the API", a
   assert.equal(calls[0]?.init?.headers && (calls[0].init.headers as Record<string, string>)["content-type"], "application/json");
 });
 
-test("control plane proxy forwards workspace override headers to the API", async () => {
+test("control plane proxy forwards ascii workspace override headers to the API unchanged", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {
     calls.push({ input, init });
@@ -48,6 +48,30 @@ test("control plane proxy forwards workspace override headers to the API", async
   });
 
   assert.equal((calls[0]?.init?.headers as Record<string, string>)?.["x-pinchy-workspace-path"], "/tmp/demo-repo");
+});
+
+test("control plane proxy ascii-encodes unicode workspace override headers before fetch", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await requestControlPlaneApi({
+    apiBaseUrl: "http://127.0.0.1:4320",
+    path: "/conversations",
+    method: "GET",
+    fetchImpl: fetchMock,
+    headers: { "x-pinchy-workspace-path": "/Users/brandon/Documents/Documents - Brandon’s Mac mini/Projects/pinchy-dev" },
+  });
+
+  assert.equal(
+    (calls[0]?.init?.headers as Record<string, string>)?.["x-pinchy-workspace-path"],
+    encodeURIComponent("/Users/brandon/Documents/Documents - Brandon’s Mac mini/Projects/pinchy-dev"),
+  );
 });
 
 test("control plane proxy preserves query strings for GET requests", async () => {

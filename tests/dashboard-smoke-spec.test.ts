@@ -11,6 +11,17 @@ test("dashboard smoke selector registry stays unique and data-testid-based", () 
   const selectors = collectSmokeSelectors(DASHBOARD_SMOKE_SPECS);
   assert.equal(new Set(selectors.map((entry) => entry.name)).size, selectors.length);
   assert.ok(selectors.every((entry) => entry.selector.startsWith("[data-testid")));
+  assert.ok(selectors.some((entry) => entry.name === "conversation-shell-sidebar-toggle"));
+  assert.ok(selectors.some((entry) => entry.name === "conversation-shell-utility-toggle"));
+  assert.ok(selectors.some((entry) => entry.name === "chat-tools-toggle"));
+  assert.ok(selectors.some((entry) => entry.name === "chat-workflows-toggle"));
+  assert.ok(selectors.some((entry) => entry.name === "nav-settings"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-provider-input"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-preset-local-server"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-detected-model"));
+  assert.ok(selectors.some((entry) => entry.name === "tools-agent-resource-skill"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-base-url-input"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-save"));
 });
 
 test("dashboard smoke spec validation returns no errors for the checked-in spec", () => {
