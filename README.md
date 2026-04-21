@@ -2,6 +2,57 @@
 
 `pinchy-dev` is a local-first autonomous coding agent workspace built on the **Pi coding agent** framework.
 
+## Install as a CLI
+
+Pinchy now exposes a real installable `pinchy` command.
+
+Current install paths:
+
+```bash
+# from the GitHub repo
+npm install -g github:thelobsterpinchy/pinchy-dev
+
+# or from a local checkout
+npm install -g .
+```
+
+Then use it from any repository:
+
+```bash
+cd /path/to/your/repo
+pinchy init
+pinchy up
+pinchy status
+pinchy agent
+```
+
+Core commands:
+- `pinchy init`
+- `pinchy setup`
+- `pinchy doctor`
+- `pinchy version`
+- `pinchy up`
+- `pinchy down`
+- `pinchy status`
+- `pinchy logs [api|worker|dashboard]`
+- `pinchy dashboard`
+- `pinchy api`
+- `pinchy worker`
+- `pinchy daemon`
+- `pinchy agent`
+- `pinchy smoke`
+
+Recommended first-run flow:
+
+```bash
+cd /path/to/your/repo
+pinchy init
+pinchy setup
+pinchy doctor
+pinchy up
+pinchy agent
+```
+
 It is designed to run on your own machine, use your local LLMs, debug websites/apps, and follow strict coding discipline such as TDD, design patterns, clean code, explicit structure, and safe refactoring.
 
 ## Included capabilities
@@ -104,17 +155,30 @@ For browser-debugging access, Pinchy’s Playwright-backed browser tools require
 
 If Playwright is upgraded and browser tools start failing with a missing executable message, rerun that command.
 
+## Runtime boundary
+
+Pinchy now treats these path classes explicitly:
+- **workspace-local**: `.pi/`, `.pinchy-runtime.json`, `.pinchy-goals.json`, `.pinchy-watch.json`, `.pinchy/run`, `.pinchy/state`, `logs/`
+- **user-global**: `~/.pinchy/cache`, `~/.pinchy/tmp`
+
+That keeps portable repo behavior inside the repo while leaving room for user-level cache/temp data outside it.
+
+## Releasing
+
+- manual release steps: `docs/RELEASING.md`
+- packaged install verification: `npm run pinchy:install-smoke`
+- tag-based npm publish workflow: `.github/workflows/publish-npm.yml`
+
 ## Run locally
 
 ```bash
 cd pinchy-dev
 npm install
 npm run playwright:install
-npm run agent
-npm run daemon
-npm run api
-npm run worker
-npm run dashboard
+npm run pinchy -- init
+npm run pinchy -- up
+npm run pinchy -- status
+npm run pinchy -- agent
 npm run dashboard:web
 npm test
 ```

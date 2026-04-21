@@ -1,0 +1,8 @@
+node_modules/
+apps/**/node_modules/
+.pinchy/
+.pinchy-*.json
+artifacts/
+logs/
+tests/
+.github/

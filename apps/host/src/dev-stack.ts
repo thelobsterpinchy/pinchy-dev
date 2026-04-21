@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync, openSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync, openSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { buildTsxEntrypointCommand, resolvePinchyPackagePath } from "./package-runtime.js";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:4320";
 const DEFAULT_DASHBOARD_BASE_URL = "http://127.0.0.1:4310";
@@ -27,10 +28,13 @@ export type ManagedServiceReadinessCheck = {
 };
 
 export function buildManagedServiceDefinitions(): ManagedServiceDefinition[] {
+  const api = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/api/src/server.ts"));
+  const worker = buildTsxEntrypointCommand(resolvePinchyPackagePath("services/agent-worker/src/worker.ts"));
+  const dashboard = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/dashboard.ts"));
   return [
-    { name: "api", command: "npm", args: ["run", "api"] },
-    { name: "worker", command: "npm", args: ["run", "worker"] },
-    { name: "dashboard", command: "npm", args: ["run", "dashboard"] },
+    { name: "api", command: api.command, args: api.args },
+    { name: "worker", command: worker.command, args: worker.args },
+    { name: "dashboard", command: dashboard.command, args: dashboard.args },
   ];
 }
 
@@ -125,6 +129,48 @@ export async function waitForManagedServiceReadiness(checks = buildManagedServic
       await sleep(150);
     }
   }
+}
+
+export type ManagedServiceObservedStatus = ManagedServiceName | "missing";
+
+export type ManagedServiceInspection = {
+  name: ManagedServiceName;
+  status: "running" | "stopped";
+  pid?: number;
+  logPath: string;
+};
+
+export function stopManagedService(cwd: string, name: ManagedServiceName) {
+  const { pidPath } = getManagedServiceStatePaths(cwd, name);
+  const storedPid = readStoredPid(pidPath);
+  if (!storedPid || !isManagedServicePidAlive(storedPid)) {
+    rmSync(pidPath, { force: true });
+    return { name, status: "stopped" as const, pid: storedPid };
+  }
+  try {
+    process.kill(storedPid, "SIGTERM");
+  } catch {
+    // best effort shutdown
+  }
+  rmSync(pidPath, { force: true });
+  return { name, status: "stopped" as const, pid: storedPid };
+}
+
+export function stopManagedServices(cwd: string, definitions = buildManagedServiceDefinitions()) {
+  return definitions.map((service) => stopManagedService(cwd, service.name));
+}
+
+export function inspectManagedServices(cwd: string, definitions = buildManagedServiceDefinitions()): ManagedServiceInspection[] {
+  return definitions.map((service) => {
+    const { pidPath, logPath } = getManagedServiceStatePaths(cwd, service.name);
+    const pid = readStoredPid(pidPath);
+    return {
+      name: service.name,
+      status: pid && isManagedServicePidAlive(pid) ? "running" : "stopped",
+      pid,
+      logPath,
+    };
+  });
 }
 
 export function summarizeManagedServices(results: ManagedServiceStartResult[]) {

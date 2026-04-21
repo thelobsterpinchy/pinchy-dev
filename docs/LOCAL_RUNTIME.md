@@ -1,12 +1,43 @@
 # Local Runtime
 
+## Installable CLI mode
+
+Pinchy can now be installed as a CLI and used outside the source checkout.
+
+```bash
+npm install -g github:thelobsterpinchy/pinchy-dev
+cd /path/to/your/repo
+pinchy init
+pinchy up
+pinchy status
+pinchy agent
+```
+
+`pinchy init` copies the packaged `.pi/` resources into the target repository and creates default `.pinchy-runtime.json`, `.pinchy-goals.json`, and `.pinchy-watch.json` files when missing.
+
+Recommended first-run flow:
+
+```bash
+pinchy init
+pinchy setup
+pinchy doctor
+pinchy up
+pinchy agent
+```
+
+`pinchy setup` installs Playwright Chromium for browser tooling and reminds you about optional local tools.
+
+`pinchy doctor` checks workspace initialization, core config presence, and optional local tooling such as `cliclick` and `tesseract`.
+
 ## Interactive mode
 
 ```bash
+pinchy agent
+# or from the source checkout
 npm run agent
 ```
 
-This starts a Pi interactive session using the local project `.pi/` resources.
+This starts a Pi interactive session using the initialized project `.pi/` resources.
 
 ## Daemon mode
 
@@ -49,6 +80,8 @@ Do not put secrets, auth tokens, or private session state in `.pinchy-runtime.js
 ## API mode
 
 ```bash
+pinchy api
+# or from the source checkout
 npm run api
 ```
 
@@ -58,6 +91,8 @@ Default port:
 ## Worker mode
 
 ```bash
+pinchy worker
+# or from the source checkout
 npm run worker
 ```
 
@@ -105,6 +140,8 @@ The bootstrap flow now installs this automatically. If browser tools later fail 
 Server/API:
 
 ```bash
+pinchy dashboard
+# or from the source checkout
 npm run dashboard
 ```
 
@@ -119,6 +156,36 @@ Default ports:
 - `4311` — React dashboard app
 
 Run both if you want the richer operator UI with live updates, generated-tool review + git diff, artifact modal viewing, daemon health, run timeline visibility, API-backed task/approval controls, and one-click runtime reload requests.
+
+## Stack lifecycle helpers
+
+```bash
+pinchy version
+pinchy setup
+pinchy doctor
+pinchy up
+pinchy down
+pinchy status
+pinchy logs
+pinchy logs dashboard
+pinchy smoke
+npm run pinchy:install-smoke
+```
+
+## Runtime boundary
+
+Workspace-local paths:
+- `.pi/`
+- `.pinchy-runtime.json`
+- `.pinchy-goals.json`
+- `.pinchy-watch.json`
+- `.pinchy/run/`
+- `.pinchy/state/`
+- `logs/`
+
+User-global paths reserved for install-safe cache/temp data:
+- `~/.pinchy/cache`
+- `~/.pinchy/tmp`
 
 ## Suggested local supervision
 

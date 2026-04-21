@@ -10,14 +10,16 @@ import {
   summarizeManagedServices,
 } from "../apps/host/src/dev-stack.js";
 
-test("buildManagedServiceDefinitions returns the expected local stack services and commands", () => {
+test("buildManagedServiceDefinitions returns installable direct-entry service commands", () => {
   const services = buildManagedServiceDefinitions();
 
   assert.deepEqual(services.map((service) => service.name), ["api", "worker", "dashboard"]);
-  assert.equal(services[0]?.command, "npm");
-  assert.deepEqual(services[0]?.args, ["run", "api"]);
-  assert.deepEqual(services[1]?.args, ["run", "worker"]);
-  assert.deepEqual(services[2]?.args, ["run", "dashboard"]);
+  assert.equal(typeof services[0]?.command, "string");
+  assert.ok((services[0]?.command ?? "").length > 0);
+  assert.ok((services[0]?.args ?? []).some((entry) => /apps\/api\/src\/server\.ts$/.test(entry)));
+  assert.ok((services[1]?.args ?? []).some((entry) => /services\/agent-worker\/src\/worker\.ts$/.test(entry)));
+  assert.ok((services[2]?.args ?? []).some((entry) => /apps\/host\/src\/dashboard\.ts$/.test(entry)));
+  assert.ok((services[0]?.args ?? []).every((entry) => !/^run$/.test(entry)));
 });
 
 test("getManagedServiceStatePaths keeps pid and log files under .pinchy/run", () => {

@@ -1,15 +1,58 @@
 {
   "name": "pinchy-dev",
-  "private": true,
-  "version": "0.2.0",
+  "private": false,
+  "version": "0.2.2",
+  "description": "Local-first autonomous coding agent workspace built on Pi with dashboard, API, worker, and browser debugging workflows.",
+  "keywords": [
+    "pinchy",
+    "coding-agent",
+    "local-first",
+    "pi",
+    "playwright",
+    "react",
+    "typescript"
+  ],
+  "homepage": "https://github.com/thelobsterpinchy/pinchy-dev#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thelobsterpinchy/pinchy-dev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thelobsterpinchy/pinchy-dev/issues"
+  },
+  "license": "MIT",
   "type": "module",
+  "bin": {
+    "pinchy": "bin/pinchy.js"
+  },
+  "files": [
+    "bin/",
+    ".pi/",
+    "apps/api/",
+    "apps/dashboard/dist/",
+    "apps/dashboard/index.html",
+    "apps/dashboard/package.json",
+    "apps/dashboard/src/",
+    "apps/dashboard/vite.config.ts",
+    "apps/host/src/",
+    "apps/desktop/README.md",
+    "apps/web/README.md",
+    "packages/",
+    "services/",
+    "scripts/",
+    "README.md",
+    "docs/",
+    "LICENSE"
+  ],
   "scripts": {
+    "pinchy": "node bin/pinchy.js",
     "agent": "tsx apps/host/src/main.ts",
     "daemon": "tsx apps/host/src/daemon.ts",
     "dashboard": "tsx apps/host/src/dashboard.ts",
     "dashboard:web": "vite --config apps/dashboard/vite.config.ts",
     "dashboard:build": "vite build --config apps/dashboard/vite.config.ts",
     "dashboard:smoke": "tsx scripts/dashboard-smoke.ts",
+    "pinchy:install-smoke": "tsx scripts/pinchy-install-smoke.ts",
     "playwright:install": "playwright install chromium",
     "api": "tsx apps/api/src/server.ts",
     "worker": "tsx services/agent-worker/src/worker.ts",
@@ -25,7 +68,8 @@
     "playwright": "^1.54.2",
     "pngjs": "^7.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tsx": "^4.20.3"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
@@ -33,7 +77,6 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.7.0",
-    "tsx": "^4.20.3",
     "typescript": "^5.9.2",
     "vite": "^6.4.2"
   }
