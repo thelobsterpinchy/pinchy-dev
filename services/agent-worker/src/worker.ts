@@ -1,6 +1,8 @@
-import { listQuestions, listReplies, listRuns, updateQuestionStatus, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
+import { appendMessage, claimNextQueuedRun, listAgentGuidances, listQuestions, listReplies, listRuns, markAgentGuidanceApplied, updateQuestionStatus, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
 import { appendAuditEntry } from "../../../apps/host/src/audit-log.js";
 import { shouldRunAsCliEntry } from "../../../apps/host/src/module-entry.js";
+import { appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate } from "../../../apps/host/src/orchestration-thread.js";
+import { updateTaskStatusByRunId } from "../../../apps/host/src/task-queue.js";
 import type { NotificationDelivery, Question, Run } from "../../../packages/shared/src/contracts.js";
 import { createQuestionDeliveryDispatcher } from "../../../services/notifiers/dispatcher.js";
 import { createPiRunExecutor } from "./pi-run-executor.js";
@@ -19,18 +21,64 @@ type DeliveryDependencies = {
   dispatchQuestion: (cwd: string, question: Question) => Promise<NotificationDelivery>;
 };
 
-function getNextQueuedRun(cwd: string) {
-  return listRuns(cwd)
-    .filter((run) => run.status === "queued")
-    .reverse()[0];
+function mapRunStatusToTaskStatus(status: Run["status"]): "done" | "blocked" {
+  return status === "completed" ? "done" : "blocked";
 }
 
-export async function processNextQueuedRun(cwd: string, dependencies: WorkerDependencies) {
-  const run = getNextQueuedRun(cwd);
-  if (!run) return undefined;
+function summarizeTaskStatus(task: { title: string; status: "done" | "blocked" | "pending" | "running" }) {
+  const statusText = task.status === "done"
+    ? "done"
+    : task.status === "running"
+      ? "running"
+      : task.status === "blocked"
+        ? "blocked"
+        : "queued";
+  return `Background task update: ${task.title} is now ${statusText}.`;
+}
 
+function consumePendingGuidanceForRun(cwd: string, run: Run) {
+  const pendingGuidance = listAgentGuidances(cwd, { runId: run.id, status: "pending" });
+  if (pendingGuidance.length === 0) {
+    return { guidanceText: undefined, guidanceRecords: [] as ReturnType<typeof listAgentGuidances> };
+  }
+
+  const guidanceText = pendingGuidance
+    .map((guidance, index) => `${index + 1}. ${guidance.content}`)
+    .join("\n");
+
+  appendMessage(cwd, {
+    conversationId: run.conversationId,
+    role: "agent",
+    content: `Scoped guidance acknowledged for this agent task:\n${guidanceText}`,
+    runId: run.id,
+  });
+
+  for (const guidance of pendingGuidance) {
+    markAgentGuidanceApplied(cwd, guidance.id);
+  }
+
+  return { guidanceText, guidanceRecords: pendingGuidance };
+}
+
+function applyGuidanceToRun(run: Run, guidanceText?: string) {
+  if (!guidanceText) {
+    return run;
+  }
+  return {
+    ...run,
+    goal: `${run.goal}\n\nAdditional scoped user guidance for this agent task:\n${guidanceText}`,
+  };
+}
+
+function applyGuidanceToReply(reply: string, guidanceText?: string) {
+  if (!guidanceText) {
+    return reply;
+  }
+  return `${reply}\n\nAdditional scoped user guidance for this agent task:\n${guidanceText}`;
+}
+
+async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: WorkerDependencies) {
   const startedAt = Date.now();
-  const runningRun = updateRunStatus(cwd, run.id, "running") ?? { ...run, status: "running" as const };
   appendAuditEntry(cwd, {
     type: "worker_run_started",
     runId: runningRun.id,
@@ -39,13 +87,28 @@ export async function processNextQueuedRun(cwd: string, dependencies: WorkerDepe
   });
 
   try {
-    const result = await dependencies.executeRun(runningRun);
+    const { guidanceText } = consumePendingGuidanceForRun(cwd, runningRun);
+    const result = await dependencies.executeRun(applyGuidanceToRun(runningRun, guidanceText));
     const outcome = normalizeRunOutcome(result, result);
     const persistedRun = applyRunOutcome({
       cwd,
       run: runningRun,
       outcome,
     });
+    if (persistedRun?.id) {
+      const updatedTask = updateTaskStatusByRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
+      if (updatedTask?.conversationId) {
+        appendOrchestrationUpdate(cwd, {
+          conversationId: updatedTask.conversationId,
+          runId: updatedTask.runId,
+          intro: summarizeTaskStatus(updatedTask),
+        });
+        appendFinalThreadSynthesisIfReady(cwd, {
+          conversationId: updatedTask.conversationId,
+          runId: updatedTask.runId,
+        });
+      }
+    }
     appendAuditEntry(cwd, {
       type: "worker_run_finished",
       runId: runningRun.id,
@@ -76,7 +139,46 @@ export async function processNextQueuedRun(cwd: string, dependencies: WorkerDepe
         durationMs: Date.now() - startedAt,
       },
     });
+    const updatedTask = updateTaskStatusByRunId(cwd, runningRun.id, "blocked");
+    if (updatedTask?.conversationId) {
+      appendOrchestrationUpdate(cwd, {
+        conversationId: updatedTask.conversationId,
+        runId: updatedTask.runId,
+        intro: summarizeTaskStatus(updatedTask),
+      });
+    }
     throw error;
+  }
+}
+
+export async function processNextQueuedRun(cwd: string, dependencies: WorkerDependencies) {
+  const run = claimNextQueuedRun(cwd);
+  if (!run) return undefined;
+  return executeClaimedRun(cwd, run, dependencies);
+}
+
+export async function processAvailableQueuedRuns(cwd: string, dependencies: WorkerDependencies, options: { concurrency?: number } = {}) {
+  const concurrency = Math.max(1, Math.floor(options.concurrency ?? 1));
+  const processed: Run[] = [];
+
+  while (true) {
+    const claimedRuns: Run[] = [];
+    for (let index = 0; index < concurrency; index += 1) {
+      const claimedRun = claimNextQueuedRun(cwd);
+      if (!claimedRun) break;
+      claimedRuns.push(claimedRun);
+    }
+
+    if (claimedRuns.length === 0) {
+      return processed;
+    }
+
+    const results = await Promise.all(claimedRuns.map((run) => executeClaimedRun(cwd, run, dependencies)));
+    processed.push(...results.filter((run): run is Run => Boolean(run)));
+
+    if (claimedRuns.length < concurrency) {
+      return processed;
+    }
   }
 }
 
@@ -146,13 +248,28 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
   });
 
   try {
-    const result = await dependencies.resumeRun(runningRun, resumable.reply);
+    const { guidanceText } = consumePendingGuidanceForRun(cwd, runningRun);
+    const result = await dependencies.resumeRun(runningRun, applyGuidanceToReply(resumable.reply, guidanceText));
     const outcome = normalizeRunOutcome(result, result);
     const persistedRun = applyRunOutcome({
       cwd,
       run: runningRun,
       outcome,
     });
+    if (persistedRun?.id) {
+      const updatedTask = updateTaskStatusByRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
+      if (updatedTask?.conversationId) {
+        appendOrchestrationUpdate(cwd, {
+          conversationId: updatedTask.conversationId,
+          runId: updatedTask.runId,
+          intro: summarizeTaskStatus(updatedTask),
+        });
+        appendFinalThreadSynthesisIfReady(cwd, {
+          conversationId: updatedTask.conversationId,
+          runId: updatedTask.runId,
+        });
+      }
+    }
     appendAuditEntry(cwd, {
       type: "worker_run_finished",
       runId: runningRun.id,
@@ -183,6 +300,14 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
         durationMs: Date.now() - startedAt,
       },
     });
+    const updatedTask = updateTaskStatusByRunId(cwd, runningRun.id, "blocked");
+    if (updatedTask?.conversationId) {
+      appendOrchestrationUpdate(cwd, {
+        conversationId: updatedTask.conversationId,
+        runId: updatedTask.runId,
+        intro: summarizeTaskStatus(updatedTask),
+      });
+    }
     throw error;
   }
 }
@@ -210,11 +335,13 @@ async function main() {
   const cwd = process.env.PINCHY_CWD ?? process.cwd();
   const once = process.env.PINCHY_WORKER_ONCE === "true";
   const intervalMs = Number(process.env.PINCHY_WORKER_INTERVAL_MS ?? 5000);
+  const concurrency = Math.max(1, Number(process.env.PINCHY_WORKER_CONCURRENCY ?? 2));
 
   do {
     const resumed = await processNextResumableRun(cwd, { resumeRun: defaultResumeRun });
     const delivered = resumed ? undefined : await processNextPendingQuestionDelivery(cwd, { dispatchQuestion: defaultDispatchQuestion });
-    const processed = resumed ?? delivered ?? await processNextQueuedRun(cwd, { executeRun: defaultExecuteRun });
+    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun }, { concurrency });
+    const processed = resumed ?? delivered ?? processedRuns[0];
     if (once) return;
     if (!processed) await sleep(intervalMs);
   } while (true);

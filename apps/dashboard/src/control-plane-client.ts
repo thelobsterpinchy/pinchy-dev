@@ -1,23 +1,15 @@
 import type {
   Conversation,
+  ConversationState,
   HumanReply,
   Message,
-  NotificationDelivery,
-  Question,
   Run,
   RunKind,
   SavedMemory,
   WorkspaceEntry,
 } from "../../../packages/shared/src/contracts.js";
 
-export type ConversationState = {
-  conversation: Conversation;
-  messages: Message[];
-  runs: Run[];
-  questions: Question[];
-  replies: HumanReply[];
-  deliveries: NotificationDelivery[];
-};
+export type { ConversationState } from "../../../packages/shared/src/contracts.js";
 
 const CONTROL_PLANE_PREFIX = "/api/control-plane";
 const DASHBOARD_PREFIX = "/api";
@@ -32,17 +24,26 @@ export type DashboardSettings = {
   defaultModel?: string;
   defaultThinkingLevel?: "off" | "low" | "medium" | "high";
   defaultBaseUrl?: string;
+  autoDeleteEnabled?: boolean;
+  autoDeleteDays?: number;
+  dangerModeEnabled?: boolean;
   workspaceDefaults?: {
     defaultProvider?: string;
     defaultModel?: string;
     defaultThinkingLevel?: "off" | "low" | "medium" | "high";
     defaultBaseUrl?: string;
+    autoDeleteEnabled?: boolean;
+    autoDeleteDays?: number;
+    dangerModeEnabled?: boolean;
   };
   sources?: {
     defaultProvider?: "env" | "workspace" | "pi-agent" | "unset";
     defaultModel?: "env" | "workspace" | "pi-agent" | "unset";
     defaultThinkingLevel?: "env" | "workspace" | "pi-agent" | "unset";
     defaultBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
+    autoDeleteEnabled?: "env" | "workspace" | "pi-agent" | "unset";
+    autoDeleteDays?: "env" | "workspace" | "pi-agent" | "unset";
+    dangerModeEnabled?: "env" | "workspace" | "pi-agent" | "unset";
   };
 };
 
@@ -138,6 +139,14 @@ export function cancelRun(runId: string, fetchImpl?: typeof fetch) {
   }, fetchImpl);
 }
 
+export function submitAgentGuidance(input: { conversationId: string; taskId: string; runId?: string; content: string }, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/agent-guidance`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  }, fetchImpl);
+}
+
 export function fetchSettings(fetchImpl?: typeof fetch) {
   return fetchJson<DashboardSettings>(`${DASHBOARD_PREFIX}/settings`, undefined, fetchImpl);
 }
@@ -205,7 +214,7 @@ export function updateMemory(id: string, patch: Partial<Pick<SavedMemory, "title
 export function submitTaskDelegationPlan(input: {
   conversationId: string;
   runId?: string;
-  tasks: Array<{ title: string; prompt: string }>;
+  tasks: Array<{ id?: string; title: string; prompt: string; dependsOn?: string[] }>;
 }, fetchImpl?: typeof fetch) {
   return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/delegate-plan`, {
     method: "POST",

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4
+
+- keep one persistent Pi session per conversation by introducing canonical conversation session bindings in agent state
+- expose conversation session diagnostics through dashboard state and aggregate conversation state for easier debugging
+- fix reused idle Pi sessions so follow-up turns execute with `prompt(...)` instead of replaying stale assistant history
+- verify live same-thread session reuse end-to-end so a second message can recall context from the earlier turn
+- continue maturing the chat-first dashboard with agent-session, guidance, retention, and orchestration improvements now included in the release package
+
 ## 0.2.3
 
 - add workspace-local `defaultBaseUrl` runtime support for local LLM and OpenAI-compatible endpoints

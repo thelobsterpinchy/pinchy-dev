@@ -1,10 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const PINCHY_CONFIG_KEYS = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "defaultBaseUrl"] as const;
+export const PINCHY_CONFIG_KEYS = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "defaultBaseUrl", "autoDeleteEnabled", "autoDeleteDays", "dangerModeEnabled"] as const;
 export type PinchyConfigKey = typeof PINCHY_CONFIG_KEYS[number];
 
-type RuntimeConfigRecord = Partial<Record<PinchyConfigKey, string>>;
+type RuntimeConfigValue = string | boolean | number;
+type RuntimeConfigRecord = Partial<Record<PinchyConfigKey, RuntimeConfigValue>>;
 
 function loadRuntimeConfigFile(cwd: string): RuntimeConfigRecord {
   const path = resolve(cwd, ".pinchy-runtime.json");
@@ -31,7 +32,7 @@ export function readPinchyConfigValue(cwd: string, key: string) {
   return loadRuntimeConfigFile(cwd)[key];
 }
 
-export function setPinchyConfigValue(cwd: string, key: string, value: string) {
+export function setPinchyConfigValue(cwd: string, key: string, value: RuntimeConfigValue) {
   assertSupportedConfigKey(key);
   const config = loadRuntimeConfigFile(cwd);
   config[key] = value;

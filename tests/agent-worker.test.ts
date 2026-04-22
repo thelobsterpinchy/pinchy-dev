@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConversation, createHumanReply, createNotificationDelivery, createQuestion, createRun, listMessages, listNotificationDeliveries, listRuns, listQuestions, markQuestionAnswered, updateRunStatus } from "../apps/host/src/agent-state-store.js";
+import { createAgentGuidance, createConversation, createHumanReply, createNotificationDelivery, createQuestion, createRun, listAgentGuidances, listMessages, listNotificationDeliveries, listRuns, listQuestions, markQuestionAnswered, updateRunStatus } from "../apps/host/src/agent-state-store.js";
+import { enqueueTask, loadTasks, updateTaskStatus } from "../apps/host/src/task-queue.js";
 import { readAuditEntries } from "../apps/host/src/audit-log.js";
-import { processNextPendingQuestionDelivery, processNextQueuedRun, processNextResumableRun } from "../services/agent-worker/src/worker.js";
+import { processAvailableQueuedRuns, processNextPendingQuestionDelivery, processNextQueuedRun, processNextResumableRun } from "../services/agent-worker/src/worker.js";
 
 function withTempDir(run: (cwd: string) => Promise<void> | void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-worker-"));
@@ -53,6 +54,39 @@ test("processNextQueuedRun completes the next queued run, writes an agent messag
   });
 });
 
+test("processNextQueuedRun applies pending scoped agent guidance before execution", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Queued agent guidance" });
+    const run = createRun(cwd, { conversationId: conversation.id, goal: "Inspect a delegated task" });
+    createAgentGuidance(cwd, {
+      conversationId: conversation.id,
+      taskId: "task-1",
+      runId: run.id,
+      content: "Stay focused on tests only.",
+    });
+
+    let observedGoal = "";
+    await processNextQueuedRun(cwd, {
+      executeRun: async (claimedRun) => {
+        observedGoal = claimedRun.goal;
+        return {
+          kind: "completed",
+          summary: "Completed with guidance",
+          message: "Finished guided run",
+        };
+      },
+    });
+
+    assert.match(observedGoal, /Inspect a delegated task/);
+    assert.match(observedGoal, /Additional scoped user guidance/i);
+    assert.match(observedGoal, /Stay focused on tests only\./);
+    assert.equal(listAgentGuidances(cwd, { runId: run.id, status: "applied" }).length, 1);
+    const messages = listMessages(cwd, conversation.id);
+    assert.match(messages[0]?.content ?? "", /Scoped guidance acknowledged/i);
+    assert.match(messages[0]?.content ?? "", /Stay focused on tests only\./);
+  });
+});
+
 test("processNextQueuedRun returns undefined when no queued run exists", async () => {
   await withTempDir(async (cwd) => {
     const result = await processNextQueuedRun(cwd, {
@@ -60,6 +94,75 @@ test("processNextQueuedRun returns undefined when no queued run exists", async (
     });
 
     assert.equal(result, undefined);
+  });
+});
+
+test("processAvailableQueuedRuns executes multiple queued runs in parallel up to the worker concurrency", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Parallel worker demo" });
+    const runA = createRun(cwd, { conversationId: conversation.id, goal: "Task A" });
+    const runB = createRun(cwd, { conversationId: conversation.id, goal: "Task B" });
+    const runC = createRun(cwd, { conversationId: conversation.id, goal: "Task C" });
+    const started: string[] = [];
+    const releases = new Map<string, () => void>();
+
+    const execution = processAvailableQueuedRuns(cwd, {
+      executeRun: async (run) => {
+        started.push(run.id);
+        await new Promise<void>((resolve) => {
+          releases.set(run.id, resolve);
+        });
+        return {
+          summary: `Completed: ${run.goal}`,
+          message: `Finished run ${run.id}`,
+        };
+      },
+    }, { concurrency: 2 });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(started.length, 2);
+    assert.ok(!started.includes(runC.id) || !started.includes(runB.id) || !started.includes(runA.id));
+
+    for (const startedRunId of [...started]) {
+      releases.get(startedRunId)?.();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(started.length, 3);
+    const lastStartedRunId = started[2];
+    assert.ok(lastStartedRunId);
+    releases.get(lastStartedRunId)?.();
+
+    const processed = await execution;
+    assert.equal(processed.length, 3);
+  });
+});
+
+
+test("processNextQueuedRun marks a linked delegated task done and appends orchestration progress plus final synthesis", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Worker linked task demo" });
+    const run = createRun(cwd, { conversationId: conversation.id, goal: "Investigate failing tests" });
+    const task = enqueueTask(cwd, "Investigate failing tests", "Investigate failing tests.");
+    updateTaskStatus(cwd, task.id, "running", { runId: run.id, conversationId: conversation.id });
+
+    await processNextQueuedRun(cwd, {
+      executeRun: async (claimedRun) => ({
+        summary: `Completed: ${claimedRun.goal}`,
+        message: `Finished run ${claimedRun.id}`,
+      }),
+    });
+
+    assert.equal(loadTasks(cwd)[0]?.status, "done");
+    const messages = listMessages(cwd, conversation.id);
+    assert.equal(messages.length, 3);
+    assert.equal(messages[0]?.content, `Finished run ${run.id}`);
+    assert.equal(messages[1]?.kind, "orchestration_update");
+    assert.match(messages[1]?.content ?? "", /background task update/i);
+    assert.match(messages[1]?.content ?? "", /Investigate failing tests/);
+    assert.equal(messages[2]?.kind, "orchestration_final");
+    assert.match(messages[2]?.content ?? "", /final synthesis summary/i);
+    assert.match(messages[2]?.content ?? "", /ready to synthesize the final thread update/i);
   });
 });
 
@@ -238,6 +341,52 @@ test("processNextPendingQuestionDelivery dispatches the next blocked question an
     assert.equal(sent?.question.id, question.id);
     assert.equal(listNotificationDeliveries(cwd).length, 1);
     assert.equal(listNotificationDeliveries(cwd)[0]?.questionId, question.id);
+  });
+});
+
+test("processNextResumableRun appends pending scoped agent guidance to the resume reply", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Resume guidance demo" });
+    const run = createRun(cwd, { conversationId: conversation.id, goal: "Continue after steering" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", piSessionPath: "/tmp/pi-session-resume-guidance.json" });
+    const question = createQuestion(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      prompt: "Need an answer",
+      priority: "normal",
+      channelHints: ["dashboard"],
+    });
+    createHumanReply(cwd, {
+      conversationId: conversation.id,
+      questionId: question.id,
+      channel: "dashboard",
+      content: "Continue.",
+    });
+    markQuestionAnswered(cwd, question.id);
+    createAgentGuidance(cwd, {
+      conversationId: conversation.id,
+      taskId: "task-1",
+      runId: run.id,
+      content: "Do not broaden scope.",
+    });
+
+    let observedReply = "";
+    await processNextResumableRun(cwd, {
+      resumeRun: async (_run, reply) => {
+        observedReply = reply;
+        return {
+          kind: "completed",
+          summary: "Resumed with guidance",
+          message: "Applied resume guidance",
+          piSessionPath: "/tmp/pi-session-resume-guidance.json",
+        };
+      },
+    });
+
+    assert.match(observedReply, /^Continue\./);
+    assert.match(observedReply, /Additional scoped user guidance/i);
+    assert.match(observedReply, /Do not broaden scope\./);
+    assert.equal(listAgentGuidances(cwd, { runId: run.id, status: "applied" }).length, 1);
   });
 });
 

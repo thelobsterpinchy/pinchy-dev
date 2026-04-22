@@ -3,13 +3,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ApprovalRecord, DashboardArtifact, DashboardState, PinchyTask, TaskStatus } from "../../../packages/shared/src/contracts.js";
-import { appendMessage } from "./agent-state-store.js";
 import { filterArtifactIndex } from "./artifact-index.js";
 import { filterActionableApprovals, loadApprovalPolicy, setApprovalScope } from "./approval-policy.js";
 import { loadGeneratedToolRegistry } from "./generated-tool-registry.js";
 import { loadRunContext } from "./run-context.js";
 import { loadRoutines } from "./routine-store.js";
-import { enqueueTask, loadTasks, updateTaskStatus } from "./task-queue.js";
+import { enqueueDelegationPlan, enqueueTask, loadTasks, updateTaskStatus } from "./task-queue.js";
 import { loadGeneratedToolSource } from "./tool-review.js";
 import { loadRunHistory } from "./run-history.js";
 import { loadDaemonHealth } from "./daemon-health.js";
@@ -20,10 +19,13 @@ import { resolveDashboardAssetRequest, resolveDashboardShellMode } from "./dashb
 import { shouldRunAsCliEntry } from "./module-entry.js";
 import { deleteWorkspace, getActiveWorkspace, listWorkspaces, registerWorkspace, setActiveWorkspace } from "./workspace-registry.js";
 import { buildPinchyDoctorReport } from "./pinchy-doctor.js";
+import { appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate } from "./orchestration-thread.js";
 import { readPinchyConfigValue, setPinchyConfigValue } from "./pinchy-config.js";
 import { THINKING_LEVELS, loadPinchyRuntimeConfigDetails, type ThinkingLevel } from "./runtime-config.js";
 import { discoverLocalServerModel } from "./local-server-model-discovery.js";
 import { listPiAgentResources } from "./pi-resource-inventory.js";
+import { applyAutoDeleteRetention } from "./auto-delete-retention.js";
+import { createAgentGuidance, listAgentGuidances, listConversationSessions } from "./agent-state-store.js";
 
 type SseClient = {
   id: number;
@@ -331,11 +333,17 @@ function readDashboardSettings(cwd: string) {
     defaultModel: effective.defaultModel,
     defaultThinkingLevel: effective.defaultThinkingLevel,
     defaultBaseUrl: effective.defaultBaseUrl,
+    autoDeleteEnabled: effective.autoDeleteEnabled,
+    autoDeleteDays: effective.autoDeleteDays,
+    dangerModeEnabled: effective.dangerModeEnabled,
     workspaceDefaults: {
       defaultProvider: readPinchyConfigValue(cwd, "defaultProvider"),
       defaultModel: readPinchyConfigValue(cwd, "defaultModel"),
       defaultThinkingLevel: readPinchyConfigValue(cwd, "defaultThinkingLevel") as ThinkingLevel | undefined,
       defaultBaseUrl: readPinchyConfigValue(cwd, "defaultBaseUrl"),
+      autoDeleteEnabled: readPinchyConfigValue(cwd, "autoDeleteEnabled") as boolean | undefined,
+      autoDeleteDays: readPinchyConfigValue(cwd, "autoDeleteDays") as number | undefined,
+      dangerModeEnabled: readPinchyConfigValue(cwd, "dangerModeEnabled") as boolean | undefined,
     },
     sources: effective.sources,
   };
@@ -343,11 +351,14 @@ function readDashboardSettings(cwd: string) {
 
 function buildApiState(cwd: string): DashboardState {
   const activeWorkspacePath = getActiveWorkspacePath(cwd);
+  applyAutoDeleteRetention(activeWorkspacePath);
   return {
+    conversationSessions: listConversationSessions(activeWorkspacePath),
     runContext: loadRunContext(activeWorkspacePath),
     workspaces: listWorkspaces(cwd),
     activeWorkspaceId: getActiveWorkspace(cwd)?.id,
     tasks: loadTasks(activeWorkspacePath),
+    agentGuidances: listAgentGuidances(activeWorkspacePath),
     approvals: filterActionableApprovals(activeWorkspacePath, loadApprovals(activeWorkspacePath)),
     generatedTools: loadGeneratedToolRegistry(activeWorkspacePath),
     agentResources: listPiAgentResources(activeWorkspacePath),
@@ -388,16 +399,6 @@ function loadGeneratedToolDiff(cwd: string, name: string) {
   }
 }
 
-function appendTaskOrchestrationMessage(cwd: string, task: Pick<PinchyTask, "conversationId" | "runId" | "title">, content: string) {
-  if (!task.conversationId) return;
-  appendMessage(cwd, {
-    conversationId: task.conversationId,
-    role: "agent",
-    content,
-    runId: task.runId,
-  });
-}
-
 function summarizeTaskStatus(task: Pick<PinchyTask, "title" | "status">) {
   const statusText = task.status === "done"
     ? "done"
@@ -409,12 +410,16 @@ function summarizeTaskStatus(task: Pick<PinchyTask, "title" | "status">) {
   return `Background task update: ${task.title} is now ${statusText}.`;
 }
 
-function isDelegationTask(value: unknown): value is { title: string; prompt: string } {
+function isDelegationTask(value: unknown): value is { id?: string; title: string; prompt: string; dependsOn?: string[] } {
   return Boolean(
     value
     && typeof value === "object"
+    && (typeof (value as { id?: unknown }).id === "undefined" || typeof (value as { id?: unknown }).id === "string")
     && typeof (value as { title?: unknown }).title === "string"
     && typeof (value as { prompt?: unknown }).prompt === "string"
+    && (typeof (value as { dependsOn?: unknown }).dependsOn === "undefined"
+      || (Array.isArray((value as { dependsOn?: unknown }).dependsOn)
+        && (value as { dependsOn: unknown[] }).dependsOn.every((entry) => typeof entry === "string")))
     && (value as { title: string }).title.trim()
     && (value as { prompt: string }).prompt.trim(),
   );
@@ -424,36 +429,67 @@ async function handleAction(cwd: string, action: string, payload: Record<string,
   if (action === "task" && typeof payload.id === "string" && typeof payload.status === "string") {
     const updated = updateTaskStatus(cwd, payload.id, payload.status as TaskStatus);
     if (updated?.conversationId) {
-      appendTaskOrchestrationMessage(cwd, updated, summarizeTaskStatus(updated));
+      appendOrchestrationUpdate(cwd, {
+        conversationId: updated.conversationId,
+        runId: updated.runId,
+        intro: summarizeTaskStatus(updated),
+      });
+      appendFinalThreadSynthesisIfReady(cwd, {
+        conversationId: updated.conversationId,
+        runId: updated.runId,
+      });
     }
     return;
   }
   if (action === "queue-task" && typeof payload.title === "string" && typeof payload.prompt === "string") {
     const task = enqueueTask(cwd, payload.title, payload.prompt, {
-      source: payload.source === "user" || payload.source === "daemon" || payload.source === "qa" || payload.source === "watcher" || payload.source === "routine"
+      source: payload.source === "user" || payload.source === "agent" || payload.source === "daemon" || payload.source === "qa" || payload.source === "watcher" || payload.source === "routine"
         ? payload.source
         : undefined,
       conversationId: typeof payload.conversationId === "string" ? payload.conversationId : undefined,
       runId: typeof payload.runId === "string" ? payload.runId : undefined,
+      dependsOnTaskIds: Array.isArray(payload.dependsOnTaskIds) ? payload.dependsOnTaskIds.filter((entry): entry is string => typeof entry === "string") : undefined,
     });
     if (task.conversationId) {
-      appendTaskOrchestrationMessage(cwd, task, `I spawned a bounded background task for this thread: ${task.title}. I will keep orchestrating and summarize progress here.`);
+      appendOrchestrationUpdate(cwd, {
+        conversationId: task.conversationId,
+        runId: task.runId,
+        intro: `I spawned a bounded background task for this thread: ${task.title}. I will keep orchestrating and summarize progress here.`,
+        tasks: [task],
+      });
     }
     return;
   }
-  if (action === "delegate-plan" && typeof payload.conversationId === "string" && Array.isArray(payload.tasks)) {
-    const tasks = payload.tasks.filter(isDelegationTask).map((task) => enqueueTask(cwd, task.title.trim(), task.prompt.trim(), {
-      source: "user",
+  if (action === "agent-guidance" && typeof payload.conversationId === "string" && typeof payload.taskId === "string" && typeof payload.content === "string") {
+    const guidance = createAgentGuidance(cwd, {
       conversationId: payload.conversationId,
+      taskId: payload.taskId,
       runId: typeof payload.runId === "string" ? payload.runId : undefined,
-    }));
+      content: payload.content.trim(),
+    });
+    return guidance;
+  }
+  if (action === "delegate-plan" && typeof payload.conversationId === "string" && Array.isArray(payload.tasks)) {
+    const conversationId = payload.conversationId;
+    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    const tasks = enqueueDelegationPlan(cwd, payload.tasks.filter(isDelegationTask).map((task) => ({
+      id: task.id,
+      title: task.title.trim(),
+      prompt: task.prompt.trim(),
+      dependsOn: task.dependsOn?.map((entry) => entry.trim()).filter(Boolean),
+    })), {
+      source: "user",
+      conversationId,
+      runId,
+    });
     if (tasks.length > 0) {
       const taskList = tasks.map((task) => task.title).join(", ");
-      appendTaskOrchestrationMessage(cwd, {
-        conversationId: payload.conversationId,
-        runId: typeof payload.runId === "string" ? payload.runId : undefined,
-        title: tasks[0]?.title ?? "delegated work",
-      }, `I delegated ${tasks.length} bounded background tasks for this thread: ${taskList}. I will keep orchestrating and summarize progress here.`);
+      appendOrchestrationUpdate(cwd, {
+        conversationId,
+        runId,
+        intro: `I delegated ${tasks.length} bounded background tasks for this thread: ${taskList}. I will keep orchestrating and summarize progress here.`,
+        tasks,
+      });
     }
     return;
   }
@@ -608,6 +644,19 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
           }
           if (typeof payload.defaultBaseUrl === "string") {
             setPinchyConfigValue(activeWorkspacePath, "defaultBaseUrl", payload.defaultBaseUrl.trim());
+          }
+          if (typeof payload.autoDeleteEnabled === "boolean") {
+            setPinchyConfigValue(activeWorkspacePath, "autoDeleteEnabled", payload.autoDeleteEnabled);
+          }
+          if (typeof payload.autoDeleteDays === "number") {
+            if (!Number.isInteger(payload.autoDeleteDays) || payload.autoDeleteDays <= 0) {
+              sendJson(res, 400, { ok: false, error: `invalid auto delete days: ${payload.autoDeleteDays}` });
+              return;
+            }
+            setPinchyConfigValue(activeWorkspacePath, "autoDeleteDays", payload.autoDeleteDays);
+          }
+          if (typeof payload.dangerModeEnabled === "boolean") {
+            setPinchyConfigValue(activeWorkspacePath, "dangerModeEnabled", payload.dangerModeEnabled);
           }
           sendJson(res, 200, readDashboardSettings(activeWorkspacePath));
         })

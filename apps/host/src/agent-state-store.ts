@@ -1,14 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type {
   Conversation,
   ConversationStatus,
   HumanReply,
   Message,
+  MessageKind,
   MessageRole,
   NotificationChannel,
+  AgentGuidance,
   NotificationDelivery,
   NotificationDeliveryStatus,
+  ConversationSessionBinding,
   Question,
   QuestionPriority,
   QuestionStatus,
@@ -24,6 +27,10 @@ const RUNS_FILE = "runs.json";
 const QUESTIONS_FILE = "questions.json";
 const REPLIES_FILE = "replies.json";
 const DELIVERIES_FILE = "deliveries.json";
+const AGENT_GUIDANCES_FILE = "agent-guidances.json";
+const CONVERSATION_SESSIONS_FILE = "conversation-sessions.json";
+const LOCK_RETRY_MS = 10;
+const LOCK_TIMEOUT_MS = 1000;
 
 function getStateFilePath(cwd: string, fileName: string) {
   return resolve(cwd, STATE_DIR, fileName);
@@ -43,6 +50,37 @@ function saveCollection<T>(cwd: string, fileName: string, items: T[]) {
   const path = getStateFilePath(cwd, fileName);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(items, null, 2), "utf8");
+}
+
+function sleepSync(ms: number) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withStateFileLock<T>(cwd: string, fileName: string, fn: () => T): T {
+  const lockPath = `${getStateFilePath(cwd, fileName)}.lock`;
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const startedAt = Date.now();
+
+  while (true) {
+    try {
+      mkdirSync(lockPath, { recursive: false });
+      break;
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") {
+        throw error;
+      }
+      if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for state lock: ${fileName}`);
+      }
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+  }
 }
 
 function createId(prefix: string) {
@@ -89,10 +127,12 @@ export function deleteConversation(cwd: string, conversationId: string) {
   saveCollection(cwd, QUESTIONS_FILE, questions.filter((question) => question.conversationId !== conversationId));
   saveCollection(cwd, REPLIES_FILE, loadCollection<HumanReply>(cwd, REPLIES_FILE).filter((reply) => !removedQuestionIds.has(reply.questionId) && reply.conversationId !== conversationId));
   saveCollection(cwd, DELIVERIES_FILE, loadCollection<NotificationDelivery>(cwd, DELIVERIES_FILE).filter((delivery) => !removedQuestionIds.has(delivery.questionId ?? "") && !removedRunIds.has(delivery.runId ?? "")));
+  saveCollection(cwd, AGENT_GUIDANCES_FILE, loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE).filter((guidance) => guidance.conversationId !== conversationId));
+  saveCollection(cwd, CONVERSATION_SESSIONS_FILE, loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE).filter((entry) => entry.conversationId !== conversationId));
   return true;
 }
 
-export function appendMessage(cwd: string, input: { conversationId: string; role: MessageRole; content: string; runId?: string }) {
+export function appendMessage(cwd: string, input: { conversationId: string; role: MessageRole; content: string; runId?: string; kind?: MessageKind }) {
   const messages = loadCollection<Message>(cwd, MESSAGES_FILE);
   const message: Message = {
     id: createId("message"),
@@ -101,6 +141,7 @@ export function appendMessage(cwd: string, input: { conversationId: string; role
     content: input.content,
     createdAt: nowIso(),
     runId: input.runId,
+    kind: input.kind,
   };
   saveCollection(cwd, MESSAGES_FILE, [...messages, message]);
   touchConversation(cwd, input.conversationId);
@@ -116,6 +157,7 @@ export function listMessages(cwd: string, conversationId: string) {
 export function createRun(cwd: string, input: { conversationId: string; goal: string; kind?: RunKind; status?: RunStatus }) {
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
   const now = nowIso();
+  const sessionBinding = getConversationSessionBinding(cwd, input.conversationId);
   const run: Run = {
     id: createId("run"),
     conversationId: input.conversationId,
@@ -124,6 +166,7 @@ export function createRun(cwd: string, input: { conversationId: string; goal: st
     status: input.status ?? "queued",
     createdAt: now,
     updatedAt: now,
+    piSessionPath: sessionBinding?.piSessionPath,
   };
   saveCollection(cwd, RUNS_FILE, [run, ...runs]);
   touchConversation(cwd, input.conversationId, { latestRunId: run.id });
@@ -138,6 +181,25 @@ export function listRuns(cwd: string, conversationId?: string) {
 
 export function getRunById(cwd: string, runId: string) {
   return loadCollection<Run>(cwd, RUNS_FILE).find((run) => run.id === runId);
+}
+
+export function claimNextQueuedRun(cwd: string) {
+  return withStateFileLock(cwd, RUNS_FILE, () => {
+    const runs = loadCollection<Run>(cwd, RUNS_FILE);
+    const nextQueuedRun = [...runs].reverse().find((run) => run.status === "queued");
+
+    if (!nextQueuedRun) {
+      return undefined;
+    }
+
+    const now = nowIso();
+    nextQueuedRun.status = "running";
+    nextQueuedRun.updatedAt = now;
+    nextQueuedRun.startedAt = nextQueuedRun.startedAt ?? now;
+    saveCollection(cwd, RUNS_FILE, runs);
+    touchConversation(cwd, nextQueuedRun.conversationId, { latestRunId: nextQueuedRun.id });
+    return { ...nextQueuedRun };
+  });
 }
 
 export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "piSessionPath">> = {}) {
@@ -157,6 +219,13 @@ export function updateRunStatus(cwd: string, runId: string, status: RunStatus, p
   match.summary = patch.summary ?? match.summary;
   match.piSessionPath = patch.piSessionPath ?? match.piSessionPath;
   saveCollection(cwd, RUNS_FILE, runs);
+  if (match.piSessionPath) {
+    setConversationSessionBinding(cwd, {
+      conversationId: match.conversationId,
+      piSessionPath: match.piSessionPath,
+      sourceRunId: match.id,
+    });
+  }
   touchConversation(cwd, match.conversationId, { latestRunId: match.id });
   return match;
 }
@@ -237,6 +306,71 @@ export function listReplies(cwd: string, questionId?: string) {
   return loadCollection<HumanReply>(cwd, REPLIES_FILE)
     .filter((reply) => !questionId || reply.questionId === questionId)
     .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+}
+
+export function listConversationSessions(cwd: string) {
+  return loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export function getConversationSessionBinding(cwd: string, conversationId: string) {
+  return listConversationSessions(cwd).find((entry) => entry.conversationId === conversationId);
+}
+
+export function setConversationSessionBinding(cwd: string, input: { conversationId: string; piSessionPath: string; sourceRunId?: string }) {
+  const sessions = loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE);
+  const now = nowIso();
+  const existing = sessions.find((entry) => entry.conversationId === input.conversationId);
+  if (existing) {
+    existing.piSessionPath = input.piSessionPath;
+    existing.sourceRunId = input.sourceRunId;
+    existing.updatedAt = now;
+  } else {
+    sessions.push({
+      conversationId: input.conversationId,
+      piSessionPath: input.piSessionPath,
+      sourceRunId: input.sourceRunId,
+      updatedAt: now,
+    });
+  }
+  saveCollection(cwd, CONVERSATION_SESSIONS_FILE, sessions);
+  return getConversationSessionBinding(cwd, input.conversationId);
+}
+
+export function createAgentGuidance(cwd: string, input: { conversationId: string; taskId: string; runId?: string; content: string }) {
+  const guidances = loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE);
+  const guidance: AgentGuidance = {
+    id: createId("guidance"),
+    conversationId: input.conversationId,
+    taskId: input.taskId,
+    runId: input.runId,
+    content: input.content,
+    status: "pending",
+    createdAt: nowIso(),
+  };
+  saveCollection(cwd, AGENT_GUIDANCES_FILE, [guidance, ...guidances]);
+  touchConversation(cwd, input.conversationId, { latestRunId: input.runId });
+  return guidance;
+}
+
+export function listAgentGuidances(cwd: string, filter: { conversationId?: string; taskId?: string; runId?: string; status?: AgentGuidance["status"] } = {}) {
+  return loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE)
+    .filter((guidance) => !filter.conversationId || guidance.conversationId === filter.conversationId)
+    .filter((guidance) => !filter.taskId || guidance.taskId === filter.taskId)
+    .filter((guidance) => !filter.runId || guidance.runId === filter.runId)
+    .filter((guidance) => !filter.status || guidance.status === filter.status)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function markAgentGuidanceApplied(cwd: string, guidanceId: string) {
+  const guidances = loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE);
+  const match = guidances.find((guidance) => guidance.id === guidanceId);
+  if (!match) return undefined;
+  match.status = "applied";
+  match.appliedAt = nowIso();
+  saveCollection(cwd, AGENT_GUIDANCES_FILE, guidances);
+  touchConversation(cwd, match.conversationId, { latestRunId: match.runId });
+  return match;
 }
 
 export function createNotificationDelivery(cwd: string, input: {

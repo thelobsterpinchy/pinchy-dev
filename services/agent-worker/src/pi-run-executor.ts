@@ -1,13 +1,16 @@
 import { AuthStorage, createAgentSession, getAgentDir, ModelRegistry, SessionManager } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { resolve } from "node:path";
+import { getConversationSessionBinding, listRuns } from "../../../apps/host/src/agent-state-store.js";
 import { loadPinchyRuntimeConfig, type PinchyRuntimeConfig, type ThinkingLevel } from "../../../apps/host/src/runtime-config.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import { normalizeRunOutcome, type PiRunExecutionResult } from "./run-outcomes.js";
+import { buildRunExecutionPrompt } from "./run-orchestration-prompt.js";
 
 type PiSession = {
   sessionId?: string;
   sessionFile?: string;
+  isStreaming?: boolean;
   messages?: Array<{ role?: string; content?: unknown }>;
   subscribe?: (listener: (event: unknown) => void) => (() => void) | void;
   prompt: (text: string) => Promise<unknown>;
@@ -37,6 +40,8 @@ type PiRunExecutorDependencies = {
   sessionManagerFactory?: PiSessionManagerFactory;
   loadRuntimeConfig?: (cwd: string) => PinchyRuntimeConfig;
   resolveModel?: (provider: string, modelId: string, agentDir: string) => unknown;
+  loadConversationRuns?: (cwd: string, conversationId: string) => Run[];
+  loadConversationSessionPath?: (cwd: string, conversationId: string) => string | undefined;
 };
 
 function defaultResolveModel(provider: string, modelId: string, agentDir: string) {
@@ -147,6 +152,8 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
   } satisfies PiSessionManagerFactory;
   const loadRuntimeConfig = dependencies.loadRuntimeConfig ?? loadPinchyRuntimeConfig;
   const resolveModel = dependencies.resolveModel ?? defaultResolveModel;
+  const loadConversationRuns = dependencies.loadConversationRuns ?? ((cwd: string, conversationId: string) => listRuns(cwd, conversationId));
+  const loadConversationSessionPath = dependencies.loadConversationSessionPath ?? ((cwd: string, conversationId: string) => getConversationSessionBinding(cwd, conversationId)?.piSessionPath);
 
   function buildSessionDefaults(cwd: string) {
     const runtimeConfig = loadRuntimeConfig(cwd);
@@ -163,21 +170,40 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
     };
   }
 
+  function findReusableConversationSessionPath(cwd: string, run: Run) {
+    const canonicalSessionPath = loadConversationSessionPath(cwd, run.conversationId);
+    if (typeof canonicalSessionPath === "string" && canonicalSessionPath.trim()) {
+      return canonicalSessionPath;
+    }
+    if (typeof run.piSessionPath === "string" && run.piSessionPath.trim()) {
+      return run.piSessionPath;
+    }
+    const priorRuns = loadConversationRuns(cwd, run.conversationId)
+      .filter((entry) => entry.id !== run.id && typeof entry.piSessionPath === "string" && entry.piSessionPath.trim().length > 0)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return priorRuns[0]?.piSessionPath;
+  }
+
   return {
     async executeRun({ cwd, run }: { cwd: string; run: Run }): Promise<PiRunExecutionResult> {
       const defaults = buildSessionDefaults(cwd);
+      const reusableSessionPath = run.kind === "user_prompt" ? findReusableConversationSessionPath(cwd, run) : undefined;
       const { session } = await createSession({
         cwd,
         agentDir,
-        sessionManager: sessionManagerFactory.create(cwd),
+        sessionManager: reusableSessionPath ? sessionManagerFactory.open(reusableSessionPath) : sessionManagerFactory.create(cwd),
         model: defaults.model,
         thinkingLevel: defaults.thinkingLevel,
       });
-      const { rawResult, assistantText } = await executeWithCapturedAssistantText(session, () => session.prompt(run.goal));
+      const executionPrompt = buildRunExecutionPrompt(run);
+      const sendExecutionPrompt = reusableSessionPath && session.isStreaming
+        ? () => session.followUp(executionPrompt)
+        : () => session.prompt(executionPrompt);
+      const { rawResult, assistantText } = await executeWithCapturedAssistantText(session, sendExecutionPrompt);
       return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run completed for goal: ${run.goal}`,
         message: assistantText ?? `Pi completed run: ${run.goal}`,
-        piSessionPath: session.sessionFile,
+        piSessionPath: session.sessionFile ?? reusableSessionPath,
       });
     },
     async resumeRun({ cwd, run, reply }: { cwd: string; run: Run; reply: string }): Promise<PiRunExecutionResult> {

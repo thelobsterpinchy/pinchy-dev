@@ -45,7 +45,7 @@ export function parsePinchyCliArgs(argv: string[]): ParsedPinchyCliArgs {
   };
 }
 
-export function summarizePinchyCliHelp(commands = [...PINCHY_CLI_COMMANDS]) {
+export function summarizePinchyCliHelp(commands: readonly PinchyCliCommandName[] = PINCHY_CLI_COMMANDS) {
   return [
     "pinchy <command>",
     "",

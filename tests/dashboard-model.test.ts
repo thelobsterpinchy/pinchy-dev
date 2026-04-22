@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { DashboardState, PinchyTask, SavedMemory } from "../packages/shared/src/contracts.js";
-import { buildAgentChatChromeState, buildChatWorkbenchState, buildChatWorkspacePanelState, buildConversationComposerState, buildConversationListEntryPresentation, buildConversationOnboardingPresets, buildConversationOrchestrationState, buildConversationShellHeaderState, buildConversationTranscriptState, buildDashboardSidebarState, buildDashboardUtilityRailState, buildGlobalPromptState, buildMemoryDraftFromMessage, buildMemoryDraftFromQuestion, buildRunHeadline, buildSettingsConfigurationState, buildTranscriptMessagePresentation, decideTranscriptFollowUp, filterDashboardArtifacts, filterSavedMemories, mergeSettingsDraftWithFetchedSettings, parseDelegationPlanDraft, resolveDashboardLandingPage, resolveWorkspaceConversationSelection, summarizeConversationWorkspace, summarizeConversationWorkspacePresence, summarizeDashboardState, workspaceConversationSelectionStorageKey } from "../apps/dashboard/src/dashboard-model.js";
+import { buildAgentChatChromeState, buildAgentSessionState, buildChatWorkbenchState, buildChatWorkspacePanelState, buildConversationAgentListState, buildConversationComposerState, buildConversationDetailsProgressState, buildConversationListEntryPresentation, buildConversationOnboardingPresets, buildConversationOrchestrationState, buildConversationShellHeaderState, buildConversationTranscriptState, buildDashboardSidebarState, buildDashboardUtilityRailState, buildGlobalPromptState, buildMemoryDraftFromMessage, buildMemoryDraftFromQuestion, buildRunHeadline, buildSettingsConfigurationState, buildTranscriptMessagePresentation, decideTranscriptFollowUp, filterDashboardArtifacts, filterSavedMemories, mergeSettingsDraftWithFetchedSettings, parseDelegationPlanDraft, resolveConversationRouteAfterRefresh, resolveConversationShellInitialState, resolveDashboardLandingPage, resolveWorkspaceConversationSelection, summarizeConversationWorkspace, summarizeConversationWorkspacePresence, summarizeDashboardState, workspaceConversationSelectionStorageKey } from "../apps/dashboard/src/dashboard-model.js";
 
 test("filterSavedMemories matches title, content, and tags", () => {
   const memories: SavedMemory[] = [
@@ -209,13 +209,13 @@ test("resolveDashboardLandingPage always opens the chat workspace first", () => 
 });
 
 
-test("buildDashboardSidebarState fully hides the sidebar when collapsed and keeps one global toggle model", () => {
+test("buildDashboardSidebarState follows the mock-style wider-open chat shell and still fully hides when collapsed", () => {
   assert.deepEqual(buildDashboardSidebarState({ isOpen: true, page: "conversations" }), {
     isOpen: true,
-    width: 320,
+    width: 288,
     toggleLabel: "Hide menu",
-    title: "Pinchy chat",
-    subtitle: "Chat-first workspace",
+    title: "Pinchy",
+    subtitle: "Control plane",
   });
 
   assert.deepEqual(buildDashboardSidebarState({ isOpen: false, page: "settings" }), {
@@ -223,15 +223,15 @@ test("buildDashboardSidebarState fully hides the sidebar when collapsed and keep
     width: 0,
     toggleLabel: "Show menu",
     title: "Pinchy",
-    subtitle: "Local coding control surface",
+    subtitle: "Control plane",
   });
 });
 
-test("buildDashboardUtilityRailState fully hides the right utility rail by default and only enables it for conversations", () => {
-  assert.deepEqual(buildDashboardUtilityRailState({ isOpen: false, page: "conversations" }), {
-    isOpen: false,
-    width: 0,
-    toggleLabel: "Show tools rail",
+test("buildDashboardUtilityRailState uses the mock-style details rail width and only enables it for conversations", () => {
+  assert.deepEqual(buildDashboardUtilityRailState({ isOpen: true, page: "conversations" }), {
+    isOpen: true,
+    width: 320,
+    toggleLabel: "Hide tools rail",
     title: "Parallel workbench",
     subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
   });
@@ -243,6 +243,39 @@ test("buildDashboardUtilityRailState fully hides the right utility rail by defau
     title: "Parallel workbench",
     subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
   });
+});
+
+ test("resolveConversationShellInitialState follows the mock-style open-by-default chat shell", () => {
+  assert.deepEqual(resolveConversationShellInitialState(), {
+    sidebarOpen: true,
+    utilityRailOpen: true,
+  });
+});
+
+ test("resolveConversationRouteAfterRefresh keeps the root new-chat shell stable during background refreshes", () => {
+  assert.equal(resolveConversationRouteAfterRefresh({
+    pathname: "/",
+    routeConversationId: undefined,
+    availableConversationIds: ["conversation-1", "conversation-2"],
+  }), undefined);
+
+  assert.equal(resolveConversationRouteAfterRefresh({
+    pathname: "/c/conversation-2",
+    routeConversationId: "conversation-2",
+    availableConversationIds: ["conversation-1", "conversation-2"],
+  }), "/c/conversation-2");
+
+  assert.equal(resolveConversationRouteAfterRefresh({
+    pathname: "/c/conversation-2/agents/task-1",
+    routeConversationId: "conversation-2",
+    availableConversationIds: ["conversation-1", "conversation-2"],
+  }), "/c/conversation-2/agents/task-1");
+
+  assert.equal(resolveConversationRouteAfterRefresh({
+    pathname: "/c/missing",
+    routeConversationId: "missing",
+    availableConversationIds: ["conversation-1", "conversation-2"],
+  }), "/c/conversation-1");
 });
 
 test("buildConversationShellHeaderState keeps the utility-rail toggle distinct and right-aligned on conversations", () => {
@@ -400,28 +433,28 @@ test("buildGlobalPromptState targets the selected conversation when one is activ
   });
 });
 
-test("buildAgentChatChromeState summarizes the chat shell like an agent workspace", () => {
+test("buildAgentChatChromeState summarizes the chat shell like the mock chat workspace", () => {
   assert.deepEqual(buildAgentChatChromeState({
     selectedConversationTitle: "Bug bash thread",
-    selectedConversationStatusLabel: "Agent is working",
+    selectedConversationStatusLabel: "active",
     selectedConversationStatusTone: "info",
     latestMessagePreview: "Checking the worker now.",
   }), {
     title: "Bug bash thread",
-    eyebrow: "Pinchy chat",
-    statusLabel: "Agent is working",
+    eyebrow: "Conversation",
+    statusLabel: "active",
     statusTone: "info",
     helper: "Latest: Checking the worker now.",
     composerLabel: "Message Pinchy",
   });
 
   assert.deepEqual(buildAgentChatChromeState({}), {
-    title: "No conversation selected",
-    eyebrow: "Pinchy chat",
-    statusLabel: "Start a thread",
+    title: "New Session",
+    eyebrow: "Pinchy",
+    statusLabel: "idle",
     statusTone: "idle",
-    helper: "Select a thread or send a prompt to start talking to Pinchy.",
-    composerLabel: "Start talking",
+    helper: "Send a message to start the conversation.",
+    composerLabel: "Message Pinchy",
   });
 });
 
@@ -583,6 +616,89 @@ test("buildConversationTranscriptState shows a new-message notice only when unse
   });
 });
 
+test("buildConversationDetailsProgressState surfaces the active run and latest agent progress", () => {
+  assert.deepEqual(buildConversationDetailsProgressState({
+    runs: [
+      { id: "run-1", conversationId: "conversation-1", goal: "First goal", kind: "user_prompt", status: "completed", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:05.000Z" },
+      { id: "run-2", conversationId: "conversation-1", goal: "Investigate the worker", kind: "user_prompt", status: "running", createdAt: "2026-04-20T00:01:00.000Z", updatedAt: "2026-04-20T00:01:05.000Z", summary: "Worker inspection in progress" },
+    ],
+    messages: [
+      { id: "message-1", conversationId: "conversation-1", role: "agent", content: "I am inspecting the worker logs now.", createdAt: "2026-04-20T00:01:03.000Z", runId: "run-2" },
+    ],
+    questions: [],
+  }), {
+    activeRun: {
+      id: "run-2",
+      goal: "Investigate the worker",
+      status: "running",
+      summary: "Worker inspection in progress",
+    },
+    latestAgentUpdate: "I am inspecting the worker logs now.",
+    pendingQuestionCount: 0,
+  });
+});
+
+test("buildConversationAgentListState surfaces ephemeral conversation agents and their latest updates", () => {
+  assert.deepEqual(buildConversationAgentListState({
+    conversationId: "conversation-1",
+    tasks: [
+      { id: "task-1", title: "Inspect polling regression", prompt: "Inspect polling regression", status: "running", conversationId: "conversation-1", runId: "run-1", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:04.000Z" },
+      { id: "task-2", title: "Verify live browser state", prompt: "Verify live browser state", status: "pending", conversationId: "conversation-1", createdAt: "2026-04-20T00:00:01.000Z", updatedAt: "2026-04-20T00:00:03.000Z", dependsOnTaskIds: ["task-1"] },
+      { id: "task-3", title: "Ignore other conversation task", prompt: "Ignore", status: "running", conversationId: "conversation-2", createdAt: "2026-04-20T00:00:02.000Z", updatedAt: "2026-04-20T00:00:05.000Z" },
+    ] satisfies PinchyTask[],
+    messages: [
+      { id: "message-1", conversationId: "conversation-1", role: "agent", content: "Comparing route refresh behavior now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-1" },
+      { id: "message-2", conversationId: "conversation-1", role: "agent", content: "Parent thread summary", createdAt: "2026-04-20T00:00:05.000Z" },
+    ],
+  }), {
+    agents: [
+      { id: "task-1", title: "Inspect polling regression", status: "running", runId: "run-1", latestUpdate: "Comparing route refresh behavior now.", dependencyCount: 0, isActive: true },
+      { id: "task-2", title: "Verify live browser state", status: "pending", runId: undefined, latestUpdate: undefined, dependencyCount: 1, isActive: true },
+    ],
+  });
+});
+
+test("buildAgentSessionState turns the center pane into a selected ephemeral agent thread", () => {
+  assert.deepEqual(buildAgentSessionState({
+    conversationId: "conversation-1",
+    selectedTaskId: "task-1",
+    tasks: [
+      { id: "task-1", title: "Inspect polling regression", prompt: "Inspect polling regression", status: "running", conversationId: "conversation-1", runId: "run-1", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:04.000Z" },
+    ] satisfies PinchyTask[],
+    messages: [
+      { id: "message-1", conversationId: "conversation-1", role: "agent", content: "Comparing route refresh behavior now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-1" },
+      { id: "message-2", conversationId: "conversation-1", role: "user", content: "Focus on the current route only.", createdAt: "2026-04-20T00:00:04.700Z", runId: "run-1" },
+      { id: "message-3", conversationId: "conversation-1", role: "agent", content: "Parent thread orchestration summary.", createdAt: "2026-04-20T00:00:05.000Z" },
+    ],
+  }), {
+    mode: "agent",
+    backLabel: "Back to Pinchy conversation",
+    agent: {
+      id: "task-1",
+      title: "Inspect polling regression",
+      prompt: "Inspect polling regression",
+      status: "running",
+      runId: "run-1",
+      latestUpdate: "Comparing route refresh behavior now.",
+      transcript: [
+        { id: "message-1", conversationId: "conversation-1", role: "agent", content: "Comparing route refresh behavior now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-1" },
+        { id: "message-2", conversationId: "conversation-1", role: "user", content: "Focus on the current route only.", createdAt: "2026-04-20T00:00:04.700Z", runId: "run-1" },
+      ],
+    },
+  });
+
+  assert.deepEqual(buildAgentSessionState({
+    conversationId: "conversation-1",
+    selectedTaskId: "missing",
+    tasks: [],
+    messages: [],
+  }), {
+    mode: "conversation",
+    backLabel: "Back to Pinchy conversation",
+    agent: undefined,
+  });
+});
+
 test("decideTranscriptFollowUp keeps auto-scrolling while the viewer is already at the bottom", () => {
   assert.deepEqual(decideTranscriptFollowUp({
     changedConversation: false,
@@ -601,6 +717,18 @@ test("decideTranscriptFollowUp keeps auto-scrolling while the viewer is already 
     isNearBottom: true,
   }), {
     shouldScrollToBottom: true,
+    shouldMarkUnread: false,
+  });
+});
+
+test("decideTranscriptFollowUp ignores unchanged transcript polls", () => {
+  assert.deepEqual(decideTranscriptFollowUp({
+    changedConversation: false,
+    messageCountChanged: false,
+    latestMessageChanged: false,
+    isNearBottom: true,
+  }), {
+    shouldScrollToBottom: false,
     shouldMarkUnread: false,
   });
 });
@@ -652,7 +780,7 @@ test("buildConversationListEntryPresentation keeps thread rows compact while pre
   });
 });
 
-test("buildTranscriptMessagePresentation emphasizes agent and user messages differently", () => {
+test("buildTranscriptMessagePresentation emphasizes agent, orchestration, and user messages differently", () => {
   assert.deepEqual(buildTranscriptMessagePresentation({
     id: "message-1",
     conversationId: "conversation-1",
@@ -662,14 +790,54 @@ test("buildTranscriptMessagePresentation emphasizes agent and user messages diff
   }), {
     roleLabel: "Pinchy",
     align: "start",
-    accentColor: "#38bdf8",
-    background: "linear-gradient(180deg, #0f172a 0%, #111827 100%)",
-    borderColor: "#1d4ed8",
-    surfaceTone: "agent",
-    bubbleWidth: "min(720px, 90%)",
+    accentColor: "#e5e7eb",
+    background: "transparent",
+    borderColor: "transparent",
+    surfaceTone: "agent-inline",
+    bubbleWidth: "min(760px, 88%)",
+    bubblePadding: 0,
+    metaGap: 6,
+    shadow: "none",
+  });
+
+  assert.deepEqual(buildTranscriptMessagePresentation({
+    id: "message-1b",
+    conversationId: "conversation-1",
+    role: "agent",
+    kind: "orchestration_update",
+    content: "Orchestration summary: 2 tasks are running.",
+    createdAt: "2026-04-20T00:00:00.500Z",
+  }), {
+    roleLabel: "Pinchy plan",
+    align: "start",
+    accentColor: "#c084fc",
+    background: "linear-gradient(180deg, #1a1333 0%, #111827 100%)",
+    borderColor: "#7c3aed",
+    surfaceTone: "orchestration",
+    bubbleWidth: "min(760px, 92%)",
     bubblePadding: 12,
     metaGap: 8,
-    shadow: "0 10px 22px rgba(15, 23, 42, 0.22)",
+    shadow: "0 12px 26px rgba(88, 28, 135, 0.24)",
+  });
+
+  assert.deepEqual(buildTranscriptMessagePresentation({
+    id: "message-1c",
+    conversationId: "conversation-1",
+    role: "agent",
+    kind: "orchestration_final",
+    content: "Final synthesis summary: all delegated tasks are done.",
+    createdAt: "2026-04-20T00:00:00.750Z",
+  }), {
+    roleLabel: "Pinchy synthesis",
+    align: "start",
+    accentColor: "#f59e0b",
+    background: "linear-gradient(180deg, #2a1703 0%, #111827 100%)",
+    borderColor: "#d97706",
+    surfaceTone: "orchestration-final",
+    bubbleWidth: "min(760px, 92%)",
+    bubblePadding: 12,
+    metaGap: 8,
+    shadow: "0 12px 26px rgba(180, 83, 9, 0.22)",
   });
 
   assert.deepEqual(buildTranscriptMessagePresentation({
@@ -681,14 +849,14 @@ test("buildTranscriptMessagePresentation emphasizes agent and user messages diff
   }), {
     roleLabel: "You",
     align: "end",
-    accentColor: "#22c55e",
-    background: "linear-gradient(180deg, #052e16 0%, #14532d 100%)",
-    borderColor: "#15803d",
-    surfaceTone: "user",
-    bubbleWidth: "min(720px, 90%)",
-    bubblePadding: 12,
-    metaGap: 8,
-    shadow: "0 10px 22px rgba(20, 83, 45, 0.16)",
+    accentColor: "#ffffff",
+    background: "#2563eb",
+    borderColor: "#2563eb",
+    surfaceTone: "user-pill",
+    bubbleWidth: "min(720px, 80%)",
+    bubblePadding: 14,
+    metaGap: 6,
+    shadow: "0 10px 22px rgba(37, 99, 235, 0.22)",
   });
 
   assert.deepEqual(buildTranscriptMessagePresentation({

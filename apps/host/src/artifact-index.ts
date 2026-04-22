@@ -24,12 +24,16 @@ export function loadArtifactIndex(cwd: string): ArtifactRecord[] {
   }
 }
 
-export function appendArtifactRecord(cwd: string, record: ArtifactRecord) {
+export function saveArtifactIndex(cwd: string, records: ArtifactRecord[]) {
   const path = resolve(cwd, INDEX_FILE);
   mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(records, null, 2), "utf8");
+}
+
+export function appendArtifactRecord(cwd: string, record: ArtifactRecord) {
   const current = loadArtifactIndex(cwd);
   current.push(record);
-  writeFileSync(path, JSON.stringify(current, null, 2), "utf8");
+  saveArtifactIndex(cwd, current);
 }
 
 export function filterArtifactIndex(cwd: string, options: { toolName?: string; mediaType?: string; query?: string; tag?: string }) {

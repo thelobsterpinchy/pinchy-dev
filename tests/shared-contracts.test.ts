@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  AGENT_GUIDANCE_STATUSES,
   DAEMON_HEALTH_STATUSES,
   QUESTION_STATUSES,
   MEMORY_KINDS,
@@ -10,6 +11,7 @@ import {
   RUN_KINDS,
   RUN_STATUSES,
   TASK_STATUSES,
+  isAgentGuidanceStatus,
   isDaemonHealthStatus,
   isQuestionStatus,
   isReloadRequestStatus,
@@ -31,6 +33,7 @@ test("shared contracts expose canonical status values and guards", () => {
   assert.deepEqual(RUN_KINDS, ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal"]);
   assert.deepEqual(RUN_STATUSES, ["queued", "running", "waiting_for_human", "waiting_for_approval", "completed", "failed", "cancelled"]);
   assert.deepEqual(QUESTION_STATUSES, ["pending_delivery", "waiting_for_human", "answered", "expired", "cancelled"]);
+  assert.deepEqual(AGENT_GUIDANCE_STATUSES, ["pending", "applied", "cancelled"]);
 
   assert.equal(isTaskStatus("pending"), true);
   assert.equal(isTaskStatus("unknown"), false);
@@ -48,10 +51,13 @@ test("shared contracts expose canonical status values and guards", () => {
   assert.equal(isRunStatus("paused"), false);
   assert.equal(isQuestionStatus("answered"), true);
   assert.equal(isQuestionStatus("open"), false);
+  assert.equal(isAgentGuidanceStatus("applied"), true);
+  assert.equal(isAgentGuidanceStatus("done"), false);
 });
 
 test("shared contracts provide a reusable dashboard state shape", () => {
   const state: DashboardState = {
+    conversationSessions: [{ conversationId: "conversation-1", piSessionPath: "/tmp/pi-thread-session.json", sourceRunId: "run-1", updatedAt: "2026-04-20T00:00:01.000Z" }],
     runContext: {
       currentRunId: "run-1",
       currentRunLabel: "task:demo",
@@ -60,6 +66,7 @@ test("shared contracts provide a reusable dashboard state shape", () => {
     workspaces: [{ id: "workspace-1", name: "pinchy-dev", path: "/repo", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:00.000Z" }],
     activeWorkspaceId: "workspace-1",
     tasks: [{ id: "task-1", title: "Demo", prompt: "Do work", status: "pending", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:00.000Z" }],
+    agentGuidances: [{ id: "guidance-1", conversationId: "conversation-1", taskId: "task-1", runId: "run-1", content: "Focus on tests first", status: "pending", createdAt: "2026-04-20T00:00:00.000Z" }],
     approvals: [{ id: "approval-1", toolName: "desktop_click", reason: "Need approval", status: "pending", payload: {} }],
     generatedTools: ["demo-tool"],
     agentResources: [{ type: "skill", name: "tdd-implementation", scope: "workspace", path: "/repo/.pi/skills/tdd-implementation/SKILL.md" }],
@@ -81,6 +88,7 @@ test("shared contracts provide a reusable dashboard state shape", () => {
   };
 
   assert.equal(state.activeWorkspaceId, "workspace-1");
+  assert.equal(state.conversationSessions[0]?.conversationId, "conversation-1");
   assert.equal(state.tasks[0]?.status, "pending");
   assert.equal(state.runHistory[0]?.kind, "goal");
 });

@@ -5,20 +5,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   appendMessage,
+  createAgentGuidance,
   createConversation,
   createHumanReply,
   createNotificationDelivery,
   createQuestion,
   createRun,
   deleteConversation,
+  getConversationSessionBinding,
   getQuestionById,
   getRunById,
+  listAgentGuidances,
+  listConversationSessions,
   listConversations,
   listMessages,
   listNotificationDeliveries,
   listQuestions,
   listReplies,
   listRuns,
+  markAgentGuidanceApplied,
   markQuestionAnswered,
   updateQuestionStatus,
   updateRunStatus,
@@ -50,6 +55,21 @@ test("agent state store persists conversations and messages", () => {
     assert.equal(messages.length, 1);
     assert.equal(messages[0]?.content, "Please investigate the flaky test");
     assert.equal(messages[0]?.conversationId, conversation.id);
+  });
+});
+
+test("agent state store persists orchestration message kinds", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Orchestration thread" });
+    appendMessage(cwd, {
+      conversationId: conversation.id,
+      role: "agent",
+      content: "Orchestration summary: delegated work is complete.",
+      kind: "orchestration_final",
+    });
+
+    const messages = listMessages(cwd, conversation.id);
+    assert.equal(messages[0]?.kind, "orchestration_final");
   });
 });
 
@@ -209,6 +229,56 @@ test("agent state store returns newest notification deliveries first", () => {
   });
 });
 
+test("agent state store persists canonical conversation Pi sessions and seeds new runs from them", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Persistent thread session" });
+    const firstRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Start the thread",
+    });
+
+    updateRunStatus(cwd, firstRun.id, "completed", {
+      piSessionPath: "/tmp/pi-thread-session.json",
+    });
+
+    const storedBinding = getConversationSessionBinding(cwd, conversation.id);
+    const followUpRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Continue in the same thread",
+    });
+
+    assert.equal(storedBinding?.piSessionPath, "/tmp/pi-thread-session.json");
+    assert.equal(storedBinding?.sourceRunId, firstRun.id);
+    assert.equal(listConversationSessions(cwd)[0]?.conversationId, conversation.id);
+    assert.equal(followUpRun.piSessionPath, "/tmp/pi-thread-session.json");
+  });
+});
+
+test("agent state store persists and applies scoped agent guidance", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Scoped guidance" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Investigate a delegated task",
+    });
+
+    const guidance = createAgentGuidance(cwd, {
+      conversationId: conversation.id,
+      taskId: "task-1",
+      runId: run.id,
+      content: "Focus on tests first.",
+    });
+
+    assert.equal(listAgentGuidances(cwd, { taskId: "task-1" }).length, 1);
+    assert.equal(listAgentGuidances(cwd, { status: "pending" })[0]?.content, "Focus on tests first.");
+
+    const applied = markAgentGuidanceApplied(cwd, guidance.id);
+    assert.equal(applied?.status, "applied");
+    assert.ok(applied?.appliedAt);
+    assert.equal(listAgentGuidances(cwd, { status: "applied" })[0]?.id, guidance.id);
+  });
+});
+
 test("agent state store deletes a conversation session and its linked records", () => {
   withTempDir((cwd) => {
     const conversation = createConversation(cwd, { title: "Delete me" });
@@ -250,6 +320,12 @@ test("agent state store deletes a conversation session and its linked records", 
       questionId: question.id,
       runId: run.id,
     });
+    createAgentGuidance(cwd, {
+      conversationId: conversation.id,
+      taskId: "task-1",
+      runId: run.id,
+      content: "Stay scoped.",
+    });
 
     const deleted = deleteConversation(cwd, conversation.id);
 
@@ -260,6 +336,7 @@ test("agent state store deletes a conversation session and its linked records", 
     assert.equal(listQuestions(cwd, conversation.id).length, 0);
     assert.equal(listReplies(cwd, question.id).length, 0);
     assert.equal(listNotificationDeliveries(cwd, { runId: run.id }).length, 0);
+    assert.equal(listAgentGuidances(cwd, { conversationId: conversation.id }).length, 0);
     assert.equal(listMessages(cwd, otherConversation.id).length, 1);
     assert.equal(listRuns(cwd, otherConversation.id).length, 1);
   });

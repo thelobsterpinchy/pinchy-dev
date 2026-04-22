@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { enqueueTask, getNextPendingTask, loadTasks, updateTaskStatus } from "../apps/host/src/task-queue.js";
+import { enqueueDelegationPlan, enqueueTask, getNextPendingTask, loadTasks, updateTaskStatus } from "../apps/host/src/task-queue.js";
 
 function withTempDir(run: (cwd: string) => void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-task-"));
@@ -59,5 +59,36 @@ test("updateTaskStatus can persist linked conversation and run ids", () => {
     assert.equal(updated?.runId, "run-1");
     assert.equal(loadTasks(cwd)[0]?.conversationId, "conversation-1");
     assert.equal(loadTasks(cwd)[0]?.runId, "run-1");
+  });
+});
+
+
+test("enqueueDelegationPlan persists dependent subtasks and only exposes ready work", () => {
+  withTempDir((cwd) => {
+    const tasks = enqueueDelegationPlan(cwd, [
+      {
+        id: "inspect",
+        title: "Inspect logs",
+        prompt: "Inspect the logs and summarize the issue.",
+      },
+      {
+        id: "fix",
+        title: "Apply fix",
+        prompt: "Apply the smallest safe fix.",
+        dependsOn: ["inspect"],
+      },
+    ], {
+      source: "user",
+      conversationId: "conversation-1",
+      runId: "run-1",
+    });
+
+    assert.equal(tasks.length, 2);
+    assert.equal(getNextPendingTask(cwd)?.title, "Inspect logs");
+    assert.deepEqual(loadTasks(cwd).find((task) => task.title === "Apply fix")?.dependsOnTaskIds, [tasks[0]?.id]);
+
+    updateTaskStatus(cwd, tasks[0]!.id, "done");
+
+    assert.equal(getNextPendingTask(cwd)?.title, "Apply fix");
   });
 });

@@ -33,6 +33,8 @@ test("loadPinchyRuntimeConfig reads provider, model, and thinking defaults from 
       defaultModel: "gpt-5.4",
       defaultThinkingLevel: "medium",
       defaultBaseUrl: "http://localhost:11434/v1",
+      autoDeleteEnabled: true,
+      autoDeleteDays: 14,
     }));
 
     const config = loadPinchyRuntimeConfig(cwd);
@@ -40,6 +42,8 @@ test("loadPinchyRuntimeConfig reads provider, model, and thinking defaults from 
     assert.equal(config.defaultModel, "gpt-5.4");
     assert.equal(config.defaultThinkingLevel, "medium");
     assert.equal(config.defaultBaseUrl, "http://localhost:11434/v1");
+    assert.equal(config.autoDeleteEnabled, true);
+    assert.equal(config.autoDeleteDays, 14);
   });
 });
 
@@ -104,5 +108,7 @@ test("loadPinchyRuntimeConfig falls back to Pi agent defaults when workspace ove
     assert.equal(detailed.sources.defaultModel, "pi-agent");
     assert.equal(detailed.sources.defaultThinkingLevel, "pi-agent");
     assert.equal(detailed.sources.defaultBaseUrl, "unset");
+    assert.equal(detailed.sources.autoDeleteEnabled, "unset");
+    assert.equal(detailed.sources.autoDeleteDays, "unset");
   });
 });

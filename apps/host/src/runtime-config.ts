@@ -11,6 +11,9 @@ export type PinchyRuntimeConfig = {
   defaultModel?: string;
   defaultThinkingLevel?: ThinkingLevel;
   defaultBaseUrl?: string;
+  autoDeleteEnabled?: boolean;
+  autoDeleteDays?: number;
+  dangerModeEnabled?: boolean;
 };
 
 export type PinchyRuntimeConfigDetails = PinchyRuntimeConfig & {
@@ -19,6 +22,9 @@ export type PinchyRuntimeConfigDetails = PinchyRuntimeConfig & {
     defaultModel: RuntimeConfigSource;
     defaultThinkingLevel: RuntimeConfigSource;
     defaultBaseUrl: RuntimeConfigSource;
+    autoDeleteEnabled: RuntimeConfigSource;
+    autoDeleteDays: RuntimeConfigSource;
+    dangerModeEnabled: RuntimeConfigSource;
   };
 };
 
@@ -27,6 +33,9 @@ type RuntimeConfigFile = {
   defaultModel?: string;
   defaultThinkingLevel?: string;
   defaultBaseUrl?: string;
+  autoDeleteEnabled?: boolean;
+  autoDeleteDays?: number;
+  dangerModeEnabled?: boolean;
 };
 
 export type RuntimeConfigLoadOptions = {
@@ -51,6 +60,14 @@ function normalizeThinkingLevel(value: string | undefined): ThinkingLevel | unde
   const trimmed = normalizeOptionalString(value);
   if (!trimmed) return undefined;
   return THINKING_LEVELS.includes(trimmed as ThinkingLevel) ? trimmed as ThinkingLevel : undefined;
+}
+
+function normalizeOptionalBoolean(value: boolean | undefined) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeOptionalPositiveInteger(value: number | undefined) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function resolveConfigValue<T>(sources: Array<{ value: T | undefined; source: RuntimeConfigSource }>) {
@@ -85,17 +102,32 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_BASE_URL), source: "env" },
     { value: normalizeOptionalString(workspaceFile.defaultBaseUrl), source: "workspace" },
   ]);
+  const autoDeleteEnabled = resolveConfigValue<boolean>([
+    { value: normalizeOptionalBoolean(workspaceFile.autoDeleteEnabled), source: "workspace" },
+  ]);
+  const autoDeleteDays = resolveConfigValue<number>([
+    { value: normalizeOptionalPositiveInteger(workspaceFile.autoDeleteDays), source: "workspace" },
+  ]);
+  const dangerModeEnabled = resolveConfigValue<boolean>([
+    { value: normalizeOptionalBoolean(workspaceFile.dangerModeEnabled), source: "workspace" },
+  ]);
 
   return {
     defaultProvider: provider.value,
     defaultModel: model.value,
     defaultThinkingLevel: thinking.value,
     defaultBaseUrl: baseUrl.value,
+    autoDeleteEnabled: autoDeleteEnabled.value,
+    autoDeleteDays: autoDeleteDays.value,
+    dangerModeEnabled: dangerModeEnabled.value,
     sources: {
       defaultProvider: provider.source,
       defaultModel: model.source,
       defaultThinkingLevel: thinking.source,
       defaultBaseUrl: baseUrl.source,
+      autoDeleteEnabled: autoDeleteEnabled.source,
+      autoDeleteDays: autoDeleteDays.source,
+      dangerModeEnabled: dangerModeEnabled.source,
     },
   };
 }
@@ -107,5 +139,8 @@ export function loadPinchyRuntimeConfig(cwd: string, options: RuntimeConfigLoadO
     defaultModel: details.defaultModel,
     defaultThinkingLevel: details.defaultThinkingLevel,
     defaultBaseUrl: details.defaultBaseUrl,
+    autoDeleteEnabled: details.autoDeleteEnabled,
+    autoDeleteDays: details.autoDeleteDays,
+    dangerModeEnabled: details.dangerModeEnabled,
   };
 }

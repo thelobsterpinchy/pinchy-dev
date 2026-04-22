@@ -59,12 +59,52 @@ test("Pi run executor starts a new Pi session for a fresh run", async () => {
 
   assert.equal(result.piSessionPath, "/tmp/pi-session-1.json");
   assert.match(result.summary, /Pi-backed run completed/);
-  assert.deepEqual(calls, [
-    "resolveModel:openai/gpt-5.4",
-    "create:/repo",
-    'session:/repo:/agent-dir:{"kind":"create","cwd":"/repo"}:{"provider":"openai","id":"gpt-5.4"}:medium',
-    "prompt:Investigate the failing build",
-  ]);
+  assert.equal(calls[0], "resolveModel:openai/gpt-5.4");
+  assert.equal(calls[1], "create:/repo");
+  assert.equal(calls[2], 'session:/repo:/agent-dir:{"kind":"create","cwd":"/repo"}:{"provider":"openai","id":"gpt-5.4"}:medium');
+  assert.match(calls[3] ?? "", /^prompt:/);
+  assert.match(calls[3] ?? "", /Investigate the failing build/);
+});
+
+test("Pi run executor wraps user-prompt runs with orchestration-first delegation guidance", async () => {
+  let promptText = "";
+  const executor = createPiRunExecutor({
+    agentDir: "/agent-dir",
+    loadRuntimeConfig: () => ({}),
+    resolveModel: () => undefined,
+    createSession: async () => ({
+      session: {
+        sessionFile: "/tmp/pi-session-delegation.json",
+        async prompt(text: string) {
+          promptText = text;
+          return undefined;
+        },
+        async followUp() {
+          return undefined;
+        },
+      },
+    }),
+  });
+
+  await executor.executeRun({
+    cwd: "/repo",
+    run: {
+      id: "run-delegate",
+      conversationId: "conversation-1",
+      goal: "Audit the worker, inspect the dashboard, and then implement the smallest safe fix.",
+      kind: "user_prompt",
+      status: "queued",
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+    },
+  });
+
+  assert.match(promptText, /delegate_task_plan/i);
+  assert.match(promptText, /queue_task/i);
+  assert.match(promptText, /when work can be parallelized, delegate it first/i);
+  assert.match(promptText, /respond first in the main thread/i);
+  assert.match(promptText, /decompose the request into one or more bounded tasks/i);
+  assert.match(promptText, /Audit the worker, inspect the dashboard, and then implement the smallest safe fix\./i);
 });
 
 test("Pi run executor overrides the resolved model baseUrl when a local endpoint is configured", async () => {
@@ -113,6 +153,192 @@ test("Pi run executor overrides the resolved model baseUrl when a local endpoint
     "resolveModel:ollama/qwen3-coder",
     'model:{"provider":"ollama","id":"qwen3-coder","baseUrl":"http://127.0.0.1:11434/v1"}',
   ]);
+});
+
+test("Pi run executor reuses the latest Pi session for follow-up user prompts in the same conversation", async () => {
+  const calls: string[] = [];
+  const sessionManagerFactory = {
+    create(cwd: string) {
+      calls.push(`create:${cwd}`);
+      return { kind: "create", cwd };
+    },
+    open(sessionPath: string) {
+      calls.push(`open:${sessionPath}`);
+      return { kind: "open", sessionPath };
+    },
+  };
+
+  const executor = createPiRunExecutor({
+    agentDir: "/agent-dir",
+    sessionManagerFactory,
+    loadConversationRuns: () => ([
+      {
+        id: "run-older",
+        conversationId: "conversation-1",
+        goal: "Initial thread work",
+        kind: "user_prompt",
+        status: "completed",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:05.000Z",
+        piSessionPath: "/tmp/existing-thread-session.json",
+      },
+    ]),
+    createSession: async ({ cwd, agentDir, sessionManager }) => {
+      calls.push(`session:${cwd}:${agentDir}:${JSON.stringify(sessionManager)}`);
+      return {
+        session: {
+          sessionId: "pi-session-thread",
+          sessionFile: "/tmp/existing-thread-session.json",
+          isStreaming: false,
+          async prompt(text: string) {
+            calls.push(`prompt:${text}`);
+          },
+          async followUp(text: string) {
+            calls.push(`followUp:${text}`);
+          },
+        },
+      };
+    },
+  });
+
+  const run: Run = {
+    id: "run-follow-up",
+    conversationId: "conversation-1",
+    goal: "Second message in the same thread",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:01:00.000Z",
+    updatedAt: "2026-04-20T00:01:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.piSessionPath, "/tmp/existing-thread-session.json");
+  assert.deepEqual(calls, [
+    "open:/tmp/existing-thread-session.json",
+    'session:/repo:/agent-dir:{"kind":"open","sessionPath":"/tmp/existing-thread-session.json"}',
+    calls[2]!,
+  ]);
+  assert.match(calls[2] ?? "", /^prompt:/);
+  assert.match(calls[2] ?? "", /Second message in the same thread/);
+});
+
+test("Pi run executor uses followUp only when the reopened Pi session is still streaming", async () => {
+  const calls: string[] = [];
+  const sessionManagerFactory = {
+    create(cwd: string) {
+      calls.push(`create:${cwd}`);
+      return { kind: "create", cwd };
+    },
+    open(sessionPath: string) {
+      calls.push(`open:${sessionPath}`);
+      return { kind: "open", sessionPath };
+    },
+  };
+
+  const executor = createPiRunExecutor({
+    agentDir: "/agent-dir",
+    sessionManagerFactory,
+    loadConversationSessionPath: () => "/tmp/streaming-thread-session.json",
+    createSession: async ({ cwd, agentDir, sessionManager }) => {
+      calls.push(`session:${cwd}:${agentDir}:${JSON.stringify(sessionManager)}`);
+      return {
+        session: {
+          sessionId: "pi-session-streaming-thread",
+          sessionFile: "/tmp/streaming-thread-session.json",
+          isStreaming: true,
+          async prompt(text: string) {
+            calls.push(`prompt:${text}`);
+          },
+          async followUp(text: string) {
+            calls.push(`followUp:${text}`);
+          },
+        },
+      };
+    },
+  });
+
+  const run: Run = {
+    id: "run-follow-up-streaming",
+    conversationId: "conversation-1",
+    goal: "Queue a follow-up while streaming",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:01:00.000Z",
+    updatedAt: "2026-04-20T00:01:00.000Z",
+  };
+
+  await executor.executeRun({ cwd: "/repo", run });
+
+  assert.match(calls[2] ?? "", /^followUp:/);
+});
+
+test("Pi run executor prefers the canonical conversation session binding over scanning prior runs", async () => {
+  const calls: string[] = [];
+  const sessionManagerFactory = {
+    create(cwd: string) {
+      calls.push(`create:${cwd}`);
+      return { kind: "create", cwd };
+    },
+    open(sessionPath: string) {
+      calls.push(`open:${sessionPath}`);
+      return { kind: "open", sessionPath };
+    },
+  };
+
+  const executor = createPiRunExecutor({
+    agentDir: "/agent-dir",
+    sessionManagerFactory,
+    loadConversationSessionPath: () => "/tmp/canonical-thread-session.json",
+    loadConversationRuns: () => ([
+      {
+        id: "run-older",
+        conversationId: "conversation-1",
+        goal: "Older thread work",
+        kind: "user_prompt",
+        status: "completed",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:10.000Z",
+        piSessionPath: "/tmp/non-canonical-latest-run-session.json",
+      },
+    ]),
+    createSession: async ({ cwd, agentDir, sessionManager }) => {
+      calls.push(`session:${cwd}:${agentDir}:${JSON.stringify(sessionManager)}`);
+      return {
+        session: {
+          sessionId: "pi-session-thread",
+          sessionFile: "/tmp/canonical-thread-session.json",
+          async prompt(text: string) {
+            calls.push(`prompt:${text}`);
+          },
+          async followUp(text: string) {
+            calls.push(`followUp:${text}`);
+          },
+        },
+      };
+    },
+  });
+
+  const run: Run = {
+    id: "run-follow-up-canonical",
+    conversationId: "conversation-1",
+    goal: "Use the canonical thread session",
+    kind: "user_prompt",
+    status: "queued",
+    createdAt: "2026-04-20T00:01:00.000Z",
+    updatedAt: "2026-04-20T00:01:00.000Z",
+  };
+
+  const result = await executor.executeRun({ cwd: "/repo", run });
+
+  assert.equal(result.piSessionPath, "/tmp/canonical-thread-session.json");
+  assert.deepEqual(calls, [
+    "open:/tmp/canonical-thread-session.json",
+    'session:/repo:/agent-dir:{"kind":"open","sessionPath":"/tmp/canonical-thread-session.json"}',
+    calls[2]!,
+  ]);
+  assert.match(calls[2] ?? "", /^prompt:/);
+  assert.match(calls[2] ?? "", /Use the canonical thread session/);
 });
 
 test("Pi run executor resumes an existing Pi session for a blocked run", async () => {

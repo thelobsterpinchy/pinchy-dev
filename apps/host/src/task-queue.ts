@@ -24,28 +24,89 @@ export function saveTasks(cwd: string, tasks: PinchyTask[]) {
   writeFileSync(path, JSON.stringify(tasks, null, 2), "utf8");
 }
 
+type EnqueueTaskOptions = Partial<Pick<PinchyTask, "source" | "conversationId" | "runId" | "dependsOnTaskIds">>;
+
+type DelegationPlanTaskInput = {
+  id?: string;
+  title: string;
+  prompt: string;
+  dependsOn?: string[];
+};
+
+function createTaskRecord(input: {
+  title: string;
+  prompt: string;
+  now: string;
+  options?: EnqueueTaskOptions;
+}): PinchyTask {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: input.title,
+    prompt: input.prompt,
+    status: "pending",
+    createdAt: input.now,
+    updatedAt: input.now,
+    source: input.options?.source,
+    conversationId: input.options?.conversationId,
+    runId: input.options?.runId,
+    dependsOnTaskIds: input.options?.dependsOnTaskIds?.filter(Boolean),
+  };
+}
+
+function isTaskReady(task: PinchyTask, tasks: PinchyTask[]) {
+  if (!task.dependsOnTaskIds || task.dependsOnTaskIds.length === 0) {
+    return true;
+  }
+
+  return task.dependsOnTaskIds.every((dependencyId) => tasks.some((entry) => entry.id === dependencyId && entry.status === "done"));
+}
+
 export function enqueueTask(
   cwd: string,
   title: string,
   prompt: string,
-  options: Partial<Pick<PinchyTask, "source" | "conversationId" | "runId">> = {},
+  options: EnqueueTaskOptions = {},
 ): PinchyTask {
   const tasks = loadTasks(cwd);
   const now = new Date().toISOString();
-  const task: PinchyTask = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  const task = createTaskRecord({
     title,
     prompt,
-    status: "pending",
-    createdAt: now,
-    updatedAt: now,
-    source: options.source,
-    conversationId: options.conversationId,
-    runId: options.runId,
-  };
+    now,
+    options,
+  });
   tasks.push(task);
   saveTasks(cwd, tasks);
   return task;
+}
+
+export function enqueueDelegationPlan(
+  cwd: string,
+  planTasks: DelegationPlanTaskInput[],
+  options: EnqueueTaskOptions = {},
+): PinchyTask[] {
+  const existingTasks = loadTasks(cwd);
+  const now = new Date().toISOString();
+  const localIdToTaskId = new Map<string, string>();
+
+  const createdTasks = planTasks.map((task, index) => {
+    const created = createTaskRecord({
+      title: task.title,
+      prompt: task.prompt,
+      now,
+      options,
+    });
+    localIdToTaskId.set(task.id?.trim() || `task-${index + 1}`, created.id);
+    return { input: task, created };
+  }).map(({ input, created }, index) => ({
+    ...created,
+    dependsOnTaskIds: (input.dependsOn ?? [])
+      .map((dependencyId) => localIdToTaskId.get(dependencyId))
+      .filter((value): value is string => Boolean(value)),
+  } satisfies PinchyTask));
+
+  saveTasks(cwd, [...existingTasks, ...createdTasks]);
+  return createdTasks;
 }
 
 export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["status"], patch: Partial<Pick<PinchyTask, "conversationId" | "runId">> = {}): PinchyTask | undefined {
@@ -60,6 +121,17 @@ export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["st
   return match;
 }
 
+export function updateTaskStatusByRunId(cwd: string, runId: string, status: PinchyTask["status"]): PinchyTask | undefined {
+  const tasks = loadTasks(cwd);
+  const match = tasks.find((task) => task.runId === runId);
+  if (!match) return undefined;
+  match.status = status;
+  match.updatedAt = new Date().toISOString();
+  saveTasks(cwd, tasks);
+  return match;
+}
+
 export function getNextPendingTask(cwd: string): PinchyTask | undefined {
-  return loadTasks(cwd).find((task) => task.status === "pending");
+  const tasks = loadTasks(cwd);
+  return tasks.find((task) => task.status === "pending" && isTaskReady(task, tasks));
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import guardrails from "../.pi/extensions/guardrails/index.ts";
+import guardrails from "../.pi/extensions/guardrails/index.js";
 
 type EventHandler = (event: any, ctx: any) => Promise<any> | any;
 
@@ -128,6 +128,79 @@ test("touching a test file first allows implementation edits and records a remin
     scope: "guardrails",
     message: "Editing apps/host/src/main.ts; consider adding or updating tests first.",
   });
+});
+
+test("multi-task requests block implementation edits until delegation starts", async () => {
+  const harness = createHarness();
+
+  await harness.emit("session_start", {});
+  await harness.emit("message_start", {
+    message: {
+      role: "user",
+      content: "Audit the worker, inspect the dashboard, and then implement the smallest safe fix.",
+    },
+  });
+  await harness.emit("tool_call", {
+    toolName: "read",
+    input: { path: "tests/main.test.ts" },
+  });
+
+  const blocked = await harness.emit("tool_call", {
+    toolName: "edit",
+    input: {
+      path: "apps/host/src/main.ts",
+      edits: [{ oldText: "a", newText: "b" }],
+    },
+  });
+
+  assert.equal(blocked.block, true);
+  assert.match(blocked.reason, /Orchestration guardrail/);
+
+  await harness.emit("tool_call", {
+    toolName: "delegate_task_plan",
+    input: {
+      tasks: [
+        { title: "Audit worker", prompt: "Audit worker" },
+        { title: "Inspect dashboard", prompt: "Inspect dashboard" },
+      ],
+    },
+  });
+
+  const allowed = await harness.emit("tool_call", {
+    toolName: "edit",
+    input: {
+      path: "apps/host/src/main.ts",
+      edits: [{ oldText: "a", newText: "b" }],
+    },
+  });
+
+  assert.equal(allowed, undefined);
+});
+
+test("single-task requests do not require delegation before implementation edits", async () => {
+  const harness = createHarness();
+
+  await harness.emit("session_start", {});
+  await harness.emit("message_start", {
+    message: {
+      role: "user",
+      content: "Fix the flaky worker test.",
+    },
+  });
+  await harness.emit("tool_call", {
+    toolName: "read",
+    input: { path: "tests/main.test.ts" },
+  });
+
+  const result = await harness.emit("tool_call", {
+    toolName: "edit",
+    input: {
+      path: "apps/host/src/main.ts",
+      edits: [{ oldText: "a", newText: "b" }],
+    },
+  });
+
+  assert.equal(result, undefined);
 });
 
 test("registered commands surface validation and engineering guidance", async () => {

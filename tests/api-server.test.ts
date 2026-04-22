@@ -239,7 +239,7 @@ test("api server exposes notification deliveries with query filters", async () =
 
 test("api server exposes run detail, question detail, and aggregate conversation state", async () => {
   await withServer(async ({ baseUrl, cwd }) => {
-    const { createNotificationDelivery } = await import("../apps/host/src/agent-state-store.js");
+    const { createNotificationDelivery, updateRunStatus } = await import("../apps/host/src/agent-state-store.js");
 
     const conversation = await fetch(`${baseUrl}/conversations`, {
       method: "POST",
@@ -258,6 +258,10 @@ test("api server exposes run detail, question detail, and aggregate conversation
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ goal: "Run a focused QA cycle", kind: "qa_cycle" }),
     }).then((response) => response.json() as Promise<{ id: string; kind: string; status: string }>);
+
+    updateRunStatus(cwd, run.id, "completed", {
+      piSessionPath: "/tmp/pi-thread-session.json",
+    });
 
     const question = await fetch(`${baseUrl}/questions`, {
       method: "POST",
@@ -300,12 +304,17 @@ test("api server exposes run detail, question detail, and aggregate conversation
       questions: Array<{ id: string }>;
       replies: Array<{ questionId: string }>;
       deliveries: Array<{ questionId?: string; runId?: string }>;
+      sessionBinding?: { conversationId: string; piSessionPath: string; sourceRunId?: string; updatedAt?: string };
     };
 
     assert.equal(aggregate.conversation.id, conversation.id);
     assert.equal(aggregate.messages.length, 1);
     assert.equal(aggregate.runs.length, 1);
     assert.equal(aggregate.runs[0]?.id, run.id);
+    assert.equal(aggregate.sessionBinding?.conversationId, conversation.id);
+    assert.equal(aggregate.sessionBinding?.piSessionPath, "/tmp/pi-thread-session.json");
+    assert.equal(aggregate.sessionBinding?.sourceRunId, run.id);
+    assert.match(aggregate.sessionBinding?.updatedAt ?? "", /^20/);
     assert.equal(aggregate.questions.length, 1);
     assert.equal(aggregate.questions[0]?.id, question.id);
     assert.equal(aggregate.replies.length, 0);

@@ -21,6 +21,7 @@ test("dashboard smoke selector registry stays unique and data-testid-based", () 
   assert.ok(selectors.some((entry) => entry.name === "settings-detected-model"));
   assert.ok(selectors.some((entry) => entry.name === "tools-agent-resource-skill"));
   assert.ok(selectors.some((entry) => entry.name === "settings-base-url-input"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-danger-mode-enabled"));
   assert.ok(selectors.some((entry) => entry.name === "settings-save"));
 });
 

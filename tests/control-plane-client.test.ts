@@ -19,6 +19,7 @@ import {
   replyToQuestion,
   selectConversationId,
   setActiveWorkspace,
+  submitAgentGuidance,
   submitPromptToConversation,
   updateSettings,
   submitTaskDelegationPlan,
@@ -53,6 +54,12 @@ test("control plane client fetches aggregate conversation state", async () => {
       questions: [],
       replies: [],
       deliveries: [],
+      sessionBinding: {
+        conversationId: "conversation-1",
+        piSessionPath: "/tmp/pi-thread-session.json",
+        sourceRunId: "run-1",
+        updatedAt: "2026-04-20T00:00:05.000Z",
+      },
     }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -62,6 +69,7 @@ test("control plane client fetches aggregate conversation state", async () => {
   const state = await fetchConversationState("conversation-1", fetchMock);
 
   assert.equal(state.conversation.id, "conversation-1");
+  assert.equal(state.sessionBinding?.piSessionPath, "/tmp/pi-thread-session.json");
   assert.equal(String(calls[0]?.input), "/api/control-plane/conversations/conversation-1/state");
 });
 
@@ -196,6 +204,34 @@ test("control plane client submits a prompt by appending a user message and crea
   assert.equal(String(calls[1]?.input), "/api/control-plane/conversations/conversation-1/runs");
 });
 
+test("dashboard client submits scoped agent guidance through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const guidance = await submitAgentGuidance({
+    conversationId: "conversation-1",
+    taskId: "task-1",
+    runId: "run-1",
+    content: "Stay scoped.",
+  }, fetchMock);
+
+  assert.equal(guidance.ok, true);
+  assert.equal(String(calls[0]?.input), "/api/actions/agent-guidance");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    conversationId: "conversation-1",
+    taskId: "task-1",
+    runId: "run-1",
+    content: "Stay scoped.",
+  });
+});
+
 test("control plane client deletes a conversation session through the dashboard proxy", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {
@@ -222,12 +258,16 @@ test("dashboard client fetches runtime settings through the dashboard api", asyn
       defaultModel: "gpt-5.4",
       defaultThinkingLevel: "medium",
       defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      autoDeleteEnabled: true,
+      autoDeleteDays: 14,
       workspaceDefaults: {},
       sources: {
         defaultProvider: "pi-agent",
         defaultModel: "pi-agent",
         defaultThinkingLevel: "pi-agent",
         defaultBaseUrl: "workspace",
+        autoDeleteEnabled: "workspace",
+        autoDeleteDays: "workspace",
       },
     }), {
       status: 200,
@@ -241,12 +281,16 @@ test("dashboard client fetches runtime settings through the dashboard api", asyn
   assert.equal(settings.defaultModel, "gpt-5.4");
   assert.equal(settings.defaultThinkingLevel, "medium");
   assert.equal(settings.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+  assert.equal(settings.autoDeleteEnabled, true);
+  assert.equal(settings.autoDeleteDays, 14);
   assert.deepEqual(settings.workspaceDefaults, {});
   assert.deepEqual(settings.sources, {
     defaultProvider: "pi-agent",
     defaultModel: "pi-agent",
     defaultThinkingLevel: "pi-agent",
     defaultBaseUrl: "workspace",
+    autoDeleteEnabled: "workspace",
+    autoDeleteDays: "workspace",
   });
   assert.equal(String(calls[0]?.input), "/api/settings");
 });
@@ -260,17 +304,23 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
       defaultModel: "qwen3-coder",
       defaultThinkingLevel: "high",
       defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      autoDeleteEnabled: true,
+      autoDeleteDays: 30,
       workspaceDefaults: {
         defaultProvider: "ollama",
         defaultModel: "qwen3-coder",
         defaultThinkingLevel: "high",
         defaultBaseUrl: "http://127.0.0.1:11434/v1",
+        autoDeleteEnabled: true,
+        autoDeleteDays: 30,
       },
       sources: {
         defaultProvider: "workspace",
         defaultModel: "workspace",
         defaultThinkingLevel: "workspace",
         defaultBaseUrl: "workspace",
+        autoDeleteEnabled: "workspace",
+        autoDeleteDays: "workspace",
       },
     }), {
       status: 200,
@@ -282,21 +332,29 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
     defaultModel: "qwen3-coder",
     defaultThinkingLevel: "high",
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    autoDeleteEnabled: true,
+    autoDeleteDays: 30,
   }, fetchMock);
 
   assert.equal(settings.defaultModel, "qwen3-coder");
   assert.equal(settings.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+  assert.equal(settings.autoDeleteEnabled, true);
+  assert.equal(settings.autoDeleteDays, 30);
   assert.deepEqual(settings.workspaceDefaults, {
     defaultProvider: "ollama",
     defaultModel: "qwen3-coder",
     defaultThinkingLevel: "high",
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    autoDeleteEnabled: true,
+    autoDeleteDays: 30,
   });
   assert.deepEqual(settings.sources, {
     defaultProvider: "workspace",
     defaultModel: "workspace",
     defaultThinkingLevel: "workspace",
     defaultBaseUrl: "workspace",
+    autoDeleteEnabled: "workspace",
+    autoDeleteDays: "workspace",
   });
   assert.equal(String(calls[0]?.input), "/api/settings");
   assert.equal(calls[0]?.init?.method, "PATCH");
@@ -304,6 +362,8 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
     defaultModel: "qwen3-coder",
     defaultThinkingLevel: "high",
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    autoDeleteEnabled: true,
+    autoDeleteDays: 30,
   });
 });
 

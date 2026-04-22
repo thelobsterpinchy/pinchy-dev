@@ -7,31 +7,62 @@ export function buildAgentChatChromeState(input: {
   selectedConversationStatusTone?: "info" | "warning" | "idle";
   latestMessagePreview?: string;
 }) {
+  const hasSelectedConversation = Boolean(input.selectedConversationTitle);
   return {
-    title: input.selectedConversationTitle ?? "No conversation selected",
-    eyebrow: "Pinchy chat",
-    statusLabel: input.selectedConversationStatusLabel ?? "Start a thread",
+    title: input.selectedConversationTitle ?? "New Session",
+    eyebrow: hasSelectedConversation ? "Conversation" : "Pinchy",
+    statusLabel: input.selectedConversationStatusLabel ?? "idle",
     statusTone: input.selectedConversationStatusTone ?? "idle",
     helper: input.latestMessagePreview
       ? `Latest: ${input.latestMessagePreview}`
-      : "Select a thread or send a prompt to start talking to Pinchy.",
-    composerLabel: input.selectedConversationTitle ? "Message Pinchy" : "Start talking",
+      : "Send a message to start the conversation.",
+    composerLabel: "Message Pinchy",
   };
 }
 
-export function buildTranscriptMessagePresentation(message: Pick<Message, "role">) {
+export function buildTranscriptMessagePresentation<T extends Pick<Message, "role" | "kind">>(message: T) {
+  if (message.kind === "orchestration_update") {
+    return {
+      roleLabel: "Pinchy plan",
+      align: "start" as const,
+      accentColor: "#c084fc",
+      background: "linear-gradient(180deg, #1a1333 0%, #111827 100%)",
+      borderColor: "#7c3aed",
+      surfaceTone: "orchestration" as const,
+      bubbleWidth: "min(760px, 92%)",
+      bubblePadding: 12,
+      metaGap: 8,
+      shadow: "0 12px 26px rgba(88, 28, 135, 0.24)",
+    };
+  }
+
+  if (message.kind === "orchestration_final") {
+    return {
+      roleLabel: "Pinchy synthesis",
+      align: "start" as const,
+      accentColor: "#f59e0b",
+      background: "linear-gradient(180deg, #2a1703 0%, #111827 100%)",
+      borderColor: "#d97706",
+      surfaceTone: "orchestration-final" as const,
+      bubbleWidth: "min(760px, 92%)",
+      bubblePadding: 12,
+      metaGap: 8,
+      shadow: "0 12px 26px rgba(180, 83, 9, 0.22)",
+    };
+  }
+
   if (message.role === "agent") {
     return {
       roleLabel: "Pinchy",
       align: "start" as const,
-      accentColor: "#38bdf8",
-      background: "linear-gradient(180deg, #0f172a 0%, #111827 100%)",
-      borderColor: "#1d4ed8",
-      surfaceTone: "agent" as const,
-      bubbleWidth: "min(720px, 90%)",
-      bubblePadding: 12,
-      metaGap: 8,
-      shadow: "0 10px 22px rgba(15, 23, 42, 0.22)",
+      accentColor: "#e5e7eb",
+      background: "transparent",
+      borderColor: "transparent",
+      surfaceTone: "agent-inline" as const,
+      bubbleWidth: "min(760px, 88%)",
+      bubblePadding: 0,
+      metaGap: 6,
+      shadow: "none",
     };
   }
 
@@ -39,14 +70,14 @@ export function buildTranscriptMessagePresentation(message: Pick<Message, "role"
     return {
       roleLabel: "You",
       align: "end" as const,
-      accentColor: "#22c55e",
-      background: "linear-gradient(180deg, #052e16 0%, #14532d 100%)",
-      borderColor: "#15803d",
-      surfaceTone: "user" as const,
-      bubbleWidth: "min(720px, 90%)",
-      bubblePadding: 12,
-      metaGap: 8,
-      shadow: "0 10px 22px rgba(20, 83, 45, 0.16)",
+      accentColor: "#ffffff",
+      background: "#2563eb",
+      borderColor: "#2563eb",
+      surfaceTone: "user-pill" as const,
+      bubbleWidth: "min(720px, 80%)",
+      bubblePadding: 14,
+      metaGap: 6,
+      shadow: "0 10px 22px rgba(37, 99, 235, 0.22)",
     };
   }
 
@@ -64,9 +95,9 @@ export function buildTranscriptMessagePresentation(message: Pick<Message, "role"
   };
 }
 
-export function buildConversationTranscriptState(input: {
-  messages: Array<Pick<Message, "id">>;
-  runs: Array<Pick<Run, "status">>;
+export function buildConversationTranscriptState<TMessage extends Pick<Message, "id">, TRun extends Pick<Run, "status">>(input: {
+  messages: TMessage[];
+  runs: TRun[];
   hasUnreadLatestMessages: boolean;
 }) {
   return {
@@ -74,6 +105,101 @@ export function buildConversationTranscriptState(input: {
     typingLabel: "Pinchy is typing",
     showNewMessagesNotice: input.hasUnreadLatestMessages && input.messages.length > 0,
     newMessagesLabel: "New messages ↓",
+  };
+}
+
+export function buildConversationDetailsProgressState<TRun extends Pick<Run, "id" | "goal" | "status" | "summary" | "updatedAt" | "createdAt">, TMessage extends Pick<Message, "role" | "content" | "createdAt">, TQuestion extends Pick<Question, "status">>(input: {
+  runs: TRun[];
+  messages: TMessage[];
+  questions: TQuestion[];
+}) {
+  const activeRun = [...input.runs]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .find((run) => run.status === "running" || run.status === "queued" || run.status === "waiting_for_human" || run.status === "waiting_for_approval");
+  const latestAgentUpdate = [...input.messages]
+    .reverse()
+    .find((message) => message.role === "agent")?.content;
+
+  return {
+    activeRun: activeRun ? {
+      id: activeRun.id,
+      goal: activeRun.goal,
+      status: activeRun.status,
+      summary: activeRun.summary,
+    } : undefined,
+    latestAgentUpdate,
+    pendingQuestionCount: input.questions.filter((question) => question.status === "pending_delivery" || question.status === "waiting_for_human").length,
+  };
+}
+
+export function buildConversationAgentListState<
+  TTask extends Pick<PinchyTask, "id" | "title" | "status" | "conversationId" | "runId" | "dependsOnTaskIds" | "updatedAt">,
+  TMessage extends Pick<Message, "role" | "content" | "runId" | "createdAt">
+>(input: {
+  conversationId: string;
+  tasks: TTask[];
+  messages: TMessage[];
+}) {
+  const agents = input.tasks
+    .filter((task) => task.conversationId === input.conversationId)
+    .sort((left, right) => {
+      const leftActive = left.status === "running" || left.status === "pending" || left.status === "blocked";
+      const rightActive = right.status === "running" || right.status === "pending" || right.status === "blocked";
+      if (leftActive !== rightActive) {
+        return leftActive ? -1 : 1;
+      }
+      return right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      runId: task.runId,
+      latestUpdate: task.runId
+        ? [...input.messages].reverse().find((message) => message.role === "agent" && message.runId === task.runId)?.content
+        : undefined,
+      dependencyCount: task.dependsOnTaskIds?.length ?? 0,
+      isActive: task.status === "running" || task.status === "pending" || task.status === "blocked",
+    }));
+
+  return { agents };
+}
+
+export function buildAgentSessionState<
+  TTask extends Pick<PinchyTask, "id" | "title" | "prompt" | "status" | "conversationId" | "runId">,
+  TMessage extends Pick<Message, "id" | "conversationId" | "role" | "content" | "createdAt" | "runId">
+>(input: {
+  conversationId: string;
+  selectedTaskId?: string;
+  tasks: TTask[];
+  messages: TMessage[];
+}) {
+  const task = input.tasks.find((entry) => entry.id === input.selectedTaskId && entry.conversationId === input.conversationId);
+  if (!task) {
+    return {
+      mode: "conversation" as const,
+      backLabel: "Back to Pinchy conversation",
+      agent: undefined,
+    };
+  }
+
+  const transcript = task.runId
+    ? input.messages.filter((message) => message.runId === task.runId)
+    : [];
+  const latestUpdate = [...transcript].reverse().find((message) => message.role === "agent")?.content;
+
+  return {
+    mode: "agent" as const,
+    backLabel: "Back to Pinchy conversation",
+    agent: {
+      id: task.id,
+      title: task.title,
+      prompt: task.prompt,
+      status: task.status,
+      runId: task.runId,
+      latestUpdate,
+      transcript,
+    },
   };
 }
 
@@ -232,7 +358,7 @@ export type DashboardPage = "overview" | "conversations" | "memory" | "operation
 
 export const DASHBOARD_PAGES: DashboardPage[] = ["overview", "conversations", "memory", "operations", "tools", "settings"];
 
-export function resolveDashboardLandingPage(_lastVisitedPage?: DashboardPage) {
+export function resolveDashboardLandingPage(_lastVisitedPage?: DashboardPage): DashboardPage {
   return "conversations";
 }
 
@@ -242,12 +368,10 @@ export function buildDashboardSidebarState(input: {
 }) {
   return {
     isOpen: input.isOpen,
-    width: input.isOpen ? 320 : 0,
+    width: input.isOpen ? 288 : 0,
     toggleLabel: input.isOpen ? "Hide menu" : "Show menu",
-    title: input.page === "conversations" ? "Pinchy chat" : "Pinchy",
-    subtitle: input.page === "conversations"
-      ? "Chat-first workspace"
-      : "Local coding control surface",
+    title: "Pinchy",
+    subtitle: "Control plane",
   };
 }
 
@@ -258,11 +382,35 @@ export function buildDashboardUtilityRailState(input: {
   const isConversationPage = input.page === "conversations";
   return {
     isOpen: isConversationPage ? input.isOpen : false,
-    width: isConversationPage && input.isOpen ? 380 : 0,
+    width: isConversationPage && input.isOpen ? 320 : 0,
     toggleLabel: input.isOpen ? "Hide tools rail" : "Show tools rail",
     title: "Parallel workbench",
     subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
   };
+}
+
+export function resolveConversationShellInitialState() {
+  return {
+    sidebarOpen: true,
+    utilityRailOpen: true,
+  };
+}
+
+export function resolveConversationRouteAfterRefresh(input: {
+  pathname: string;
+  routeConversationId?: string;
+  availableConversationIds: string[];
+}) {
+  if (!input.routeConversationId) {
+    return undefined;
+  }
+
+  if (input.availableConversationIds.includes(input.routeConversationId)) {
+    return input.pathname;
+  }
+
+  const fallbackConversationId = input.availableConversationIds[0];
+  return fallbackConversationId ? `/c/${fallbackConversationId}` : undefined;
 }
 
 export function buildConversationShellHeaderState(input: {

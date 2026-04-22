@@ -17,6 +17,7 @@ import { updateDaemonHealth } from "./daemon-health.js";
 import { consumeNextReloadRequest } from "./reload-requests.js";
 import { enqueueAutonomousGoalRun, enqueueIterationRun, enqueueQueuedTaskRun, enqueueWatcherFollowUpRun } from "./run-enqueue.js";
 import { loadWatchConfig } from "./watch-config.js";
+import { applyAutoDeleteRetention } from "./auto-delete-retention.js";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,7 +71,7 @@ export async function processNextPendingTaskRun(cwd: string, dependencies: Pendi
       title: task.title,
       prompt: task.prompt,
     });
-    updateTaskStatus(cwd, task.id, "done", {
+    updateTaskStatus(cwd, task.id, "running", {
       conversationId: scheduled.conversation.id,
       runId: scheduled.run.id,
     });
@@ -83,6 +84,25 @@ export async function processNextPendingTaskRun(cwd: string, dependencies: Pendi
     updateDaemonHealth(cwd, { status: "error", currentActivity: `task:${task.title}`, lastError: error instanceof Error ? error.message : String(error) });
     throw error;
   }
+}
+
+export async function processPendingTaskRuns(
+  cwd: string,
+  dependencies: PendingTaskRunDependencies = { enqueueTaskRun: enqueueQueuedTaskRun },
+  options: { limit?: number } = {},
+) {
+  const limit = Math.max(1, Math.floor(options.limit ?? 4));
+  const scheduled = [];
+
+  for (let index = 0; index < limit; index += 1) {
+    const processed = await processNextPendingTaskRun(cwd, dependencies);
+    if (!processed) {
+      break;
+    }
+    scheduled.push(processed);
+  }
+
+  return scheduled;
 }
 
 async function main() {
@@ -152,6 +172,7 @@ async function main() {
   try {
     while (true) {
       updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined });
+      applyAutoDeleteRetention(cwd);
       const reloadRequest = consumeNextReloadRequest(cwd);
       if (reloadRequest) {
         const label = reloadRequest.toolName ? `reload:${reloadRequest.toolName}` : "reload:runtime";
@@ -173,7 +194,9 @@ async function main() {
       }
       const task = getNextPendingTask(cwd);
       if (task) {
-        await processNextPendingTaskRun(cwd);
+        await processPendingTaskRuns(cwd, { enqueueTaskRun: enqueueQueuedTaskRun }, {
+          limit: Math.max(1, Number(process.env.PINCHY_DAEMON_TASK_CONCURRENCY ?? 4)),
+        });
         await sleep(1000);
         continue;
       }

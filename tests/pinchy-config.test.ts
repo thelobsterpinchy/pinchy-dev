@@ -20,15 +20,21 @@ test("setPinchyConfigValue writes runtime config keys and readPinchyConfigValue 
     setPinchyConfigValue(cwd, "defaultModel", "qwen2.5-coder");
     setPinchyConfigValue(cwd, "defaultThinkingLevel", "medium");
     setPinchyConfigValue(cwd, "defaultBaseUrl", "http://localhost:11434/v1");
+    setPinchyConfigValue(cwd, "autoDeleteEnabled", true);
+    setPinchyConfigValue(cwd, "autoDeleteDays", 30);
 
     assert.equal(readPinchyConfigValue(cwd, "defaultProvider"), "ollama");
     assert.equal(readPinchyConfigValue(cwd, "defaultModel"), "qwen2.5-coder");
     assert.equal(readPinchyConfigValue(cwd, "defaultThinkingLevel"), "medium");
     assert.equal(readPinchyConfigValue(cwd, "defaultBaseUrl"), "http://localhost:11434/v1");
+    assert.equal(readPinchyConfigValue(cwd, "autoDeleteEnabled"), true);
+    assert.equal(readPinchyConfigValue(cwd, "autoDeleteDays"), 30);
 
-    const file = JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")) as Record<string, string>;
+    const file = JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")) as Record<string, string | boolean | number>;
     assert.equal(file.defaultProvider, "ollama");
     assert.equal(file.defaultBaseUrl, "http://localhost:11434/v1");
+    assert.equal(file.autoDeleteEnabled, true);
+    assert.equal(file.autoDeleteDays, 30);
   });
 });
 

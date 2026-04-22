@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { createConversation, createRun } from "../apps/host/src/agent-state-store.js";
 import { loadDaemonHealth } from "../apps/host/src/daemon-health.js";
 import { loadRunHistory } from "../apps/host/src/run-history.js";
-import { loadTasks, enqueueTask } from "../apps/host/src/task-queue.js";
-import { processNextPendingTaskRun, resolveGoals } from "../apps/host/src/daemon.js";
+import { loadTasks, enqueueDelegationPlan, enqueueTask, updateTaskStatus } from "../apps/host/src/task-queue.js";
+import { processNextPendingTaskRun, processPendingTaskRuns, resolveGoals } from "../apps/host/src/daemon.js";
 
 function withTempDir(run: (cwd: string) => Promise<void> | void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-daemon-task-runs-"));
@@ -18,7 +18,7 @@ function withTempDir(run: (cwd: string) => Promise<void> | void) {
     });
 }
 
-test("processNextPendingTaskRun enqueues the next pending task as a persistent run and links the task", async () => {
+test("processNextPendingTaskRun enqueues the next pending task as a persistent run and leaves the task running until the subagent run finishes", async () => {
   await withTempDir(async (cwd) => {
     const task = enqueueTask(cwd, "Investigate flaky test", "Check the flaky worker test and fix it safely.");
 
@@ -36,7 +36,7 @@ test("processNextPendingTaskRun enqueues the next pending task as a persistent r
 
     const tasks = loadTasks(cwd);
     assert.equal(scheduled?.task.id, task.id);
-    assert.equal(tasks[0]?.status, "done");
+    assert.equal(tasks[0]?.status, "running");
     assert.equal(tasks[0]?.conversationId, scheduled?.conversation.id);
     assert.equal(tasks[0]?.runId, scheduled?.run.id);
   });
@@ -78,6 +78,55 @@ test("processNextPendingTaskRun blocks the task and records failure details when
     assert.match(history[0]?.details ?? "", /queue unavailable/);
     assert.equal(health?.status, "error");
     assert.match(health?.lastError ?? "", /queue unavailable/);
+  });
+});
+
+test("processPendingTaskRuns schedules multiple ready tasks but leaves dependency-blocked work queued", async () => {
+  await withTempDir(async (cwd) => {
+    enqueueDelegationPlan(cwd, [
+      { id: "inspect", title: "Inspect logs", prompt: "Inspect logs." },
+      { id: "review", title: "Review UI", prompt: "Review UI." },
+      { id: "fix", title: "Apply fix", prompt: "Apply fix.", dependsOn: ["inspect", "review"] },
+    ]);
+
+    const scheduledTitles: string[] = [];
+    await processPendingTaskRuns(cwd, {
+      enqueueTaskRun: async (_cwd, input) => {
+        scheduledTitles.push(input.title);
+        const conversation = createConversation(cwd, { title: "Pinchy queued tasks" });
+        const run = createRun(cwd, {
+          conversationId: conversation.id,
+          goal: `Queued task: ${input.title}`,
+          kind: "user_prompt",
+        });
+        return { conversation, run };
+      },
+    }, { limit: 4 });
+
+    assert.deepEqual(scheduledTitles.sort(), ["Inspect logs", "Review UI"]);
+    const tasksAfterFirstPass = loadTasks(cwd);
+    const inspectTask = tasksAfterFirstPass.find((task) => task.title === "Inspect logs");
+    const reviewTask = tasksAfterFirstPass.find((task) => task.title === "Review UI");
+    const fixTask = tasksAfterFirstPass.find((task) => task.title === "Apply fix");
+    assert.equal(fixTask?.status, "pending");
+
+    updateTaskStatus(cwd, inspectTask!.id, "done");
+    updateTaskStatus(cwd, reviewTask!.id, "done");
+
+    await processPendingTaskRuns(cwd, {
+      enqueueTaskRun: async (_cwd, input) => {
+        scheduledTitles.push(input.title);
+        const conversation = createConversation(cwd, { title: "Pinchy queued tasks" });
+        const run = createRun(cwd, {
+          conversationId: conversation.id,
+          goal: `Queued task: ${input.title}`,
+          kind: "user_prompt",
+        });
+        return { conversation, run };
+      },
+    }, { limit: 4 });
+
+    assert.deepEqual(scheduledTitles.sort(), ["Apply fix", "Inspect logs", "Review UI"]);
   });
 });
 
