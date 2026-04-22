@@ -80,6 +80,7 @@ export const DASHBOARD_SMOKE_SPECS: DashboardSmokePageSpec[] = [
       { name: "settings-base-url-input", selector: testIdSelector("settings-base-url-input") },
       { name: "settings-detected-model", selector: testIdSelector("settings-detected-model") },
       { name: "settings-thinking-select", selector: testIdSelector("settings-thinking-select") },
+      { name: "settings-danger-mode-enabled", selector: testIdSelector("settings-danger-mode-enabled") },
       { name: "settings-save", selector: testIdSelector("settings-save") },
     ],
   },

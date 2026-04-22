@@ -97,6 +97,7 @@ It is designed to run on your own machine, use your local LLMs, debug websites/a
 - `/allow-persistent <scope>`
 - local dashboard with artifact gallery, filters, routine actions, and queue-task form
 - repo-default low-friction approval scopes for `desktop.actions`, `simulator.actions`, `validation.exec`, and `routine.exec`
+- workspace-local `dangerModeEnabled` setting for sandbox-only risky local actions
 
 ### Run metadata
 - current run context stored in `.pinchy-run-context.json`
@@ -122,6 +123,18 @@ There are now two dashboard surfaces:
 - `npm run dashboard:web` — richer React/Vite dashboard app
 
 The React dashboard can now issue one-click runtime reload requests. When the Pinchy daemon is running, it consumes the reload request and triggers `/reload-runtime` directly inside the Pi session.
+
+### Danger Mode
+
+Pinchy now supports a workspace-local `dangerModeEnabled` setting in `.pinchy-runtime.json` and the dashboard Settings page.
+
+Use it only in a sandboxed environment when you want the workspace configuration to explicitly allow risky local actions such as:
+- desktop interaction
+- simulator control
+- clicks and typing
+- validation execution
+
+This setting is intentionally descriptive and repo-local. It does **not** guarantee that host-level or platform-level approval prompts disappear, because some approval enforcement lives outside this repository.
 
 The React dashboard also acts as a control-plane operator UI over the persistent Pinchy run model:
 - browse conversations from the Pinchy API

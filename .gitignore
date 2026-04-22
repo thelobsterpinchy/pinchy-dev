@@ -28,6 +28,10 @@ playwright-report/
 .pinchy-tasks.json
 .pinchy-watch.json
 .pinchy-workspaces.json
+.pinchy-reload-requests.json
+.pinchy-session-approvals.json
+.pinchy-routines.json
+.pinchy-runtime.json
 # Local generated outputs
 artifacts/
 logs/*.log

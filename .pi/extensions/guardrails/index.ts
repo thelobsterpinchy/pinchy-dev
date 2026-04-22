@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import { isTestLikePath, shouldEnforceTddForPath } from "../../../apps/host/src/engineering-policy.js";
+import { assessUserRequestTasks } from "../../../apps/host/src/orchestration-policy.js";
 
 const BLOCKED_BASH_PATTERNS = [
   /rm\s+-rf\s+\//,
@@ -38,9 +39,22 @@ function shouldRemindAboutTests(path: string) {
 
 export default function guardrails(pi: ExtensionAPI) {
   let hasTouchedTestsThisSession = false;
+  let currentTurnRequiresDelegation = false;
+  let delegationStartedThisTurn = false;
 
   pi.on("session_start", async () => {
     hasTouchedTestsThisSession = false;
+    currentTurnRequiresDelegation = false;
+    delegationStartedThisTurn = false;
+  });
+
+  pi.on("message_start", async (event) => {
+    const message = event?.message;
+    if (!message || typeof message !== "object") return;
+    if ((message as { role?: unknown }).role !== "user" || typeof (message as { content?: unknown }).content !== "string") return;
+    const assessment = assessUserRequestTasks((message as { content: string }).content);
+    currentTurnRequiresDelegation = assessment.requiresDelegation;
+    delegationStartedThisTurn = false;
   });
 
   pi.on("before_agent_start", async (event) => {
@@ -62,6 +76,10 @@ Engineering Guardrails:
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event?.toolName === "delegate_task_plan" || event?.toolName === "queue_task") {
+      delegationStartedThisTurn = true;
+    }
+
     if (isToolCallEventType("bash", event)) {
       const blocked = BLOCKED_BASH_PATTERNS.find((pattern) => pattern.test(event.input.command));
       if (blocked) {
@@ -90,6 +108,9 @@ Engineering Guardrails:
         return { block: true, reason: `Protected path blocked: ${path}` };
       }
       if (isTestLikePath(path)) hasTouchedTestsThisSession = true;
+      if (currentTurnRequiresDelegation && shouldEnforceTddForPath(path) && !delegationStartedThisTurn) {
+        return { block: true, reason: `Orchestration guardrail: this user request contains multiple tasks. Reply with the task plan in-thread and call delegate_task_plan or queue_task before editing implementation code (${path}).` };
+      }
       if (shouldEnforceTddForPath(path) && !hasTouchedTestsThisSession && process.env.PINCHY_ALLOW_NON_TDD !== "1") {
         return { block: true, reason: `TDD guardrail: touch or create a relevant test before writing implementation code (${path}). Override only with PINCHY_ALLOW_NON_TDD=1.` };
       }
@@ -104,6 +125,9 @@ Engineering Guardrails:
         return { block: true, reason: `Protected path blocked: ${path}` };
       }
       if (isTestLikePath(path)) hasTouchedTestsThisSession = true;
+      if (currentTurnRequiresDelegation && shouldEnforceTddForPath(path) && !delegationStartedThisTurn) {
+        return { block: true, reason: `Orchestration guardrail: this user request contains multiple tasks. Reply with the task plan in-thread and call delegate_task_plan or queue_task before editing implementation code (${path}).` };
+      }
       if (shouldEnforceTddForPath(path) && !hasTouchedTestsThisSession && process.env.PINCHY_ALLOW_NON_TDD !== "1") {
         return { block: true, reason: `TDD guardrail: update or inspect a relevant test before editing implementation code (${path}). Override only with PINCHY_ALLOW_NON_TDD=1.` };
       }

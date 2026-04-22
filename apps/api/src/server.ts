@@ -5,6 +5,7 @@ import {
   createQuestion,
   createRun,
   deleteConversation,
+  getConversationSessionBinding,
   getQuestionById,
   getRunById,
   listConversations,
@@ -135,11 +136,16 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             sendJson(res, 400, { ok: false, error: "content is required" });
             return;
           }
+          if (payload.kind !== undefined && payload.kind !== "default" && payload.kind !== "orchestration_update" && payload.kind !== "orchestration_final") {
+            sendJson(res, 400, { ok: false, error: "valid message kind is required when provided" });
+            return;
+          }
           sendJson(res, 201, appendMessage(requestCwd, {
             conversationId: conversationIdForMessages,
             role: payload.role,
             content: payload.content.trim(),
             runId: typeof payload.runId === "string" ? payload.runId : undefined,
+            kind: typeof payload.kind === "string" ? payload.kind : undefined,
           }));
         })
         .catch((error) => sendJsonBodyError(res, error));
@@ -167,6 +173,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
         questions,
         replies,
         deliveries,
+        sessionBinding: getConversationSessionBinding(requestCwd, conversationIdForState),
       });
       return;
     }

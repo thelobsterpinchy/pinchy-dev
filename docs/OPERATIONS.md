@@ -112,6 +112,8 @@ Pinchy now defaults this repo to lower-friction persistent scopes for common loc
 
 You can still disable any scope with `/allow-persistent <scope>` via the dashboard policy toggles or by writing `.pinchy-approval-policy.json`.
 
+For sandboxed local debugging, you can also enable the workspace-local `dangerModeEnabled` flag in `.pinchy-runtime.json` or from the dashboard Settings page. This advertises that risky local actions are acceptable in this workspace, but it does not override host-level approval enforcement outside this repo.
+
 ## Routine execution
 
 Useful tools/commands:

@@ -22,6 +22,9 @@ export type RunStatus = typeof RUN_STATUSES[number];
 export const QUESTION_STATUSES = ["pending_delivery", "waiting_for_human", "answered", "expired", "cancelled"] as const;
 export type QuestionStatus = typeof QUESTION_STATUSES[number];
 
+export const AGENT_GUIDANCE_STATUSES = ["pending", "applied", "cancelled"] as const;
+export type AgentGuidanceStatus = typeof AGENT_GUIDANCE_STATUSES[number];
+
 function includesValue<T extends string>(values: readonly T[], value: string): value is T {
   return values.includes(value as T);
 }
@@ -58,6 +61,10 @@ export function isQuestionStatus(value: string): value is QuestionStatus {
   return includesValue(QUESTION_STATUSES, value);
 }
 
+export function isAgentGuidanceStatus(value: string): value is AgentGuidanceStatus {
+  return includesValue(AGENT_GUIDANCE_STATUSES, value);
+}
+
 export function isMemoryKind(value: string): value is MemoryKind {
   return includesValue(MEMORY_KINDS, value);
 }
@@ -83,9 +90,10 @@ export type PinchyTask = {
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;
-  source?: "user" | "daemon" | "qa" | "watcher" | "routine";
+  source?: "user" | "agent" | "daemon" | "qa" | "watcher" | "routine";
   conversationId?: string;
   runId?: string;
+  dependsOnTaskIds?: string[];
 };
 
 export type ApprovalRecord = {
@@ -168,11 +176,31 @@ export type AgentResourceEntry = {
   path: string;
 };
 
+export type AgentGuidance = {
+  id: string;
+  conversationId: string;
+  taskId: string;
+  runId?: string;
+  content: string;
+  status: AgentGuidanceStatus;
+  createdAt: string;
+  appliedAt?: string;
+};
+
+export type ConversationSessionBinding = {
+  conversationId: string;
+  piSessionPath: string;
+  sourceRunId?: string;
+  updatedAt: string;
+};
+
 export type DashboardState = {
+  conversationSessions: ConversationSessionBinding[];
   runContext?: RunContext;
   workspaces: WorkspaceEntry[];
   activeWorkspaceId?: string;
   tasks: PinchyTask[];
+  agentGuidances: AgentGuidance[];
   approvals: ApprovalRecord[];
   generatedTools: string[];
   agentResources: AgentResourceEntry[];
@@ -190,6 +218,7 @@ export type DashboardState = {
 
 export type ConversationStatus = "active" | "archived";
 export type MessageRole = "user" | "agent" | "system";
+export type MessageKind = "default" | "orchestration_update" | "orchestration_final";
 export type QuestionPriority = "low" | "normal" | "high" | "urgent";
 export type ApprovalStatus = ApprovalRecord["status"];
 export type NotificationChannel = "discord" | "imessage" | "pinchy-app" | "dashboard";
@@ -204,6 +233,16 @@ export type Conversation = {
   latestRunId?: string;
 };
 
+export type ConversationState = {
+  conversation: Conversation;
+  messages: Message[];
+  runs: Run[];
+  questions: Question[];
+  replies: HumanReply[];
+  deliveries: NotificationDelivery[];
+  sessionBinding?: ConversationSessionBinding;
+};
+
 export type Message = {
   id: string;
   conversationId: string;
@@ -211,6 +250,7 @@ export type Message = {
   content: string;
   createdAt: string;
   runId?: string;
+  kind?: MessageKind;
 };
 
 export type Run = {
