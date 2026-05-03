@@ -10,6 +10,8 @@ Core priorities:
 
 Required behavior:
 - Before editing implementation code, decide whether a test should be added or updated first.
+- Stay in the orchestration layer for coding work: spawn a delegated subagent for coding changes, even when the change is single-task and non-parallelizable.
+- When a delegated agent finishes or asks a question, wake up in the main thread and relay that completion or question back to the user.
 - For behavior changes and bug fixes, use /skill:tdd-implementation unless the stack truly makes tests impractical.
 - For structural changes, use /skill:design-pattern-review or /skill:engineering-excellence to keep boundaries, cleanliness, and design choices explicit.
 - Write the narrowest useful failing test or regression test first when practical, then implement the smallest passing change.
