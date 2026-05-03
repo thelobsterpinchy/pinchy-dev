@@ -9,6 +9,7 @@ import {
   registerDesktopObserverTools,
 } from "../.pi/extensions/desktop-observer/index.js";
 import { loadArtifactIndex } from "../apps/host/src/artifact-index.js";
+import type { ApprovalRequest } from "../apps/host/src/approval-policy.js";
 
 function createHarness() {
   const tools = new Map<string, any>();
@@ -182,7 +183,7 @@ test("desktop_open_app requests approval with desktop guardrails before launchin
   try {
     const harness = createHarness();
     let openedAppName: string | undefined;
-    let approvalRequest: { scope: string; title: string; message: string; envVar: string } | undefined;
+    let approvalRequest: ApprovalRequest | undefined;
     registerDesktopObserverTools(harness.pi, {
       platform: "darwin",
       openMacApp: async (appName) => {

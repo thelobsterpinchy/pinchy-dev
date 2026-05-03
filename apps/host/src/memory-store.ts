@@ -30,7 +30,7 @@ function normalizeLoadedMemoryEntry(entry: unknown): SavedMemory | undefined {
   if (!entry || typeof entry !== "object") return undefined;
 
   const record = entry as Partial<SavedMemory> & { tags?: unknown };
-  if (!isMemoryKind(record.kind)) return undefined;
+  if (typeof record.kind !== "string" || !isMemoryKind(record.kind)) return undefined;
   if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.content !== "string") {
     return undefined;
   }
