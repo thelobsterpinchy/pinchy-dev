@@ -20,6 +20,16 @@ export function saveRunContext(cwd: string, context: RunContext) {
   writeFileSync(path, JSON.stringify(context, null, 2), "utf8");
 }
 
+export function clearRunContext(cwd: string) {
+  const path = resolve(cwd, FILE);
+  if (!existsSync(path)) return;
+  try {
+    writeFileSync(path, "", "utf8");
+  } catch {
+    // best effort clear
+  }
+}
+
 export function createRunContext(cwd: string, label: string): RunContext {
   const context: RunContext = {
     currentRunId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -27,5 +37,13 @@ export function createRunContext(cwd: string, label: string): RunContext {
     updatedAt: new Date().toISOString(),
   };
   saveRunContext(cwd, context);
+  return context;
+}
+
+export function setRunContext(cwd: string, context: RunContext) {
+  saveRunContext(cwd, {
+    ...context,
+    updatedAt: context.updatedAt ?? new Date().toISOString(),
+  });
   return context;
 }

@@ -1,8 +1,9 @@
-import { appendMessage, claimNextQueuedRun, listAgentGuidances, listQuestions, listReplies, listRuns, markAgentGuidanceApplied, updateQuestionStatus, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
+import { appendMessage, claimNextQueuedRun, listAgentGuidances, listQuestions, listReplies, listRuns, markAgentGuidanceApplied, updateQuestionStatus, updateRunStatus, type WorkerLane } from "../../../apps/host/src/agent-state-store.js";
 import { appendAuditEntry } from "../../../apps/host/src/audit-log.js";
 import { shouldRunAsCliEntry } from "../../../apps/host/src/module-entry.js";
-import { appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate } from "../../../apps/host/src/orchestration-thread.js";
-import { updateTaskStatusByRunId } from "../../../apps/host/src/task-queue.js";
+import { clearRunContext, setRunContext } from "../../../apps/host/src/run-context.js";
+import { appendDelegatedOutcomeRelay, appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate } from "../../../apps/host/src/orchestration-thread.js";
+import { updateTaskStatusByExecutionRunId } from "../../../apps/host/src/task-queue.js";
 import type { NotificationDelivery, Question, Run } from "../../../packages/shared/src/contracts.js";
 import { createQuestionDeliveryDispatcher } from "../../../services/notifiers/dispatcher.js";
 import { createPiRunExecutor } from "./pi-run-executor.js";
@@ -34,6 +35,52 @@ function summarizeTaskStatus(task: { title: string; status: "done" | "blocked" |
         ? "blocked"
         : "queued";
   return `Background task update: ${task.title} is now ${statusText}.`;
+}
+
+function buildMainThreadRelayContent(input: {
+  task: { title: string; status: "done" | "blocked" | "pending" | "running" };
+  outcome: ReturnType<typeof normalizeRunOutcome>;
+}) {
+  if (input.outcome.kind === "waiting_for_human") {
+    return `I need your input to continue delegated task "${input.task.title}": ${input.outcome.question.prompt} Reason: ${input.outcome.blockedReason}.`;
+  }
+
+  if (input.outcome.kind === "completed") {
+    return `I finished delegated task "${input.task.title}". Summary: ${input.outcome.summary}`;
+  }
+
+  if (input.outcome.kind === "failed") {
+    return `I hit a failure while working on delegated task "${input.task.title}". Error: ${input.outcome.error}`;
+  }
+
+  if (input.outcome.kind === "waiting_for_approval") {
+    return `I need approval before delegated task "${input.task.title}" can continue. Reason: ${input.outcome.blockedReason}.`;
+  }
+
+  return undefined;
+}
+
+function buildOrchestrationRelayIntro(input: {
+  task: { title: string; status: "done" | "blocked" | "pending" | "running" };
+  outcome: ReturnType<typeof normalizeRunOutcome>;
+}) {
+  if (input.outcome.kind === "waiting_for_human") {
+    return `The delegated agent is blocked and needs your input on \"${input.task.title}\": ${input.outcome.question.prompt} Reason: ${input.outcome.blockedReason}.`;
+  }
+
+  if (input.outcome.kind === "completed") {
+    return `The delegated agent finished \"${input.task.title}\". Summary: ${input.outcome.summary}`;
+  }
+
+  if (input.outcome.kind === "failed") {
+    return `The delegated agent hit a failure while working on \"${input.task.title}\". Error: ${input.outcome.error}`;
+  }
+
+  if (input.outcome.kind === "waiting_for_approval") {
+    return `The delegated agent is waiting for approval before continuing \"${input.task.title}\". Reason: ${input.outcome.blockedReason}.`;
+  }
+
+  return summarizeTaskStatus(input.task);
 }
 
 function consumePendingGuidanceForRun(cwd: string, run: Run) {
@@ -79,6 +126,12 @@ function applyGuidanceToReply(reply: string, guidanceText?: string) {
 
 async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: WorkerDependencies) {
   const startedAt = Date.now();
+  setRunContext(cwd, {
+    currentRunId: runningRun.id,
+    currentRunLabel: runningRun.goal,
+    currentConversationId: runningRun.conversationId,
+    updatedAt: new Date().toISOString(),
+  });
   appendAuditEntry(cwd, {
     type: "worker_run_started",
     runId: runningRun.id,
@@ -96,12 +149,20 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
       outcome,
     });
     if (persistedRun?.id) {
-      const updatedTask = updateTaskStatusByRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
+      const updatedTask = updateTaskStatusByExecutionRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
       if (updatedTask?.conversationId) {
+        const relayContent = buildMainThreadRelayContent({ task: updatedTask, outcome });
+        if (relayContent) {
+          appendDelegatedOutcomeRelay(cwd, {
+            conversationId: updatedTask.conversationId,
+            runId: updatedTask.runId,
+            content: relayContent,
+          });
+        }
         appendOrchestrationUpdate(cwd, {
           conversationId: updatedTask.conversationId,
           runId: updatedTask.runId,
-          intro: summarizeTaskStatus(updatedTask),
+          intro: buildOrchestrationRelayIntro({ task: updatedTask, outcome }),
         });
         appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: updatedTask.conversationId,
@@ -125,21 +186,33 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
     });
     return persistedRun;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    applyRunOutcome({
+      cwd,
+      run: runningRun,
+      outcome: {
+        kind: "failed",
+        summary: `Run execution failed before outcome persistence: ${runningRun.goal}`,
+        message: `Pinchy could not finish this run because execution failed: ${errorMessage}`,
+        error: errorMessage,
+        piSessionPath: runningRun.piSessionPath,
+      },
+    });
     appendAuditEntry(cwd, {
       type: "worker_run_finished",
       runId: runningRun.id,
       conversationId: runningRun.conversationId,
       summary: `Run execution failed before outcome persistence: ${runningRun.goal}`,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
       details: {
         executionMode: "queued",
         runKind: runningRun.kind,
         outcomeKind: "execution_error",
-        runStatus: "running",
+        runStatus: "failed",
         durationMs: Date.now() - startedAt,
       },
     });
-    const updatedTask = updateTaskStatusByRunId(cwd, runningRun.id, "blocked");
+    const updatedTask = updateTaskStatusByExecutionRunId(cwd, runningRun.id, "blocked");
     if (updatedTask?.conversationId) {
       appendOrchestrationUpdate(cwd, {
         conversationId: updatedTask.conversationId,
@@ -148,23 +221,25 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
       });
     }
     throw error;
+  } finally {
+    clearRunContext(cwd);
   }
 }
 
-export async function processNextQueuedRun(cwd: string, dependencies: WorkerDependencies) {
-  const run = claimNextQueuedRun(cwd);
+export async function processNextQueuedRun(cwd: string, dependencies: WorkerDependencies, options: { lane?: WorkerLane } = {}) {
+  const run = claimNextQueuedRun(cwd, { lane: options.lane });
   if (!run) return undefined;
   return executeClaimedRun(cwd, run, dependencies);
 }
 
-export async function processAvailableQueuedRuns(cwd: string, dependencies: WorkerDependencies, options: { concurrency?: number } = {}) {
+export async function processAvailableQueuedRuns(cwd: string, dependencies: WorkerDependencies, options: { concurrency?: number; lane?: WorkerLane } = {}) {
   const concurrency = Math.max(1, Math.floor(options.concurrency ?? 1));
   const processed: Run[] = [];
 
   while (true) {
     const claimedRuns: Run[] = [];
     for (let index = 0; index < concurrency; index += 1) {
-      const claimedRun = claimNextQueuedRun(cwd);
+      const claimedRun = claimNextQueuedRun(cwd, { lane: options.lane });
       if (!claimedRun) break;
       claimedRuns.push(claimedRun);
     }
@@ -240,6 +315,12 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
 
   const startedAt = Date.now();
   const runningRun = updateRunStatus(cwd, resumable.run.id, "running") ?? { ...resumable.run, status: "running" as const };
+  setRunContext(cwd, {
+    currentRunId: runningRun.id,
+    currentRunLabel: runningRun.goal,
+    currentConversationId: runningRun.conversationId,
+    updatedAt: new Date().toISOString(),
+  });
   appendAuditEntry(cwd, {
     type: "worker_run_started",
     runId: runningRun.id,
@@ -257,12 +338,20 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
       outcome,
     });
     if (persistedRun?.id) {
-      const updatedTask = updateTaskStatusByRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
+      const updatedTask = updateTaskStatusByExecutionRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
       if (updatedTask?.conversationId) {
+        const relayContent = buildMainThreadRelayContent({ task: updatedTask, outcome });
+        if (relayContent) {
+          appendDelegatedOutcomeRelay(cwd, {
+            conversationId: updatedTask.conversationId,
+            runId: updatedTask.runId,
+            content: relayContent,
+          });
+        }
         appendOrchestrationUpdate(cwd, {
           conversationId: updatedTask.conversationId,
           runId: updatedTask.runId,
-          intro: summarizeTaskStatus(updatedTask),
+          intro: buildOrchestrationRelayIntro({ task: updatedTask, outcome }),
         });
         appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: updatedTask.conversationId,
@@ -286,21 +375,33 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
     });
     return persistedRun;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    applyRunOutcome({
+      cwd,
+      run: runningRun,
+      outcome: {
+        kind: "failed",
+        summary: `Run resume failed before outcome persistence: ${runningRun.goal}`,
+        message: `Pinchy could not finish this run because execution failed: ${errorMessage}`,
+        error: errorMessage,
+        piSessionPath: runningRun.piSessionPath,
+      },
+    });
     appendAuditEntry(cwd, {
       type: "worker_run_finished",
       runId: runningRun.id,
       conversationId: runningRun.conversationId,
       summary: `Run resume failed before outcome persistence: ${runningRun.goal}`,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
       details: {
         executionMode: "resumed",
         runKind: runningRun.kind,
         outcomeKind: "execution_error",
-        runStatus: "running",
+        runStatus: "failed",
         durationMs: Date.now() - startedAt,
       },
     });
-    const updatedTask = updateTaskStatusByRunId(cwd, runningRun.id, "blocked");
+    const updatedTask = updateTaskStatusByExecutionRunId(cwd, runningRun.id, "blocked");
     if (updatedTask?.conversationId) {
       appendOrchestrationUpdate(cwd, {
         conversationId: updatedTask.conversationId,
@@ -309,11 +410,30 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
       });
     }
     throw error;
+  } finally {
+    clearRunContext(cwd);
   }
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = typeof value === "string" ? Number(value) : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+export function parseWorkerLoopConfig(env: NodeJS.ProcessEnv, cwd = process.cwd()) {
+  return {
+    cwd: env.PINCHY_CWD ?? cwd,
+    once: env.PINCHY_WORKER_ONCE === "true",
+    intervalMs: parsePositiveInteger(env.PINCHY_WORKER_INTERVAL_MS, 5000),
+    concurrency: parsePositiveInteger(env.PINCHY_WORKER_CONCURRENCY, 2),
+  };
 }
 
 const defaultPiRunExecutor = createPiRunExecutor();
@@ -331,20 +451,41 @@ async function defaultDispatchQuestion(cwd: string, question: Question): Promise
   return defaultQuestionDeliveryDispatcher.dispatchQuestion(cwd, question);
 }
 
-async function main() {
-  const cwd = process.env.PINCHY_CWD ?? process.cwd();
-  const once = process.env.PINCHY_WORKER_ONCE === "true";
-  const intervalMs = Number(process.env.PINCHY_WORKER_INTERVAL_MS ?? 5000);
-  const concurrency = Math.max(1, Number(process.env.PINCHY_WORKER_CONCURRENCY ?? 2));
-
+async function runInteractiveLane(cwd: string, intervalMs: number, concurrency: number, once: boolean) {
   do {
     const resumed = await processNextResumableRun(cwd, { resumeRun: defaultResumeRun });
     const delivered = resumed ? undefined : await processNextPendingQuestionDelivery(cwd, { dispatchQuestion: defaultDispatchQuestion });
-    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun }, { concurrency });
+    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun }, { concurrency, lane: "interactive" });
     const processed = resumed ?? delivered ?? processedRuns[0];
     if (once) return;
     if (!processed) await sleep(intervalMs);
   } while (true);
+}
+
+async function runBackgroundLane(cwd: string, intervalMs: number, concurrency: number, once: boolean) {
+  do {
+    const processedRuns = await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun }, { concurrency, lane: "background" });
+    const processed = processedRuns[0];
+    if (once) return;
+    if (!processed) await sleep(intervalMs);
+  } while (true);
+}
+
+async function main() {
+  const { cwd, once, intervalMs, concurrency } = parseWorkerLoopConfig(process.env);
+  const interactiveConcurrency = Math.max(1, concurrency - 1);
+  const backgroundConcurrency = Math.max(1, concurrency - interactiveConcurrency);
+
+  if (once) {
+    await runInteractiveLane(cwd, intervalMs, interactiveConcurrency, true);
+    await runBackgroundLane(cwd, intervalMs, backgroundConcurrency, true);
+    return;
+  }
+
+  await Promise.all([
+    runInteractiveLane(cwd, intervalMs, interactiveConcurrency, false),
+    runBackgroundLane(cwd, intervalMs, backgroundConcurrency, false),
+  ]);
 }
 
 if (shouldRunAsCliEntry(import.meta.url)) {

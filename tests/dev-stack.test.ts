@@ -13,12 +13,13 @@ import {
 test("buildManagedServiceDefinitions returns installable direct-entry service commands", () => {
   const services = buildManagedServiceDefinitions();
 
-  assert.deepEqual(services.map((service) => service.name), ["api", "worker", "dashboard"]);
+  assert.deepEqual(services.map((service) => service.name), ["api", "worker", "dashboard", "daemon"]);
   assert.equal(typeof services[0]?.command, "string");
   assert.ok((services[0]?.command ?? "").length > 0);
   assert.ok((services[0]?.args ?? []).some((entry) => /apps\/api\/src\/server\.ts$/.test(entry)));
   assert.ok((services[1]?.args ?? []).some((entry) => /services\/agent-worker\/src\/worker\.ts$/.test(entry)));
   assert.ok((services[2]?.args ?? []).some((entry) => /apps\/host\/src\/dashboard\.ts$/.test(entry)));
+  assert.ok((services[3]?.args ?? []).some((entry) => /apps\/host\/src\/daemon\.ts$/.test(entry)));
   assert.ok((services[0]?.args ?? []).every((entry) => !/^run$/.test(entry)));
 });
 
@@ -36,12 +37,14 @@ test("summarizeManagedServices renders a human-readable startup summary", () => 
     { name: "api", status: "started", logPath: "/repo/.pinchy/run/api.log", pid: 1001 },
     { name: "worker", status: "already_running", logPath: "/repo/.pinchy/run/worker.log", pid: 1002 },
     { name: "dashboard", status: "started", logPath: "/repo/.pinchy/run/dashboard.log", pid: 1003 },
+    { name: "daemon", status: "started", logPath: "/repo/.pinchy/run/daemon.log", pid: 1004 },
   ]);
 
   assert.match(summary, /Started Pinchy local stack helpers/);
   assert.match(summary, /api: started/);
   assert.match(summary, /worker: already_running/);
   assert.match(summary, /dashboard: started/);
+  assert.match(summary, /daemon: started/);
   assert.match(summary, /Use npm run agent in this terminal/);
 });
 

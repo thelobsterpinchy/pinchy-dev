@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { DashboardState, PinchyTask, SavedMemory } from "../packages/shared/src/contracts.js";
-import { buildAgentChatChromeState, buildAgentSessionState, buildChatWorkbenchState, buildChatWorkspacePanelState, buildConversationAgentListState, buildConversationComposerState, buildConversationDetailsProgressState, buildConversationListEntryPresentation, buildConversationOnboardingPresets, buildConversationOrchestrationState, buildConversationShellHeaderState, buildConversationTranscriptState, buildDashboardSidebarState, buildDashboardUtilityRailState, buildGlobalPromptState, buildMemoryDraftFromMessage, buildMemoryDraftFromQuestion, buildRunHeadline, buildSettingsConfigurationState, buildTranscriptMessagePresentation, decideTranscriptFollowUp, filterDashboardArtifacts, filterSavedMemories, mergeSettingsDraftWithFetchedSettings, parseDelegationPlanDraft, resolveConversationRouteAfterRefresh, resolveConversationShellInitialState, resolveDashboardLandingPage, resolveWorkspaceConversationSelection, summarizeConversationWorkspace, summarizeConversationWorkspacePresence, summarizeDashboardState, workspaceConversationSelectionStorageKey } from "../apps/dashboard/src/dashboard-model.js";
+import { buildAgentChatChromeState, buildAgentSessionState, buildChatWorkbenchState, buildChatWorkspacePanelState, buildConversationAgentListState, buildConversationComposerState, buildConversationDetailsProgressState, buildConversationListEntryPresentation, buildConversationOnboardingPresets, buildConversationOrchestrationState, buildConversationShellHeaderState, buildConversationThinkingState, buildConversationTranscriptState, buildDashboardSidebarState, buildDashboardUtilityRailState, buildGlobalPromptState, buildMemoryDraftFromMessage, buildMemoryDraftFromQuestion, buildRunHeadline, buildSettingsConfigurationState, buildTranscriptMessagePresentation, decideTranscriptFollowUp, filterDashboardArtifacts, filterSavedMemories, mergeSettingsDraftWithFetchedSettings, parseDelegationPlanDraft, resolveConversationRouteAfterRefresh, resolveConversationShellInitialState, resolveDashboardLandingPage, resolveWorkspaceConversationSelection, summarizeConversationWorkspace, summarizeConversationWorkspacePresence, summarizeDashboardState, workspaceConversationSelectionStorageKey } from "../apps/dashboard/src/dashboard-model.js";
 
 test("filterSavedMemories matches title, content, and tags", () => {
   const memories: SavedMemory[] = [
@@ -110,6 +110,50 @@ test("summarizeConversationWorkspace highlights when the agent is waiting for a 
   assert.equal(summary.pendingQuestionCount, 1);
   assert.equal(summary.composerPlaceholder, "Reply so the agent can continue this run");
   assert.equal(summary.hasActiveRun, true);
+});
+
+test("buildConversationThinkingState excludes orchestration-only artifacts from the main chat thinking summary", () => {
+  assert.deepEqual(buildConversationThinkingState({
+    runs: [
+      {
+        id: "run-1",
+        conversationId: "conversation-1",
+        goal: "Fix the chat UI",
+        kind: "user_prompt",
+        status: "running",
+        createdAt: "2026-04-25T00:00:00.000Z",
+        updatedAt: "2026-04-25T00:00:05.000Z",
+      },
+    ],
+    messages: [
+      {
+        id: "message-1",
+        conversationId: "conversation-1",
+        role: "agent",
+        runId: "run-1",
+        kind: "orchestration_update",
+        content: "Delegated agent finished a bounded task.",
+        createdAt: "2026-04-25T00:00:02.000Z",
+      },
+      {
+        id: "message-2",
+        conversationId: "conversation-1",
+        role: "agent",
+        runId: "run-1",
+        kind: "orchestration_final",
+        content: "Final synthesis summary: delegated work is complete.",
+        createdAt: "2026-04-25T00:00:03.000Z",
+      },
+    ],
+    now: "2026-04-25T00:00:06.000Z",
+  }), {
+    visible: true,
+    runId: "run-1",
+    label: "Pinchy is thinking (6 sec)",
+    goal: "Fix the chat UI",
+    elapsedSeconds: 6,
+    details: ["Goal: Fix the chat UI"],
+  });
 });
 
 test("summarizeConversationWorkspacePresence explains the active workspace and empty thread state", () => {
@@ -458,8 +502,8 @@ test("buildAgentChatChromeState summarizes the chat shell like the mock chat wor
   });
 });
 
-test("buildSettingsConfigurationState provides effective runtime guidance, source labels, and useful presets", () => {
-  assert.deepEqual(buildSettingsConfigurationState({
+test("buildSettingsConfigurationState provides effective runtime guidance, source labels, and useful provider options", () => {
+  const state = buildSettingsConfigurationState({
     defaultProvider: "openai-codex",
     defaultModel: "gpt-5.4",
     defaultThinkingLevel: "medium",
@@ -471,46 +515,25 @@ test("buildSettingsConfigurationState provides effective runtime guidance, sourc
       defaultThinkingLevel: "pi-agent",
       defaultBaseUrl: "workspace",
     },
-  }), {
-    title: "Agent settings",
-    subtitle: "OpenClaw-style runtime defaults for how Pinchy launches Pi-backed work in this workspace",
-    providerPresets: [
-      {
-        id: "local-server",
-        label: "Local server",
-        provider: "openai-compatible",
-        suggestedModel: "",
-        helper: "Point Pinchy at a local OpenAI-compatible endpoint and auto-detect its model list.",
-      },
-      {
-        id: "codex-cloud",
-        label: "Codex cloud",
-        provider: "openai-codex",
-        suggestedModel: "gpt-5.4",
-        helper: "Matches the current Pi agent Codex-style default on this machine.",
-      },
-      {
-        id: "openai-compatible",
-        label: "OpenAI-compatible",
-        provider: "openai-compatible",
-        suggestedModel: "gpt-4.1",
-        helper: "Use when routing Pinchy through an OpenAI-compatible endpoint.",
-      },
-    ],
-    summaryRows: [
-      { label: "provider", value: "openai-codex", sourceLabel: "Pi agent default" },
-      { label: "model", value: "gpt-5.4", sourceLabel: "Pi agent default" },
-      { label: "thinking", value: "medium", sourceLabel: "Pi agent default" },
-      { label: "endpoint", value: "http://127.0.0.1:11434/v1", sourceLabel: "Workspace override" },
-    ],
-    workspaceOverrideSummary: "No workspace override is saved yet. Pinchy is inheriting the backend runtime defaults above.",
-    guidance: [
-      "These values are stored in .pinchy-runtime.json for the active workspace when you save an override.",
-      "Use Ollama for the closest OpenClaw-style local-model setup, or keep Codex if you want the current cloud-backed Pi default.",
-      "You can point Pinchy at a local OpenAI-compatible server by setting an endpoint/base URL for the active workspace.",
-      "Raise thinking level for harder code tasks; lower it for fast iteration.",
-    ],
   });
+
+  assert.equal(state.title, "Agent settings");
+  assert.equal(state.subtitle, "OpenClaw-style runtime defaults for how Pinchy launches Pi-backed work in this workspace");
+  assert.ok(state.providerOptions.some((option) => option.id === "openai-codex" && option.label === "OpenAI Codex"));
+  assert.ok(state.providerOptions.some((option) => option.id === "ollama" && option.supportsBaseUrl === true));
+  assert.deepEqual(state.summaryRows, [
+    { label: "provider", value: "openai-codex", sourceLabel: "Pi agent default" },
+    { label: "model", value: "gpt-5.4", sourceLabel: "Pi agent default" },
+    { label: "thinking", value: "medium", sourceLabel: "Pi agent default" },
+    { label: "endpoint", value: "http://127.0.0.1:11434/v1", sourceLabel: "Workspace override" },
+  ]);
+  assert.equal(state.workspaceOverrideSummary, "No workspace override is saved yet. Pinchy is inheriting the backend runtime defaults above.");
+  assert.deepEqual(state.guidance, [
+    "These values are stored in .pinchy-runtime.json for the active workspace when you save an override.",
+    "Choose the Pi provider from the dropdown, then set the model and any required credentials or endpoint overrides.",
+    "Use OpenAI with a custom base URL or Ollama for local OpenAI-compatible and local-model setups.",
+    "Raise thinking level for harder code tasks; lower it for fast iteration.",
+  ]);
 });
 
 test("mergeSettingsDraftWithFetchedSettings preserves unsaved settings edits during background refreshes", () => {
@@ -638,22 +661,62 @@ test("buildConversationDetailsProgressState surfaces the active run and latest a
   });
 });
 
-test("buildConversationAgentListState surfaces ephemeral conversation agents and their latest updates", () => {
+test("buildConversationAgentListState surfaces ephemeral conversation agents and their execution-aware latest updates", () => {
   assert.deepEqual(buildConversationAgentListState({
     conversationId: "conversation-1",
     tasks: [
-      { id: "task-1", title: "Inspect polling regression", prompt: "Inspect polling regression", status: "running", conversationId: "conversation-1", runId: "run-1", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:04.000Z" },
-      { id: "task-2", title: "Verify live browser state", prompt: "Verify live browser state", status: "pending", conversationId: "conversation-1", createdAt: "2026-04-20T00:00:01.000Z", updatedAt: "2026-04-20T00:00:03.000Z", dependsOnTaskIds: ["task-1"] },
+      {
+        id: "task-1",
+        title: "Inspect polling regression",
+        prompt: "Inspect polling regression",
+        status: "running",
+        conversationId: "conversation-1",
+        runId: "run-1",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:04.000Z",
+        execution: { queueState: "linked_run", linkedRunStatus: "running", workerStatus: "running", workerPid: 4242, piSessionPath: "/tmp/pi-session-1.json" },
+      },
+      {
+        id: "task-2",
+        title: "Verify live browser state",
+        prompt: "Verify live browser state",
+        status: "pending",
+        conversationId: "conversation-1",
+        runId: "run-parent",
+        createdAt: "2026-04-20T00:00:01.000Z",
+        updatedAt: "2026-04-20T00:00:03.000Z",
+        dependsOnTaskIds: ["task-1"],
+        execution: { queueState: "waiting_for_dependencies", blockedByTaskTitles: ["Inspect polling regression"], workerStatus: "running", workerPid: 4242 },
+      },
       { id: "task-3", title: "Ignore other conversation task", prompt: "Ignore", status: "running", conversationId: "conversation-2", createdAt: "2026-04-20T00:00:02.000Z", updatedAt: "2026-04-20T00:00:05.000Z" },
     ] satisfies PinchyTask[],
     messages: [
       { id: "message-1", conversationId: "conversation-1", role: "agent", content: "Comparing route refresh behavior now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-1" },
       { id: "message-2", conversationId: "conversation-1", role: "agent", content: "Parent thread summary", createdAt: "2026-04-20T00:00:05.000Z" },
+      { id: "message-3", conversationId: "conversation-1", role: "agent", content: "Parent orchestrator is planning the delegation.", createdAt: "2026-04-20T00:00:05.500Z", runId: "run-parent" },
     ],
   }), {
     agents: [
-      { id: "task-1", title: "Inspect polling regression", status: "running", runId: "run-1", latestUpdate: "Comparing route refresh behavior now.", dependencyCount: 0, isActive: true },
-      { id: "task-2", title: "Verify live browser state", status: "pending", runId: undefined, latestUpdate: undefined, dependencyCount: 1, isActive: true },
+      {
+        id: "task-1",
+        title: "Inspect polling regression",
+        status: "running",
+        runId: "run-1",
+        latestUpdate: "Comparing route refresh behavior now.",
+        dependencyCount: 0,
+        isActive: true,
+        execution: { queueState: "linked_run", linkedRunStatus: "running", workerStatus: "running", workerPid: 4242, piSessionPath: "/tmp/pi-session-1.json" },
+      },
+      {
+        id: "task-2",
+        title: "Verify live browser state",
+        status: "pending",
+        runId: undefined,
+        latestUpdate: undefined,
+        dependencyCount: 1,
+        isActive: true,
+        execution: { queueState: "waiting_for_dependencies", blockedByTaskTitles: ["Inspect polling regression"], workerStatus: "running", workerPid: 4242 },
+      },
     ],
   });
 });
@@ -663,7 +726,17 @@ test("buildAgentSessionState turns the center pane into a selected ephemeral age
     conversationId: "conversation-1",
     selectedTaskId: "task-1",
     tasks: [
-      { id: "task-1", title: "Inspect polling regression", prompt: "Inspect polling regression", status: "running", conversationId: "conversation-1", runId: "run-1", createdAt: "2026-04-20T00:00:00.000Z", updatedAt: "2026-04-20T00:00:04.000Z" },
+      {
+        id: "task-1",
+        title: "Inspect polling regression",
+        prompt: "Inspect polling regression",
+        status: "running",
+        conversationId: "conversation-1",
+        runId: "run-1",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:04.000Z",
+        execution: { queueState: "linked_run", linkedRunStatus: "running" },
+      },
     ] satisfies PinchyTask[],
     messages: [
       { id: "message-1", conversationId: "conversation-1", role: "agent", content: "Comparing route refresh behavior now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-1" },
@@ -683,6 +756,46 @@ test("buildAgentSessionState turns the center pane into a selected ephemeral age
       transcript: [
         { id: "message-1", conversationId: "conversation-1", role: "agent", content: "Comparing route refresh behavior now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-1" },
         { id: "message-2", conversationId: "conversation-1", role: "user", content: "Focus on the current route only.", createdAt: "2026-04-20T00:00:04.700Z", runId: "run-1" },
+      ],
+    },
+  });
+
+  assert.deepEqual(buildAgentSessionState({
+    conversationId: "conversation-1",
+    selectedTaskId: "task-child",
+    tasks: [
+      {
+        id: "task-child",
+        title: "Inspect child run",
+        prompt: "Inspect child run",
+        status: "running",
+        conversationId: "conversation-1",
+        runId: "run-parent",
+        executionRunId: "run-child",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:04.000Z",
+        execution: { queueState: "linked_run", linkedRunStatus: "running" },
+      },
+    ] satisfies PinchyTask[],
+    messages: [
+      { id: "message-parent", conversationId: "conversation-1", role: "agent", kind: "orchestration_update", content: "Delegated work summary.", createdAt: "2026-04-20T00:00:04.400Z", runId: "run-parent" },
+      { id: "message-child-1", conversationId: "conversation-1", role: "agent", content: "Inspecting the child run now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-child" },
+      { id: "message-child-2", conversationId: "conversation-1", role: "agent", kind: "orchestration_update", content: "Internal orchestration echo.", createdAt: "2026-04-20T00:00:04.600Z", runId: "run-child" },
+      { id: "message-child-3", conversationId: "conversation-1", role: "user", content: "Stay scoped.", createdAt: "2026-04-20T00:00:04.700Z", runId: "run-child" },
+    ],
+  }), {
+    mode: "agent",
+    backLabel: "Back to Pinchy conversation",
+    agent: {
+      id: "task-child",
+      title: "Inspect child run",
+      prompt: "Inspect child run",
+      status: "running",
+      runId: "run-child",
+      latestUpdate: "Inspecting the child run now.",
+      transcript: [
+        { id: "message-child-1", conversationId: "conversation-1", role: "agent", content: "Inspecting the child run now.", createdAt: "2026-04-20T00:00:04.500Z", runId: "run-child" },
+        { id: "message-child-3", conversationId: "conversation-1", role: "user", content: "Stay scoped.", createdAt: "2026-04-20T00:00:04.700Z", runId: "run-child" },
       ],
     },
   });
@@ -729,6 +842,19 @@ test("decideTranscriptFollowUp ignores unchanged transcript polls", () => {
     isNearBottom: true,
   }), {
     shouldScrollToBottom: false,
+    shouldMarkUnread: false,
+  });
+});
+
+test("decideTranscriptFollowUp scrolls to the bottom when the first transcript batch arrives for an open conversation", () => {
+  assert.deepEqual(decideTranscriptFollowUp({
+    changedConversation: false,
+    messageCountChanged: true,
+    latestMessageChanged: true,
+    isNearBottom: false,
+    hadMessagesBefore: false,
+  }), {
+    shouldScrollToBottom: true,
     shouldMarkUnread: false,
   });
 });

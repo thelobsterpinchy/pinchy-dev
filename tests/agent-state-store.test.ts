@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   appendMessage,
+  appendRunActivity,
   createAgentGuidance,
   createConversation,
   createHumanReply,
   createNotificationDelivery,
+  claimNextQueuedRun,
   createQuestion,
   createRun,
   deleteConversation,
@@ -22,9 +24,14 @@ import {
   listNotificationDeliveries,
   listQuestions,
   listReplies,
+  clearRunCancellationRequest,
+  hasRunCancellationRequest,
+  listRunActivities,
+  listRunCancellationRequests,
   listRuns,
   markAgentGuidanceApplied,
   markQuestionAnswered,
+  requestRunCancellation,
   updateQuestionStatus,
   updateRunStatus,
 } from "../apps/host/src/agent-state-store.js";
@@ -70,6 +77,90 @@ test("agent state store persists orchestration message kinds", () => {
 
     const messages = listMessages(cwd, conversation.id);
     assert.equal(messages[0]?.kind, "orchestration_final");
+  });
+});
+
+
+test("agent state store ignores messages that reference missing conversations or runs", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Valid thread" });
+    const otherConversation = createConversation(cwd, { title: "Other thread" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Track a valid message",
+    });
+    const otherRun = createRun(cwd, {
+      conversationId: otherConversation.id,
+      goal: "Do not allow cross-thread messages",
+    });
+
+    const missingConversationMessage = appendMessage(cwd, {
+      conversationId: "conversation-missing",
+      role: "user",
+      content: "This should not persist",
+    });
+    const missingRunMessage = appendMessage(cwd, {
+      conversationId: conversation.id,
+      runId: "run-missing",
+      role: "agent",
+      content: "This should not persist either",
+    });
+    const mismatchedRunMessage = appendMessage(cwd, {
+      conversationId: conversation.id,
+      runId: otherRun.id,
+      role: "agent",
+      content: "This should not attach to another conversation's run",
+    });
+    const validMessage = appendMessage(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      role: "agent",
+      content: "This one is valid",
+    });
+
+    assert.equal(missingConversationMessage, undefined);
+    assert.equal(missingRunMessage, undefined);
+    assert.equal(mismatchedRunMessage, undefined);
+    assert.equal(validMessage?.runId, run.id);
+    assert.equal(listMessages(cwd, conversation.id).length, 1);
+  });
+});
+
+test("agent state store decorates conversations with notification metadata for active runs and pending questions", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Need review" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Review a risky change",
+    });
+    createQuestion(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      prompt: "Should I deploy this now?",
+      priority: "high",
+    });
+
+    const conversations = listConversations(cwd);
+
+    assert.equal(conversations[0]?.hasActiveRun, true);
+    assert.equal(conversations[0]?.pendingQuestionCount, 1);
+    assert.equal(conversations[0]?.attentionStatus, "needs_reply");
+  });
+});
+
+test("agent state store decorates conversations with approval attention when a run is waiting for approval", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Open app" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Open the app",
+    });
+    updateRunStatus(cwd, run.id, "waiting_for_approval");
+
+    const conversations = listConversations(cwd);
+
+    assert.equal(conversations[0]?.attentionStatus, "needs_approval");
+    assert.equal(conversations[0]?.hasActiveRun, true);
   });
 });
 
@@ -141,6 +232,28 @@ test("agent state store defaults runs to user_prompt kind", () => {
 
     assert.equal(run.kind, "user_prompt");
     assert.equal(listRuns(cwd, conversation.id)[0]?.kind, "user_prompt");
+  });
+});
+
+test("claimNextQueuedRun can target interactive and background lanes separately", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Lane scheduling" });
+    const backgroundRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Background QA cycle",
+      kind: "qa_cycle",
+    });
+    const interactiveRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Answer the user",
+      kind: "user_prompt",
+    });
+
+    const claimedInteractive = claimNextQueuedRun(cwd, { lane: "interactive" });
+    const claimedBackground = claimNextQueuedRun(cwd, { lane: "background" });
+
+    assert.equal(claimedInteractive?.id, interactiveRun.id);
+    assert.equal(claimedBackground?.id, backgroundRun.id);
   });
 });
 
@@ -229,7 +342,7 @@ test("agent state store returns newest notification deliveries first", () => {
   });
 });
 
-test("agent state store persists canonical conversation Pi sessions and seeds new runs from them", () => {
+test("agent state store persists canonical conversation Pi sessions and seeds delegation-eligible follow-up runs from them", () => {
   withTempDir((cwd) => {
     const conversation = createConversation(cwd, { title: "Persistent thread session" });
     const firstRun = createRun(cwd, {
@@ -239,18 +352,104 @@ test("agent state store persists canonical conversation Pi sessions and seeds ne
 
     updateRunStatus(cwd, firstRun.id, "completed", {
       piSessionPath: "/tmp/pi-thread-session.json",
+      runtimeConfigSignature: firstRun.runtimeConfigSignature,
     });
 
     const storedBinding = getConversationSessionBinding(cwd, conversation.id);
     const followUpRun = createRun(cwd, {
       conversationId: conversation.id,
-      goal: "Continue in the same thread",
+      goal: "Investigate the dashboard bug and implement the smallest safe fix.",
     });
 
     assert.equal(storedBinding?.piSessionPath, "/tmp/pi-thread-session.json");
     assert.equal(storedBinding?.sourceRunId, firstRun.id);
+    assert.equal(storedBinding?.runtimeConfigSignature, firstRun.runtimeConfigSignature);
     assert.equal(listConversationSessions(cwd)[0]?.conversationId, conversation.id);
     assert.equal(followUpRun.piSessionPath, "/tmp/pi-thread-session.json");
+  });
+});
+
+test("agent state store does not seed a strictly conversational follow-up user prompt from an older delegated session", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Casual follow-up" });
+    const firstRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Investigate the dashboard bug and implement the smallest safe fix.",
+    });
+
+    updateRunStatus(cwd, firstRun.id, "completed", {
+      piSessionPath: "/tmp/pi-thread-session.json",
+      runtimeConfigSignature: firstRun.runtimeConfigSignature,
+    });
+
+    const followUpRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "great! how was your day?",
+    });
+
+    assert.equal(followUpRun.piSessionPath, undefined);
+  });
+});
+
+test("agent state store does not seed a new run from a stale conversation session when the runtime model settings changed", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Changed runtime config" });
+    const firstRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Start the thread",
+    });
+
+    updateRunStatus(cwd, firstRun.id, "completed", {
+      piSessionPath: "/tmp/pi-thread-session.json",
+      runtimeConfigSignature: "old-signature",
+    });
+
+    const followUpRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Continue after changing models",
+      runtimeConfigSignature: "new-signature",
+    });
+
+    assert.equal(followUpRun.piSessionPath, undefined);
+  });
+});
+
+test("agent state store persists run activities and filters them by conversation and run", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Activity thread" });
+    const otherConversation = createConversation(cwd, { title: "Other thread" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Inspect activity",
+    });
+    const otherRun = createRun(cwd, {
+      conversationId: otherConversation.id,
+      goal: "Ignore me",
+    });
+
+    appendRunActivity(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      kind: "tool",
+      status: "completed",
+      label: "Tool: read",
+      toolName: "read",
+      details: ["path: README.md"],
+    });
+    appendRunActivity(cwd, {
+      conversationId: otherConversation.id,
+      runId: otherRun.id,
+      kind: "tool",
+      status: "failed",
+      label: "Tool: bash",
+      toolName: "bash",
+      details: ["command failed"],
+    });
+
+    assert.equal(listRunActivities(cwd).length, 2);
+    assert.equal(listRunActivities(cwd, { conversationId: conversation.id }).length, 1);
+    assert.equal(listRunActivities(cwd, { runId: run.id })[0]?.toolName, "read");
+    assert.equal(listRunActivities(cwd, { runId: otherRun.id })[0]?.status, "failed");
   });
 });
 
@@ -276,6 +475,48 @@ test("agent state store persists and applies scoped agent guidance", () => {
     assert.equal(applied?.status, "applied");
     assert.ok(applied?.appliedAt);
     assert.equal(listAgentGuidances(cwd, { status: "applied" })[0]?.id, guidance.id);
+  });
+});
+
+test("agent state store tracks run cancellation request lifecycle", () => {
+  withTempDir((cwd) => {
+    const first = requestRunCancellation(cwd, "run-123", "Conversation deleted");
+    assert.equal(first?.runId, "run-123");
+    assert.equal(first?.reason, "Conversation deleted");
+    assert.equal(hasRunCancellationRequest(cwd, "run-123"), true);
+
+    const updated = requestRunCancellation(cwd, "run-123", "Operator cancelled task");
+    assert.equal(updated?.reason, "Operator cancelled task");
+    assert.equal(listRunCancellationRequests(cwd).length, 1);
+
+    assert.equal(clearRunCancellationRequest(cwd, "run-123"), true);
+    assert.equal(hasRunCancellationRequest(cwd, "run-123"), false);
+    assert.equal(clearRunCancellationRequest(cwd, "run-123"), false);
+  });
+});
+
+test("agent state store preserves cancellation requests for active deleted runs while clearing completed ones", () => {
+  withTempDir((cwd) => {
+    const conversation = createConversation(cwd, { title: "Delete active thread" });
+    const activeRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "delete active thread data",
+    });
+    const completedRun = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "delete completed thread data",
+    });
+    updateRunStatus(cwd, completedRun.id, "completed");
+    requestRunCancellation(cwd, completedRun.id, "Old completed-run request");
+    requestRunCancellation(cwd, "run-unrelated", "Keep this request");
+
+    const deleted = deleteConversation(cwd, conversation.id);
+
+    assert.equal(deleted, true);
+    assert.equal(hasRunCancellationRequest(cwd, activeRun.id), true);
+    assert.equal(listRunCancellationRequests(cwd).some((request) => request.runId === activeRun.id && request.reason === "Conversation deleted"), true);
+    assert.equal(hasRunCancellationRequest(cwd, completedRun.id), false);
+    assert.equal(hasRunCancellationRequest(cwd, "run-unrelated"), true);
   });
 });
 
@@ -326,6 +567,19 @@ test("agent state store deletes a conversation session and its linked records", 
       runId: run.id,
       content: "Stay scoped.",
     });
+    appendRunActivity(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      kind: "tool",
+      status: "completed",
+      label: "Tool: read",
+      toolName: "read",
+      details: ["path: docs/ARCHITECTURE.md"],
+    });
+    updateRunStatus(cwd, run.id, "completed", {
+      piSessionPath: "/tmp/delete-me-session.json",
+      runtimeConfigSignature: run.runtimeConfigSignature,
+    });
 
     const deleted = deleteConversation(cwd, conversation.id);
 
@@ -337,6 +591,9 @@ test("agent state store deletes a conversation session and its linked records", 
     assert.equal(listReplies(cwd, question.id).length, 0);
     assert.equal(listNotificationDeliveries(cwd, { runId: run.id }).length, 0);
     assert.equal(listAgentGuidances(cwd, { conversationId: conversation.id }).length, 0);
+    assert.equal(listRunActivities(cwd, { conversationId: conversation.id }).length, 0);
+    assert.equal(getConversationSessionBinding(cwd, conversation.id), undefined);
+    assert.equal(listRunCancellationRequests(cwd).some((request) => request.runId === run.id), false);
     assert.equal(listMessages(cwd, otherConversation.id).length, 1);
     assert.equal(listRuns(cwd, otherConversation.id).length, 1);
   });

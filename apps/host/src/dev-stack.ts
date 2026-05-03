@@ -6,7 +6,7 @@ import { buildTsxEntrypointCommand, resolvePinchyPackagePath } from "./package-r
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:4320";
 const DEFAULT_DASHBOARD_BASE_URL = "http://127.0.0.1:4310";
 
-export type ManagedServiceName = "api" | "worker" | "dashboard";
+export type ManagedServiceName = "api" | "worker" | "dashboard" | "daemon";
 export type ManagedServiceStatus = "started" | "already_running";
 
 export type ManagedServiceDefinition = {
@@ -31,10 +31,12 @@ export function buildManagedServiceDefinitions(): ManagedServiceDefinition[] {
   const api = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/api/src/server.ts"));
   const worker = buildTsxEntrypointCommand(resolvePinchyPackagePath("services/agent-worker/src/worker.ts"));
   const dashboard = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/dashboard.ts"));
+  const daemon = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/daemon.ts"));
   return [
     { name: "api", command: api.command, args: api.args },
     { name: "worker", command: worker.command, args: worker.args },
     { name: "dashboard", command: dashboard.command, args: dashboard.args },
+    { name: "daemon", command: daemon.command, args: daemon.args },
   ];
 }
 

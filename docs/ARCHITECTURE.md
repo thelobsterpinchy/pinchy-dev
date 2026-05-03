@@ -65,6 +65,12 @@ Detects likely validation/test commands and can run them with approval gates.
 ### `.pi/extensions/browser-debugger`
 Provides website investigation tools using Playwright, including scan, DOM snapshot, repro probes, bounded step execution, and artifact comparison.
 
+### `.pi/extensions/web-search`
+Provides a lightweight public-internet search tool backed by a swappable provider strategy, currently combining Bing RSS and Open Library with simple relevance-based provider selection and saved JSON result artifacts.
+
+### `.pi/extensions/design-patterns`
+Provides local design-pattern and anti-pattern retrieval tools plus query-based, file-based, and repo-wide diagnosis flows, so skills can keep prompts small while fetching the right structural guidance on demand.
+
 ### `.pi/extensions/desktop-observer`
 Provides local screenshot and active-app inspection tools for desktop debugging, lightweight accessibility-style UI snapshots, and approval-gated app opening.
 
@@ -101,6 +107,9 @@ Unit tests live in:
 - `tests/task-queue.test.ts`
 - `tests/image-match.test.ts`
 - `tests/approval-policy.test.ts`
+- `tests/design-patterns.test.ts`
+- `tests/design-anti-patterns.test.ts`
+- `tests/design-patterns-extension.test.ts`
 
 ## Self-improvement model
 

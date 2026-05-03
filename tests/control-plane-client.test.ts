@@ -19,6 +19,11 @@ import {
   replyToQuestion,
   selectConversationId,
   setActiveWorkspace,
+  steerAgentRun,
+  queueAgentFollowUp,
+  reprioritizeTask,
+  clearCompletedTasks,
+  deleteTask,
   submitAgentGuidance,
   submitPromptToConversation,
   updateSettings,
@@ -232,6 +237,58 @@ test("dashboard client submits scoped agent guidance through the dashboard api",
   });
 });
 
+test("dashboard client submits an interrupt-and-steer action through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await steerAgentRun({
+    conversationId: "conversation-1",
+    runId: "run-1",
+    content: "Stop going that direction; inspect the API route instead.",
+  }, fetchMock);
+
+  assert.equal(result.ok, true);
+  assert.equal(String(calls[0]?.input), "/api/actions/agent-steer");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    conversationId: "conversation-1",
+    runId: "run-1",
+    content: "Stop going that direction; inspect the API route instead.",
+  });
+});
+
+test("dashboard client submits an agent follow-up action through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await queueAgentFollowUp({
+    conversationId: "conversation-1",
+    runId: "run-1",
+    content: "After that, summarize the root cause in one paragraph.",
+  }, fetchMock);
+
+  assert.equal(result.ok, true);
+  assert.equal(String(calls[0]?.input), "/api/actions/agent-follow-up");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    conversationId: "conversation-1",
+    runId: "run-1",
+    content: "After that, summarize the root cause in one paragraph.",
+  });
+});
+
 test("control plane client deletes a conversation session through the dashboard proxy", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {
@@ -258,8 +315,14 @@ test("dashboard client fetches runtime settings through the dashboard api", asyn
       defaultModel: "gpt-5.4",
       defaultThinkingLevel: "medium",
       defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      storedProviderCredentials: {
+        openai: true,
+        anthropic: false
+      },
       autoDeleteEnabled: true,
       autoDeleteDays: 14,
+      toolRetryWarningThreshold: 5,
+      toolRetryHardStopThreshold: 10,
       workspaceDefaults: {},
       sources: {
         defaultProvider: "pi-agent",
@@ -268,6 +331,8 @@ test("dashboard client fetches runtime settings through the dashboard api", asyn
         defaultBaseUrl: "workspace",
         autoDeleteEnabled: "workspace",
         autoDeleteDays: "workspace",
+        toolRetryWarningThreshold: "workspace",
+        toolRetryHardStopThreshold: "workspace",
       },
     }), {
       status: 200,
@@ -281,8 +346,14 @@ test("dashboard client fetches runtime settings through the dashboard api", asyn
   assert.equal(settings.defaultModel, "gpt-5.4");
   assert.equal(settings.defaultThinkingLevel, "medium");
   assert.equal(settings.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+  assert.deepEqual(settings.storedProviderCredentials, {
+    openai: true,
+    anthropic: false,
+  });
   assert.equal(settings.autoDeleteEnabled, true);
   assert.equal(settings.autoDeleteDays, 14);
+  assert.equal(settings.toolRetryWarningThreshold, 5);
+  assert.equal(settings.toolRetryHardStopThreshold, 10);
   assert.deepEqual(settings.workspaceDefaults, {});
   assert.deepEqual(settings.sources, {
     defaultProvider: "pi-agent",
@@ -291,6 +362,8 @@ test("dashboard client fetches runtime settings through the dashboard api", asyn
     defaultBaseUrl: "workspace",
     autoDeleteEnabled: "workspace",
     autoDeleteDays: "workspace",
+    toolRetryWarningThreshold: "workspace",
+    toolRetryHardStopThreshold: "workspace",
   });
   assert.equal(String(calls[0]?.input), "/api/settings");
 });
@@ -306,6 +379,8 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
       defaultBaseUrl: "http://127.0.0.1:11434/v1",
       autoDeleteEnabled: true,
       autoDeleteDays: 30,
+      toolRetryWarningThreshold: 6,
+      toolRetryHardStopThreshold: 12,
       workspaceDefaults: {
         defaultProvider: "ollama",
         defaultModel: "qwen3-coder",
@@ -313,6 +388,8 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
         defaultBaseUrl: "http://127.0.0.1:11434/v1",
         autoDeleteEnabled: true,
         autoDeleteDays: 30,
+        toolRetryWarningThreshold: 6,
+        toolRetryHardStopThreshold: 12,
       },
       sources: {
         defaultProvider: "workspace",
@@ -321,6 +398,8 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
         defaultBaseUrl: "workspace",
         autoDeleteEnabled: "workspace",
         autoDeleteDays: "workspace",
+        toolRetryWarningThreshold: "workspace",
+        toolRetryHardStopThreshold: "workspace",
       },
     }), {
       status: 200,
@@ -332,14 +411,19 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
     defaultModel: "qwen3-coder",
     defaultThinkingLevel: "high",
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    providerApiKey: "sk-test-123",
     autoDeleteEnabled: true,
     autoDeleteDays: 30,
+    toolRetryWarningThreshold: 6,
+    toolRetryHardStopThreshold: 12,
   }, fetchMock);
 
   assert.equal(settings.defaultModel, "qwen3-coder");
   assert.equal(settings.defaultBaseUrl, "http://127.0.0.1:11434/v1");
   assert.equal(settings.autoDeleteEnabled, true);
   assert.equal(settings.autoDeleteDays, 30);
+  assert.equal(settings.toolRetryWarningThreshold, 6);
+  assert.equal(settings.toolRetryHardStopThreshold, 12);
   assert.deepEqual(settings.workspaceDefaults, {
     defaultProvider: "ollama",
     defaultModel: "qwen3-coder",
@@ -347,6 +431,8 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
     autoDeleteEnabled: true,
     autoDeleteDays: 30,
+    toolRetryWarningThreshold: 6,
+    toolRetryHardStopThreshold: 12,
   });
   assert.deepEqual(settings.sources, {
     defaultProvider: "workspace",
@@ -355,6 +441,8 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
     defaultBaseUrl: "workspace",
     autoDeleteEnabled: "workspace",
     autoDeleteDays: "workspace",
+    toolRetryWarningThreshold: "workspace",
+    toolRetryHardStopThreshold: "workspace",
   });
   assert.equal(String(calls[0]?.input), "/api/settings");
   assert.equal(calls[0]?.init?.method, "PATCH");
@@ -362,8 +450,11 @@ test("dashboard client updates runtime settings through the dashboard api", asyn
     defaultModel: "qwen3-coder",
     defaultThinkingLevel: "high",
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    providerApiKey: "sk-test-123",
     autoDeleteEnabled: true,
     autoDeleteDays: 30,
+    toolRetryWarningThreshold: 6,
+    toolRetryHardStopThreshold: 12,
   });
 });
 
@@ -511,6 +602,65 @@ test("dashboard client lists, registers, activates, and deletes workspaces", asy
   assert.equal(String(calls[2]?.input), "/api/workspaces/workspace-2/activate");
   assert.equal(String(calls[3]?.input), "/api/workspaces/workspace-2");
   assert.equal(calls[3]?.init?.method, "DELETE");
+});
+
+test("dashboard client reprioritizes a task through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await reprioritizeTask({ taskId: "task-1", direction: "up" }, fetchMock);
+
+  assert.equal(result.ok, true);
+  assert.equal(String(calls[0]?.input), "/api/actions/task-reprioritize");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    taskId: "task-1",
+    direction: "up",
+  });
+});
+
+test("dashboard client deletes a task through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await deleteTask("task-1", fetchMock);
+
+  assert.equal(result.ok, true);
+  assert.equal(String(calls[0]?.input), "/api/actions/task-delete");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    taskId: "task-1",
+  });
+});
+
+test("dashboard client clears completed tasks through the dashboard api", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await clearCompletedTasks(fetchMock);
+
+  assert.equal(result.ok, true);
+  assert.equal(String(calls[0]?.input), "/api/actions/task-clear-completed");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {});
 });
 
 test("selectConversationId keeps the current selection when still present and otherwise falls back to the first conversation", () => {

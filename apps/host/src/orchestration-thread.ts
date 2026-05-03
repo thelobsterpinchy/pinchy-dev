@@ -33,6 +33,48 @@ function hasFinalSynthesisMessage(messages: Message[], runId?: string) {
   return messages.some((message) => message.kind === "orchestration_final" && (!runId || message.runId === runId));
 }
 
+function hasEquivalentPlainAgentMessage(messages: Message[], input: { runId?: string; content: string; requireSameRunId?: boolean }) {
+  return messages.some((message) => message.role === "agent"
+    && !message.kind
+    && message.content === input.content
+    && (!input.requireSameRunId || !input.runId || message.runId === input.runId));
+}
+
+export function appendPlainAgentRelay(cwd: string, input: {
+  conversationId?: string;
+  runId?: string;
+  content: string;
+  requireSameRunId?: boolean;
+}) {
+  if (!input.conversationId) return undefined;
+  const messages = listMessages(cwd, input.conversationId);
+  if (hasEquivalentPlainAgentMessage(messages, {
+    runId: input.runId,
+    content: input.content,
+    requireSameRunId: input.requireSameRunId,
+  })) {
+    return undefined;
+  }
+
+  return appendMessage(cwd, {
+    conversationId: input.conversationId,
+    role: "agent",
+    content: input.content,
+    runId: input.runId,
+  });
+}
+
+export function appendDelegatedOutcomeRelay(cwd: string, input: {
+  conversationId?: string;
+  runId?: string;
+  content: string;
+}) {
+  return appendPlainAgentRelay(cwd, {
+    ...input,
+    requireSameRunId: true,
+  });
+}
+
 export function appendOrchestrationUpdate(cwd: string, input: {
   conversationId?: string;
   runId?: string;

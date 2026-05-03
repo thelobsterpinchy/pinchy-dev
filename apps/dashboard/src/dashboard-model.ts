@@ -1,4 +1,5 @@
 import type { DashboardArtifact, DashboardState, Message, PinchyTask, Question, Run, SavedMemory } from "../../../packages/shared/src/contracts.js";
+import { PINCHY_PROVIDER_CATALOG } from "../../../packages/shared/src/pi-provider-catalog.js";
 import type { DashboardSettings } from "./control-plane-client.js";
 
 export function buildAgentChatChromeState(input: {
@@ -132,9 +133,109 @@ export function buildConversationDetailsProgressState<TRun extends Pick<Run, "id
   };
 }
 
+export function buildConversationThinkingState<
+  TRun extends Pick<Run, "id" | "goal" | "status" | "createdAt" | "updatedAt">,
+  TMessage extends Pick<Message, "role" | "content" | "runId" | "createdAt" | "kind">
+>(input: {
+  runs: TRun[];
+  messages: TMessage[];
+  now?: string | number | Date;
+}) {
+  const activeRun = [...input.runs]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .find((run) => run.status === "running");
+
+  if (!activeRun) {
+    return { visible: false as const };
+  }
+
+  const nowMs = input.now instanceof Date
+    ? input.now.getTime()
+    : typeof input.now === "number"
+      ? input.now
+      : typeof input.now === "string"
+        ? Date.parse(input.now)
+        : Date.now();
+  const startedAtMs = Date.parse(activeRun.createdAt);
+  const elapsedSeconds = Number.isFinite(startedAtMs)
+    ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000))
+    : 0;
+
+  const recentAgentUpdates = input.messages
+    .filter((message) => message.role === "agent" && message.runId === activeRun.id && message.kind !== "orchestration_update" && message.kind !== "orchestration_final")
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .slice(-3);
+  const latestUpdate = recentAgentUpdates.at(-1);
+
+  return {
+    visible: true as const,
+    runId: activeRun.id,
+    label: `Pinchy is thinking (${elapsedSeconds} sec)`,
+    goal: activeRun.goal,
+    elapsedSeconds,
+    details: [
+      `Goal: ${activeRun.goal}`,
+      ...(latestUpdate ? [`Latest progress: ${latestUpdate}`] : []),
+      ...(recentAgentUpdates.length > 0
+        ? [
+          "Recent activity:",
+          ...recentAgentUpdates.map((entry) => `• ${entry}`),
+        ]
+        : []),
+    ],
+  };
+}
+
+export function buildConversationRunActivityListState<TActivity extends { id: string; label: string; details: string[]; createdAt?: string }>(input: {
+  runActivities: TActivity[];
+}) {
+  return {
+    activities: [...input.runActivities]
+      .sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? ""))
+      .map((activity) => ({
+        id: activity.id,
+        label: `Pinchy · ${activity.label}`,
+        tone: "subtle" as const,
+        details: activity.details,
+      })),
+  };
+}
+
+export function buildTaskStatusPresentation<TTask extends Pick<PinchyTask, "status" | "execution">>(task: TTask) {
+  if (task.status === "done") {
+    return { label: "done", tone: "done" as const };
+  }
+
+  if (task.status === "blocked") {
+    return { label: "blocked", tone: "blocked" as const };
+  }
+
+  if (task.status === "running") {
+    if (task.execution?.linkedRunStatus === "running") {
+      return { label: "running", tone: "running" as const };
+    }
+
+    if (task.execution?.linkedRunStatus === "queued") {
+      return { label: "scheduled", tone: "pending" as const };
+    }
+  }
+
+  return { label: task.status === "pending" ? "queued" : task.status, tone: "pending" as const };
+}
+
+function getLinkedAgentRunId<TTask extends Pick<PinchyTask, "runId" | "executionRunId" | "execution">>(task: TTask) {
+  return task.execution?.queueState === "linked_run" ? (task.executionRunId ?? task.runId) : undefined;
+}
+
+function isScopedAgentTranscriptMessage<TMessage extends Pick<Message, "runId" | "kind">>(message: TMessage, linkedRunId: string) {
+  return message.runId === linkedRunId && message.kind !== "orchestration_update" && message.kind !== "orchestration_final";
+}
+
 export function buildConversationAgentListState<
-  TTask extends Pick<PinchyTask, "id" | "title" | "status" | "conversationId" | "runId" | "dependsOnTaskIds" | "updatedAt">,
-  TMessage extends Pick<Message, "role" | "content" | "runId" | "createdAt">
+  TTask extends Pick<PinchyTask, "id" | "title" | "status" | "conversationId" | "runId" | "executionRunId" | "dependsOnTaskIds" | "updatedAt" | "execution">,
+  TMessage extends Pick<Message, "role" | "content" | "runId" | "createdAt" | "kind">
 >(input: {
   conversationId: string;
   tasks: TTask[];
@@ -150,24 +251,28 @@ export function buildConversationAgentListState<
       }
       return right.updatedAt.localeCompare(left.updatedAt);
     })
-    .map((task) => ({
-      id: task.id,
-      title: task.title,
-      status: task.status,
-      runId: task.runId,
-      latestUpdate: task.runId
-        ? [...input.messages].reverse().find((message) => message.role === "agent" && message.runId === task.runId)?.content
-        : undefined,
-      dependencyCount: task.dependsOnTaskIds?.length ?? 0,
-      isActive: task.status === "running" || task.status === "pending" || task.status === "blocked",
-    }));
+    .map((task) => {
+      const linkedRunId = getLinkedAgentRunId(task);
+      return {
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        runId: linkedRunId,
+        latestUpdate: linkedRunId
+          ? [...input.messages].reverse().find((message) => message.role === "agent" && isScopedAgentTranscriptMessage(message, linkedRunId))?.content
+          : undefined,
+        dependencyCount: task.dependsOnTaskIds?.length ?? 0,
+        isActive: task.status === "running" || task.status === "pending" || task.status === "blocked",
+        execution: task.execution,
+      };
+    });
 
   return { agents };
 }
 
 export function buildAgentSessionState<
-  TTask extends Pick<PinchyTask, "id" | "title" | "prompt" | "status" | "conversationId" | "runId">,
-  TMessage extends Pick<Message, "id" | "conversationId" | "role" | "content" | "createdAt" | "runId">
+  TTask extends Pick<PinchyTask, "id" | "title" | "prompt" | "status" | "conversationId" | "runId" | "executionRunId" | "execution">,
+  TMessage extends Pick<Message, "id" | "conversationId" | "role" | "content" | "createdAt" | "runId" | "kind">
 >(input: {
   conversationId: string;
   selectedTaskId?: string;
@@ -183,8 +288,9 @@ export function buildAgentSessionState<
     };
   }
 
-  const transcript = task.runId
-    ? input.messages.filter((message) => message.runId === task.runId)
+  const linkedRunId = getLinkedAgentRunId(task);
+  const transcript = linkedRunId
+    ? input.messages.filter((message) => isScopedAgentTranscriptMessage(message, linkedRunId))
     : [];
   const latestUpdate = [...transcript].reverse().find((message) => message.role === "agent")?.content;
 
@@ -196,7 +302,7 @@ export function buildAgentSessionState<
       title: task.title,
       prompt: task.prompt,
       status: task.status,
-      runId: task.runId,
+      runId: linkedRunId,
       latestUpdate,
       transcript,
     },
@@ -208,6 +314,7 @@ export function decideTranscriptFollowUp(input: {
   messageCountChanged: boolean;
   latestMessageChanged: boolean;
   isNearBottom: boolean;
+  hadMessagesBefore?: boolean;
 }) {
   const hasTranscriptUpdate = input.messageCountChanged || input.latestMessageChanged;
   if (input.changedConversation || !hasTranscriptUpdate) {
@@ -217,7 +324,7 @@ export function decideTranscriptFollowUp(input: {
     };
   }
 
-  if (input.isNearBottom) {
+  if (input.hadMessagesBefore === false || input.isNearBottom) {
     return {
       shouldScrollToBottom: true,
       shouldMarkUnread: false,
@@ -313,29 +420,12 @@ export function buildSettingsConfigurationState(input: {
   return {
     title: "Agent settings",
     subtitle: "OpenClaw-style runtime defaults for how Pinchy launches Pi-backed work in this workspace",
-    providerPresets: [
-      {
-        id: "local-server",
-        label: "Local server",
-        provider: "openai-compatible",
-        suggestedModel: "",
-        helper: "Point Pinchy at a local OpenAI-compatible endpoint and auto-detect its model list.",
-      },
-      {
-        id: "codex-cloud",
-        label: "Codex cloud",
-        provider: "openai-codex",
-        suggestedModel: "gpt-5.4",
-        helper: "Matches the current Pi agent Codex-style default on this machine.",
-      },
-      {
-        id: "openai-compatible",
-        label: "OpenAI-compatible",
-        provider: "openai-compatible",
-        suggestedModel: "gpt-4.1",
-        helper: "Use when routing Pinchy through an OpenAI-compatible endpoint.",
-      },
-    ],
+    providerOptions: PINCHY_PROVIDER_CATALOG.map((provider) => ({
+      id: provider.id,
+      label: provider.label,
+      authKind: provider.authKind,
+      supportsBaseUrl: provider.supportsBaseUrl === true,
+    })),
     summaryRows: [
       { label: "provider", value: input.defaultProvider || "—", sourceLabel: formatSettingsSourceLabel(input.sources?.defaultProvider) },
       { label: "model", value: input.defaultModel || "—", sourceLabel: formatSettingsSourceLabel(input.sources?.defaultModel) },
@@ -345,8 +435,8 @@ export function buildSettingsConfigurationState(input: {
     workspaceOverrideSummary,
     guidance: [
       "These values are stored in .pinchy-runtime.json for the active workspace when you save an override.",
-      "Use Ollama for the closest OpenClaw-style local-model setup, or keep Codex if you want the current cloud-backed Pi default.",
-      "You can point Pinchy at a local OpenAI-compatible server by setting an endpoint/base URL for the active workspace.",
+      "Choose the Pi provider from the dropdown, then set the model and any required credentials or endpoint overrides.",
+      "Use OpenAI with a custom base URL or Ollama for local OpenAI-compatible and local-model setups.",
       "Raise thinking level for harder code tasks; lower it for fast iteration.",
     ],
   };
@@ -354,9 +444,9 @@ export function buildSettingsConfigurationState(input: {
 
 type ConversationWorkspaceSummary = ReturnType<typeof summarizeConversationWorkspace>;
 
-export type DashboardPage = "overview" | "conversations" | "memory" | "operations" | "tools" | "settings";
+export type DashboardPage = "overview" | "conversations" | "memory" | "operations" | "tools" | "tasks" | "settings";
 
-export const DASHBOARD_PAGES: DashboardPage[] = ["overview", "conversations", "memory", "operations", "tools", "settings"];
+export const DASHBOARD_PAGES: DashboardPage[] = ["overview", "conversations", "memory", "operations", "tools", "tasks", "settings"];
 
 export function resolveDashboardLandingPage(_lastVisitedPage?: DashboardPage): DashboardPage {
   return "conversations";

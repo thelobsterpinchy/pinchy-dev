@@ -13,8 +13,16 @@ test("buildPinchyInitPlan scaffolds packaged defaults and gitignore lines for a 
   assert.ok(plan.copyPaths.some((entry) => entry.from === "/pkg/pinchy-dev/.pi" && entry.to === "/work/demo/.pi"));
   assert.ok(plan.writeFiles.some((entry) => entry.path === "/work/demo/.pinchy-runtime.json"));
   assert.ok(plan.writeFiles.some((entry) => entry.path === "/work/demo/.pinchy-goals.json"));
-  assert.ok(plan.writeFiles.some((entry) => entry.path === "/work/demo/.pinchy-watch.json"));
+
+  const watchConfig = plan.writeFiles.find((entry) => entry.path === "/work/demo/.pinchy-watch.json");
+  assert.ok(watchConfig);
+  assert.match(
+    watchConfig.content,
+    /prefer tests\/docs\/guardrails, and stop if no safe improvement is needed\./,
+  );
+
   assert.match(plan.gitignoreText, /\.pinchy\/run\//);
+  assert.match(plan.gitignoreText, /\.pinchy-tasks\.json\.bak-\*/);
   assert.match(plan.gitignoreText, /artifacts\//);
 });
 
@@ -56,5 +64,6 @@ test("buildPinchyInitPlan respects existing workspace files and avoids duplicate
   assert.equal(plan.gitignoreText.match(/^\.pinchy\/run\/$/gm)?.length, 1);
   assert.equal(plan.gitignoreText.match(/^artifacts\/$/gm)?.length, 1);
   assert.match(plan.gitignoreText, /\.pinchy\/state\//);
+  assert.match(plan.gitignoreText, /\.pinchy-tasks\.json\.bak-\*/);
   assert.match(plan.gitignoreText, /logs\/\*\.jsonl/);
 });

@@ -1,25 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConversation, createRun, listAgentGuidances, listMessages, updateRunStatus } from "../apps/host/src/agent-state-store.js";
+import { createConversation, createRun, listAgentGuidances, listMessages, listRunCancellationRequests, updateRunStatus } from "../apps/host/src/agent-state-store.js";
 import { createDashboardServer } from "../apps/host/src/dashboard.js";
 
 async function withServer(
-  run: (args: { cwd: string; baseUrl: string }) => Promise<void>,
-  options: { controlPlaneApiBaseUrl?: string } = {},
+  run: (args: { cwd: string; baseUrl: string; agentDir: string }) => Promise<void>,
+  options: {
+    controlPlaneApiBaseUrl?: string;
+    agentDir?: string;
+    agentSessionController?: {
+      steerRun?: (input: { cwd: string; conversationId: string; runId?: string; content: string }) => Promise<void>;
+      queueFollowUp?: (input: { cwd: string; conversationId: string; runId?: string; content: string }) => Promise<void>;
+    };
+  } = {},
 ) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-dashboard-"));
-  const server = createDashboardServer({ cwd, port: 0, controlPlaneApiBaseUrl: options.controlPlaneApiBaseUrl });
+  const agentDir = options.agentDir ?? join(cwd, ".pi-agent");
+  mkdirSync(agentDir, { recursive: true });
+  const server = createDashboardServer({ cwd, port: 0, controlPlaneApiBaseUrl: options.controlPlaneApiBaseUrl, agentDir, agentSessionController: options.agentSessionController });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected TCP address");
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    await run({ cwd, baseUrl });
+    await run({ cwd, baseUrl, agentDir });
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     rmSync(cwd, { recursive: true, force: true });
@@ -56,20 +65,32 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel?: string;
       defaultThinkingLevel?: string;
       defaultBaseUrl?: string;
+      modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number };
+      savedModelConfigs?: Array<{ id: string; name: string }>;
+      storedProviderCredentials?: Record<string, boolean>;
       autoDeleteEnabled?: boolean;
       autoDeleteDays?: number;
+      toolRetryWarningThreshold?: number;
+      toolRetryHardStopThreshold?: number;
       dangerModeEnabled?: boolean;
-      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: boolean; autoDeleteDays?: number; dangerModeEnabled?: boolean };
-      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; dangerModeEnabled?: string };
+      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
+      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
     };
     assert.equal(initial.defaultProvider, "openai-codex");
     assert.equal(initial.defaultModel, "gpt-5.4");
     assert.equal(initial.defaultThinkingLevel, "medium");
     assert.equal(initial.defaultBaseUrl, undefined);
+    assert.equal(initial.modelOptions, undefined);
+    assert.deepEqual(initial.savedModelConfigs, []);
+    assert.deepEqual(initial.storedProviderCredentials, {});
     assert.equal(initial.autoDeleteEnabled, undefined);
     assert.equal(initial.autoDeleteDays, undefined);
+    assert.equal(initial.toolRetryWarningThreshold, undefined);
+    assert.equal(initial.toolRetryHardStopThreshold, undefined);
     assert.equal(initial.dangerModeEnabled, undefined);
-    assert.deepEqual(initial.workspaceDefaults, {});
+    assert.deepEqual(initial.workspaceDefaults, {
+      savedModelConfigs: [],
+    });
     assert.deepEqual(initial.sources, {
       defaultProvider: "env",
       defaultModel: "env",
@@ -77,6 +98,8 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultBaseUrl: "unset",
       autoDeleteEnabled: "unset",
       autoDeleteDays: "unset",
+      toolRetryWarningThreshold: "unset",
+      toolRetryHardStopThreshold: "unset",
       dangerModeEnabled: "unset",
     });
 
@@ -88,8 +111,37 @@ test("dashboard server exposes effective runtime settings through the dashboard 
         defaultModel: "qwen3-coder",
         defaultThinkingLevel: "high",
         defaultBaseUrl: "http://127.0.0.1:11434/v1",
+        modelOptions: {
+          temperature: 0.15,
+          topP: 0.92,
+          topK: 30,
+          maxTokens: 2048,
+          seed: 17,
+          stop: ["DONE"],
+          repeatPenalty: 1.03,
+          presencePenalty: 0.1,
+          frequencyPenalty: 0.2,
+          contextWindow: 16384,
+        },
+        savedModelConfigs: [
+          {
+            id: "local-qwen",
+            name: "Local Qwen coder",
+            provider: "ollama",
+            model: "qwen3-coder",
+            baseUrl: "http://127.0.0.1:11434/v1",
+            thinkingLevel: "high",
+            modelOptions: {
+              temperature: 0.15,
+              topK: 30,
+              maxTokens: 2048,
+            },
+          },
+        ],
         autoDeleteEnabled: true,
         autoDeleteDays: 30,
+        toolRetryWarningThreshold: 6,
+        toolRetryHardStopThreshold: 12,
       }),
     });
     assert.equal(updateResponse.status, 200);
@@ -98,34 +150,100 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel?: string;
       defaultThinkingLevel?: string;
       defaultBaseUrl?: string;
+      modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number };
+      savedModelConfigs?: Array<{ id: string; name: string; provider?: string; model?: string; baseUrl?: string; thinkingLevel?: string; modelOptions?: { temperature?: number; topK?: number; maxTokens?: number } }>;
+      storedProviderCredentials?: Record<string, boolean>;
       autoDeleteEnabled?: boolean;
       autoDeleteDays?: number;
+      toolRetryWarningThreshold?: number;
+      toolRetryHardStopThreshold?: number;
       dangerModeEnabled?: boolean;
-      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: boolean; autoDeleteDays?: number; dangerModeEnabled?: boolean };
-      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; dangerModeEnabled?: string };
+      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string; provider?: string; model?: string; baseUrl?: string; thinkingLevel?: string; modelOptions?: { temperature?: number; topK?: number; maxTokens?: number } }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
+      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
     };
-    assert.equal(updated.defaultProvider, "openai-codex");
-    assert.equal(updated.defaultModel, "gpt-5.4");
-    assert.equal(updated.defaultThinkingLevel, "medium");
+    assert.equal(updated.defaultProvider, "ollama");
+    assert.equal(updated.defaultModel, "qwen3-coder");
+    assert.equal(updated.defaultThinkingLevel, "high");
     assert.equal(updated.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.deepEqual(updated.modelOptions, {
+      temperature: 0.15,
+      topP: 0.92,
+      topK: 30,
+      maxTokens: 2048,
+      seed: 17,
+      stop: ["DONE"],
+      repeatPenalty: 1.03,
+      presencePenalty: 0.1,
+      frequencyPenalty: 0.2,
+      contextWindow: 16384,
+    });
+    assert.deepEqual(updated.savedModelConfigs, [
+      {
+        id: "local-qwen",
+        name: "Local Qwen coder",
+        provider: "ollama",
+        model: "qwen3-coder",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        thinkingLevel: "high",
+        modelOptions: {
+          temperature: 0.15,
+          topK: 30,
+          maxTokens: 2048,
+        },
+      },
+    ]);
+    assert.deepEqual(updated.storedProviderCredentials, {});
     assert.equal(updated.autoDeleteEnabled, true);
     assert.equal(updated.autoDeleteDays, 30);
+    assert.equal(updated.toolRetryWarningThreshold, 6);
+    assert.equal(updated.toolRetryHardStopThreshold, 12);
     assert.equal(updated.dangerModeEnabled, undefined);
     assert.deepEqual(updated.workspaceDefaults, {
       defaultProvider: "ollama",
       defaultModel: "qwen3-coder",
       defaultThinkingLevel: "high",
       defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      modelOptions: {
+        temperature: 0.15,
+        topP: 0.92,
+        topK: 30,
+        maxTokens: 2048,
+        seed: 17,
+        stop: ["DONE"],
+        repeatPenalty: 1.03,
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.2,
+        contextWindow: 16384,
+      },
+      savedModelConfigs: [
+        {
+          id: "local-qwen",
+          name: "Local Qwen coder",
+          provider: "ollama",
+          model: "qwen3-coder",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          thinkingLevel: "high",
+          modelOptions: {
+            temperature: 0.15,
+            topK: 30,
+            maxTokens: 2048,
+          },
+        },
+      ],
       autoDeleteEnabled: true,
       autoDeleteDays: 30,
+      toolRetryWarningThreshold: 6,
+      toolRetryHardStopThreshold: 12,
     });
     assert.deepEqual(updated.sources, {
-      defaultProvider: "env",
-      defaultModel: "env",
-      defaultThinkingLevel: "env",
+      defaultProvider: "workspace",
+      defaultModel: "workspace",
+      defaultThinkingLevel: "workspace",
       defaultBaseUrl: "workspace",
       autoDeleteEnabled: "workspace",
       autoDeleteDays: "workspace",
+      toolRetryWarningThreshold: "workspace",
+      toolRetryHardStopThreshold: "workspace",
       dangerModeEnabled: "unset",
     });
 
@@ -137,6 +255,35 @@ test("dashboard server exposes effective runtime settings through the dashboard 
     assert.equal(onDisk.defaultModel, "qwen3-coder");
     assert.equal(onDisk.defaultThinkingLevel, "high");
     assert.equal(onDisk.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.deepEqual(onDisk.modelOptions, {
+      temperature: 0.15,
+      topP: 0.92,
+      topK: 30,
+      maxTokens: 2048,
+      seed: 17,
+      stop: ["DONE"],
+      repeatPenalty: 1.03,
+      presencePenalty: 0.1,
+      frequencyPenalty: 0.2,
+      contextWindow: 16384,
+    });
+    assert.equal(onDisk.toolRetryWarningThreshold, 6);
+    assert.equal(onDisk.toolRetryHardStopThreshold, 12);
+    assert.deepEqual(onDisk.savedModelConfigs, [
+      {
+        id: "local-qwen",
+        name: "Local Qwen coder",
+        provider: "ollama",
+        model: "qwen3-coder",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        thinkingLevel: "high",
+        modelOptions: {
+          temperature: 0.15,
+          topK: 30,
+          maxTokens: 2048,
+        },
+      },
+    ]);
     assert.equal(onDisk.autoDeleteEnabled, true);
     assert.equal(onDisk.autoDeleteDays, 30);
   });
@@ -147,6 +294,76 @@ test("dashboard server exposes effective runtime settings through the dashboard 
   else process.env.PINCHY_DEFAULT_MODEL = originalModel;
   if (originalThinking === undefined) delete process.env.PINCHY_DEFAULT_THINKING_LEVEL;
   else process.env.PINCHY_DEFAULT_THINKING_LEVEL = originalThinking;
+});
+
+test("dashboard server rejects invalid settings patches without persisting earlier valid fields", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      defaultProvider: "openai",
+      defaultModel: "gpt-5.4",
+    }, null, 2));
+
+    const response = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        defaultProvider: "ollama",
+        defaultModel: "qwen3-coder",
+        defaultThinkingLevel: "turbo",
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { ok?: boolean; error?: string };
+    assert.equal(payload.ok, false);
+    assert.match(payload.error ?? "", /invalid thinking level/i);
+
+    const reread = await fetch(`${baseUrl}/api/settings`).then((result) => result.json() as Promise<{
+      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; savedModelConfigs?: unknown[] };
+      sources?: { defaultProvider?: string; defaultModel?: string };
+    }>);
+    assert.deepEqual(reread.workspaceDefaults, {
+      defaultProvider: "openai",
+      defaultModel: "gpt-5.4",
+      savedModelConfigs: [],
+    });
+    assert.equal(reread.sources?.defaultProvider, "workspace");
+    assert.equal(reread.sources?.defaultModel, "workspace");
+
+    const runtimeConfigPath = join(cwd, ".pinchy-runtime.json");
+    assert.equal(existsSync(runtimeConfigPath), true);
+    assert.deepEqual(JSON.parse(readFileSync(runtimeConfigPath, "utf8")), {
+      defaultProvider: "openai",
+      defaultModel: "gpt-5.4",
+    });
+  });
+});
+
+test("dashboard server persists provider api keys in Pi auth storage and reports which providers have stored credentials", async () => {
+  await withServer(async ({ baseUrl, agentDir }) => {
+    const initial = await fetch(`${baseUrl}/api/settings`).then((response) => response.json() as Promise<{ storedProviderCredentials?: Record<string, boolean> }>);
+    assert.deepEqual(initial.storedProviderCredentials, {});
+
+    const updateResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.4",
+        providerApiKey: "sk-live-test-key",
+      }),
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const updated = await updateResponse.json() as { storedProviderCredentials?: Record<string, boolean> };
+    assert.equal(updated.storedProviderCredentials?.openai, true);
+
+    const authJson = JSON.parse(readFileSync(join(agentDir, "auth.json"), "utf8")) as Record<string, { type?: string; key?: string }>;
+    assert.deepEqual(authJson.openai, {
+      type: "api_key",
+      key: "sk-live-test-key",
+    });
+  });
 });
 
 test("dashboard server discovers a local server model through the dashboard api", async () => {
@@ -423,14 +640,124 @@ test("dashboard server queues conversation-linked background tasks through dashb
     assert.equal(state.tasks[0]?.source, "user");
 
     const messages = listMessages(cwd, conversation.id);
-    assert.equal(messages.length, 1);
+    assert.equal(messages.length, 2);
     assert.equal(messages[0]?.role, "agent");
-    assert.equal(messages[0]?.kind, "orchestration_update");
-    assert.match(messages[0]?.content ?? "", /spawned a bounded background task/i);
-    assert.match(messages[0]?.content ?? "", /execution mode: single/i);
-    assert.match(messages[0]?.content ?? "", /delegated tasks created: 1/i);
-    assert.match(messages[0]?.content ?? "", /1\. Audit worker logs/i);
-    assert.match(messages[0]?.content ?? "", /synthesis status: waiting on 1 delegated task\(s\) before final synthesis/i);
+    assert.equal(messages[0]?.kind, undefined);
+    assert.match(messages[0]?.content ?? "", /I queued a bounded background task for this thread/i);
+    assert.match(messages[0]?.content ?? "", /Audit worker logs/i);
+    assert.equal(messages[1]?.kind, "orchestration_update");
+    assert.match(messages[1]?.content ?? "", /spawned a bounded background task/i);
+    assert.match(messages[1]?.content ?? "", /execution mode: single/i);
+    assert.match(messages[1]?.content ?? "", /delegated tasks created: 1/i);
+    assert.match(messages[1]?.content ?? "", /1\. Audit worker logs/i);
+    assert.match(messages[1]?.content ?? "", /synthesis status: waiting on 1 delegated task\(s\) before final synthesis/i);
+  });
+});
+
+test("dashboard server reprioritizes, clears completed, and deletes queued tasks through dashboard actions", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const first = await fetch(`${baseUrl}/api/actions/queue-task`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "First task", prompt: "Do the first task." }),
+    });
+    const second = await fetch(`${baseUrl}/api/actions/queue-task`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Second task", prompt: "Do the second task." }),
+    });
+    const third = await fetch(`${baseUrl}/api/actions/queue-task`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Third task", prompt: "Do the third task." }),
+    });
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(third.status, 200);
+
+    let state = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{ id: string; title: string }> }>);
+    const thirdTask = state.tasks.find((task) => task.title === "Third task");
+    const secondTask = state.tasks.find((task) => task.title === "Second task");
+    assert.deepEqual(state.tasks.map((task) => task.title), ["First task", "Second task", "Third task"]);
+
+    const moveResponse = await fetch(`${baseUrl}/api/actions/task-reprioritize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: thirdTask?.id, direction: "top" }),
+    });
+    assert.equal(moveResponse.status, 200);
+
+    state = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{ id: string; title: string }> }>);
+    assert.deepEqual(state.tasks.map((task) => task.title), ["Third task", "First task", "Second task"]);
+
+    await fetch(`${baseUrl}/api/actions/task`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: secondTask?.id, status: "done" }),
+    });
+
+    const clearCompletedResponse = await fetch(`${baseUrl}/api/actions/task-clear-completed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(clearCompletedResponse.status, 200);
+
+    state = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{ id: string; title: string }> }>);
+    assert.deepEqual(state.tasks.map((task) => task.title), ["Third task", "First task"]);
+
+    const deleteResponse = await fetch(`${baseUrl}/api/actions/task-delete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: thirdTask?.id }),
+    });
+    assert.equal(deleteResponse.status, 200);
+
+    state = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{ id: string; title: string }> }>);
+    assert.deepEqual(state.tasks.map((task) => task.title), ["First task"]);
+  });
+});
+
+test("dashboard server cancels a linked run when deleting a running task", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const conversation = createConversation(cwd, { title: "Queued task thread" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Run delegated task",
+    });
+
+    const response = await fetch(`${baseUrl}/api/actions/queue-task`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Delete me",
+        prompt: "Cancel this task if it is deleted.",
+        conversationId: conversation.id,
+        runId: run.id,
+        source: "user",
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const queuedState = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{ id: string }> }>);
+    const taskId = queuedState.tasks[0]?.id;
+
+    await fetch(`${baseUrl}/api/actions/task`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: taskId, status: "running" }),
+    });
+
+    const deleteResponse = await fetch(`${baseUrl}/api/actions/task-delete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId }),
+    });
+    assert.equal(deleteResponse.status, 200);
+
+    const finalState = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{ id: string }> }>);
+    assert.deepEqual(finalState.tasks, []);
+    assert.equal(listRunCancellationRequests(cwd)[0]?.runId, run.id);
   });
 });
 
@@ -469,16 +796,74 @@ test("dashboard server delegates a dependency-aware multi-task plan and appends 
     assert.deepEqual(fixTask?.dependsOnTaskIds?.sort(), [inspectTask?.id, reviewTask?.id].sort());
 
     const messages = listMessages(cwd, conversation.id);
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0]?.kind, "orchestration_update");
-    assert.match(messages[0]?.content ?? "", /delegated 3 bounded background tasks/i);
-    assert.match(messages[0]?.content ?? "", /execution mode: mixed/i);
-    assert.match(messages[0]?.content ?? "", /1\. Audit worker logs/i);
-    assert.match(messages[0]?.content ?? "", /2\. Review dashboard smoke/i);
-    assert.match(messages[0]?.content ?? "", /3\. Apply safe fix/i);
-    assert.match(messages[0]?.content ?? "", /Apply safe fix waits for Audit worker logs/i);
-    assert.match(messages[0]?.content ?? "", /Apply safe fix waits for Review dashboard smoke/i);
-    assert.match(messages[0]?.content ?? "", /synthesis status: waiting on 3 delegated task\(s\) before final synthesis/i);
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0]?.kind, undefined);
+    assert.match(messages[0]?.content ?? "", /I delegated 3 bounded background tasks for this thread/i);
+    assert.match(messages[0]?.content ?? "", /Audit worker logs, Review dashboard smoke, Apply safe fix/i);
+    assert.equal(messages[1]?.kind, "orchestration_update");
+    assert.match(messages[1]?.content ?? "", /delegated 3 bounded background tasks/i);
+    assert.match(messages[1]?.content ?? "", /execution mode: mixed/i);
+    assert.match(messages[1]?.content ?? "", /1\. Audit worker logs/i);
+    assert.match(messages[1]?.content ?? "", /2\. Review dashboard smoke/i);
+    assert.match(messages[1]?.content ?? "", /3\. Apply safe fix/i);
+    assert.match(messages[1]?.content ?? "", /Apply safe fix waits for Audit worker logs/i);
+    assert.match(messages[1]?.content ?? "", /Apply safe fix waits for Review dashboard smoke/i);
+    assert.match(messages[1]?.content ?? "", /synthesis status: waiting on 3 delegated task\(s\) before final synthesis/i);
+  });
+});
+
+test("dashboard server exposes task execution diagnostics including dependencies, shared worker process, and linked Pi session details", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    const conversation = createConversation(cwd, { title: "Main orchestration thread" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Coordinate background work",
+    });
+
+    updateRunStatus(cwd, run.id, "running", {
+      piSessionPath: "/tmp/pi-subagent-session.json",
+    });
+
+    await fetch(`${baseUrl}/api/actions/delegate-plan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        runId: run.id,
+        tasks: [
+          { id: "inspect", title: "Audit worker logs", prompt: "Inspect the worker logs and summarize failures." },
+          { id: "fix", title: "Apply safe fix", prompt: "Implement the smallest safe fix after the investigation.", dependsOn: ["inspect"] },
+        ],
+      }),
+    });
+
+    const state = await fetch(`${baseUrl}/api/state`).then((result) => result.json() as Promise<{ tasks: Array<{
+      id: string;
+      title: string;
+      runId?: string;
+      execution?: {
+        queueState: string;
+        blockedByTaskTitles?: string[];
+        linkedRunStatus?: string;
+        piSessionPath?: string;
+        conversationSessionPath?: string;
+        workerStatus?: string;
+        workerPid?: number;
+      };
+    }> }>);
+
+    const inspectTask = state.tasks.find((task) => task.title === "Audit worker logs");
+    const fixTask = state.tasks.find((task) => task.title === "Apply safe fix");
+
+    assert.equal(inspectTask?.runId, run.id);
+    assert.equal(inspectTask?.execution?.queueState, "ready");
+    assert.equal(inspectTask?.execution?.linkedRunStatus, undefined);
+    assert.equal(inspectTask?.execution?.conversationSessionPath, "/tmp/pi-subagent-session.json");
+    assert.match(inspectTask?.execution?.workerStatus ?? "", /running|stopped/);
+
+    assert.equal(fixTask?.execution?.queueState, "waiting_for_dependencies");
+    assert.deepEqual(fixTask?.execution?.blockedByTaskTitles, ["Audit worker logs"]);
+    assert.match(fixTask?.execution?.workerStatus ?? "", /running|stopped/);
   });
 });
 
@@ -517,14 +902,68 @@ test("dashboard server appends task lifecycle summaries for linked conversation 
     assert.equal(updateResponse.status, 200);
 
     const messages = listMessages(cwd, conversation.id);
-    assert.equal(messages.length, 3);
-    assert.equal(messages[1]?.kind, "orchestration_update");
-    assert.match(messages[1]?.content ?? "", /background task update/i);
-    assert.match(messages[1]?.content ?? "", /Review dashboard smoke/);
-    assert.match(messages[1]?.content ?? "", /done/);
-    assert.equal(messages[2]?.kind, "orchestration_final");
-    assert.match(messages[2]?.content ?? "", /final synthesis summary/i);
-    assert.match(messages[2]?.content ?? "", /ready to synthesize the final thread update/i);
+    assert.equal(messages.length, 4);
+    assert.equal(messages[2]?.kind, "orchestration_update");
+    assert.match(messages[2]?.content ?? "", /background task update/i);
+    assert.match(messages[2]?.content ?? "", /Review dashboard smoke/);
+    assert.match(messages[2]?.content ?? "", /done/);
+    assert.equal(messages[3]?.kind, "orchestration_final");
+    assert.match(messages[3]?.content ?? "", /final synthesis summary/i);
+    assert.match(messages[3]?.content ?? "", /ready to synthesize the final thread update/i);
+  });
+});
+
+test("dashboard server can interrupt-and-steer an active delegated agent and queue a follow-up", async () => {
+  const calls: string[] = [];
+  await withServer(async ({ cwd, baseUrl }) => {
+    const conversation = createConversation(cwd, { title: "Main orchestration thread" });
+    const run = createRun(cwd, {
+      conversationId: conversation.id,
+      goal: "Coordinate background work",
+    });
+
+    const steerResponse = await fetch(`${baseUrl}/api/actions/agent-steer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        runId: run.id,
+        content: "Stop going that direction and inspect the API route instead.",
+      }),
+    });
+    assert.equal(steerResponse.status, 200);
+
+    const followUpResponse = await fetch(`${baseUrl}/api/actions/agent-follow-up`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        runId: run.id,
+        content: "After that, summarize the root cause in one paragraph.",
+      }),
+    });
+    assert.equal(followUpResponse.status, 200);
+
+    assert.deepEqual(calls, [
+      `steer:${conversation.id}:${run.id}:Stop going that direction and inspect the API route instead.`,
+      `followUp:${conversation.id}:${run.id}:After that, summarize the root cause in one paragraph.`,
+    ]);
+
+    const messages = listMessages(cwd, conversation.id);
+    assert.equal(messages.length, 2);
+    assert.match(messages[0]?.content ?? "", /I interrupted the delegated agent and steered it/i);
+    assert.match(messages[0]?.content ?? "", /inspect the API route instead/i);
+    assert.match(messages[1]?.content ?? "", /I queued a follow-up for the delegated agent/i);
+    assert.match(messages[1]?.content ?? "", /summarize the root cause/i);
+  }, {
+    agentSessionController: {
+      steerRun: async ({ conversationId, runId, content }) => {
+        calls.push(`steer:${conversationId}:${runId}:${content}`);
+      },
+      queueFollowUp: async ({ conversationId, runId, content }) => {
+        calls.push(`followUp:${conversationId}:${runId}:${content}`);
+      },
+    },
   });
 });
 

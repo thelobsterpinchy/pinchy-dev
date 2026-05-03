@@ -1,5 +1,6 @@
 import http from "node:http";
 import { execFileSync } from "node:child_process";
+import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ApprovalRecord, DashboardArtifact, DashboardState, PinchyTask, TaskStatus } from "../../../packages/shared/src/contracts.js";
@@ -8,7 +9,8 @@ import { filterActionableApprovals, loadApprovalPolicy, setApprovalScope } from 
 import { loadGeneratedToolRegistry } from "./generated-tool-registry.js";
 import { loadRunContext } from "./run-context.js";
 import { loadRoutines } from "./routine-store.js";
-import { enqueueDelegationPlan, enqueueTask, loadTasks, updateTaskStatus } from "./task-queue.js";
+import { clearCompletedTasks, deleteTask, enqueueDelegationPlan, enqueueTask, loadTasks, reprioritizeTask, updateTaskStatus } from "./task-queue.js";
+import { buildObservableTasks } from "./task-observability.js";
 import { loadGeneratedToolSource } from "./tool-review.js";
 import { loadRunHistory } from "./run-history.js";
 import { loadDaemonHealth } from "./daemon-health.js";
@@ -19,13 +21,14 @@ import { resolveDashboardAssetRequest, resolveDashboardShellMode } from "./dashb
 import { shouldRunAsCliEntry } from "./module-entry.js";
 import { deleteWorkspace, getActiveWorkspace, listWorkspaces, registerWorkspace, setActiveWorkspace } from "./workspace-registry.js";
 import { buildPinchyDoctorReport } from "./pinchy-doctor.js";
-import { appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate } from "./orchestration-thread.js";
-import { readPinchyConfigValue, setPinchyConfigValue } from "./pinchy-config.js";
-import { THINKING_LEVELS, loadPinchyRuntimeConfigDetails, type ThinkingLevel } from "./runtime-config.js";
+import { appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate, appendPlainAgentRelay } from "./orchestration-thread.js";
+import { loadPinchyRuntimeConfigFile, readPinchyConfigValue, updatePinchyRuntimeConfig } from "./pinchy-config.js";
+import { buildStoredProviderCredentials, storeProviderApiKey } from "./provider-credentials.js";
+import { THINKING_LEVELS, loadPinchyRuntimeConfigDetails, normalizeRuntimeModelOptions, normalizeSavedModelConfigs, type ThinkingLevel } from "./runtime-config.js";
 import { discoverLocalServerModel } from "./local-server-model-discovery.js";
 import { listPiAgentResources } from "./pi-resource-inventory.js";
 import { applyAutoDeleteRetention } from "./auto-delete-retention.js";
-import { createAgentGuidance, listAgentGuidances, listConversationSessions } from "./agent-state-store.js";
+import { appendMessage, createAgentGuidance, listAgentGuidances, listConversationSessions, listRunActivities, requestRunCancellation } from "./agent-state-store.js";
 
 type SseClient = {
   id: number;
@@ -36,6 +39,11 @@ type DashboardServerOptions = {
   cwd: string;
   port: number;
   controlPlaneApiBaseUrl?: string;
+  agentDir?: string;
+  agentSessionController?: {
+    steerRun?: (input: { cwd: string; conversationId: string; runId?: string; content: string }) => Promise<void>;
+    queueFollowUp?: (input: { cwd: string; conversationId: string; runId?: string; content: string }) => Promise<void>;
+  };
 };
 
 function readJsonIfPresent<T>(path: string, fallback: T): T {
@@ -326,23 +334,33 @@ function getActiveWorkspacePath(cwd: string) {
   return getActiveWorkspace(cwd)?.path ?? cwd;
 }
 
-function readDashboardSettings(cwd: string) {
+function readDashboardSettings(cwd: string, agentDir: string) {
   const effective = loadPinchyRuntimeConfigDetails(cwd);
+  const workspaceConfig = loadPinchyRuntimeConfigFile(cwd);
   return {
     defaultProvider: effective.defaultProvider,
     defaultModel: effective.defaultModel,
     defaultThinkingLevel: effective.defaultThinkingLevel,
     defaultBaseUrl: effective.defaultBaseUrl,
+    modelOptions: effective.modelOptions,
+    savedModelConfigs: effective.savedModelConfigs ?? [],
+    storedProviderCredentials: buildStoredProviderCredentials(agentDir),
     autoDeleteEnabled: effective.autoDeleteEnabled,
     autoDeleteDays: effective.autoDeleteDays,
+    toolRetryWarningThreshold: effective.toolRetryWarningThreshold,
+    toolRetryHardStopThreshold: effective.toolRetryHardStopThreshold,
     dangerModeEnabled: effective.dangerModeEnabled,
     workspaceDefaults: {
       defaultProvider: readPinchyConfigValue(cwd, "defaultProvider"),
       defaultModel: readPinchyConfigValue(cwd, "defaultModel"),
       defaultThinkingLevel: readPinchyConfigValue(cwd, "defaultThinkingLevel") as ThinkingLevel | undefined,
       defaultBaseUrl: readPinchyConfigValue(cwd, "defaultBaseUrl"),
+      modelOptions: normalizeRuntimeModelOptions(workspaceConfig.modelOptions),
+      savedModelConfigs: normalizeSavedModelConfigs(workspaceConfig.savedModelConfigs) ?? [],
       autoDeleteEnabled: readPinchyConfigValue(cwd, "autoDeleteEnabled") as boolean | undefined,
       autoDeleteDays: readPinchyConfigValue(cwd, "autoDeleteDays") as number | undefined,
+      toolRetryWarningThreshold: readPinchyConfigValue(cwd, "toolRetryWarningThreshold") as number | undefined,
+      toolRetryHardStopThreshold: readPinchyConfigValue(cwd, "toolRetryHardStopThreshold") as number | undefined,
       dangerModeEnabled: readPinchyConfigValue(cwd, "dangerModeEnabled") as boolean | undefined,
     },
     sources: effective.sources,
@@ -354,10 +372,11 @@ function buildApiState(cwd: string): DashboardState {
   applyAutoDeleteRetention(activeWorkspacePath);
   return {
     conversationSessions: listConversationSessions(activeWorkspacePath),
+    runActivities: listRunActivities(activeWorkspacePath),
     runContext: loadRunContext(activeWorkspacePath),
     workspaces: listWorkspaces(cwd),
     activeWorkspaceId: getActiveWorkspace(cwd)?.id,
-    tasks: loadTasks(activeWorkspacePath),
+    tasks: buildObservableTasks(activeWorkspacePath),
     agentGuidances: listAgentGuidances(activeWorkspacePath),
     approvals: filterActionableApprovals(activeWorkspacePath, loadApprovals(activeWorkspacePath)),
     generatedTools: loadGeneratedToolRegistry(activeWorkspacePath),
@@ -425,7 +444,7 @@ function isDelegationTask(value: unknown): value is { id?: string; title: string
   );
 }
 
-async function handleAction(cwd: string, action: string, payload: Record<string, unknown>) {
+async function handleAction(cwd: string, action: string, payload: Record<string, unknown>, options: { agentSessionController?: DashboardServerOptions["agentSessionController"] } = {}) {
   if (action === "task" && typeof payload.id === "string" && typeof payload.status === "string") {
     const updated = updateTaskStatus(cwd, payload.id, payload.status as TaskStatus);
     if (updated?.conversationId) {
@@ -451,6 +470,10 @@ async function handleAction(cwd: string, action: string, payload: Record<string,
       dependsOnTaskIds: Array.isArray(payload.dependsOnTaskIds) ? payload.dependsOnTaskIds.filter((entry): entry is string => typeof entry === "string") : undefined,
     });
     if (task.conversationId) {
+      appendPlainAgentRelay(cwd, {
+        conversationId: task.conversationId,
+        content: `I queued a bounded background task for this thread: ${task.title}. I’ll keep you posted here as it progresses.`,
+      });
       appendOrchestrationUpdate(cwd, {
         conversationId: task.conversationId,
         runId: task.runId,
@@ -460,6 +483,21 @@ async function handleAction(cwd: string, action: string, payload: Record<string,
     }
     return;
   }
+  if (action === "task-reprioritize" && typeof payload.taskId === "string" && (payload.direction === "up" || payload.direction === "down" || payload.direction === "top" || payload.direction === "bottom")) {
+    reprioritizeTask(cwd, payload.taskId, payload.direction);
+    return;
+  }
+  if (action === "task-clear-completed") {
+    clearCompletedTasks(cwd);
+    return;
+  }
+  if (action === "task-delete" && typeof payload.taskId === "string") {
+    const deleted = deleteTask(cwd, payload.taskId);
+    if (deleted?.runId && deleted.status !== "done") {
+      requestRunCancellation(cwd, deleted.runId, "Task deleted by operator");
+    }
+    return deleted;
+  }
   if (action === "agent-guidance" && typeof payload.conversationId === "string" && typeof payload.taskId === "string" && typeof payload.content === "string") {
     const guidance = createAgentGuidance(cwd, {
       conversationId: payload.conversationId,
@@ -468,6 +506,40 @@ async function handleAction(cwd: string, action: string, payload: Record<string,
       content: payload.content.trim(),
     });
     return guidance;
+  }
+  if (action === "agent-steer" && typeof payload.conversationId === "string" && typeof payload.content === "string") {
+    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    const content = payload.content.trim();
+    await options.agentSessionController?.steerRun?.({
+      cwd,
+      conversationId: payload.conversationId,
+      runId,
+      content,
+    });
+    appendMessage(cwd, {
+      conversationId: payload.conversationId,
+      role: "agent",
+      runId,
+      content: `I interrupted the delegated agent and steered it with this updated direction:\n\n${content}`,
+    });
+    return;
+  }
+  if (action === "agent-follow-up" && typeof payload.conversationId === "string" && typeof payload.content === "string") {
+    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    const content = payload.content.trim();
+    await options.agentSessionController?.queueFollowUp?.({
+      cwd,
+      conversationId: payload.conversationId,
+      runId,
+      content,
+    });
+    appendMessage(cwd, {
+      conversationId: payload.conversationId,
+      role: "agent",
+      runId,
+      content: `I queued a follow-up for the delegated agent:\n\n${content}`,
+    });
+    return;
   }
   if (action === "delegate-plan" && typeof payload.conversationId === "string" && Array.isArray(payload.tasks)) {
     const conversationId = payload.conversationId;
@@ -484,6 +556,10 @@ async function handleAction(cwd: string, action: string, payload: Record<string,
     });
     if (tasks.length > 0) {
       const taskList = tasks.map((task) => task.title).join(", ");
+      appendPlainAgentRelay(cwd, {
+        conversationId,
+        content: `I delegated ${tasks.length} bounded background task${tasks.length === 1 ? "" : "s"} for this thread: ${taskList}. I’ll keep you posted here as each one progresses.`,
+      });
       appendOrchestrationUpdate(cwd, {
         conversationId,
         runId,
@@ -533,7 +609,7 @@ function openSse(res: http.ServerResponse) {
   res.write("retry: 3000\n\n");
 }
 
-export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "http://127.0.0.1:4320" }: DashboardServerOptions) {
+export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "http://127.0.0.1:4320", agentDir = getAgentDir(), agentSessionController }: DashboardServerOptions) {
   const sseClients: SseClient[] = [];
   let nextClientId = 1;
   let lastStateJson = JSON.stringify(buildApiState(cwd));
@@ -575,7 +651,7 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
     }
 
     if (req.url === "/api/settings" && req.method === "GET") {
-      sendJson(res, 200, readDashboardSettings(activeWorkspacePath));
+      sendJson(res, 200, readDashboardSettings(activeWorkspacePath, agentDir));
       return;
     }
 
@@ -628,11 +704,19 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
     if (req.url === "/api/settings" && req.method === "PATCH") {
       void readJsonBody(req)
         .then((payload) => {
+          const nextRuntimeConfig = loadPinchyRuntimeConfigFile(activeWorkspacePath);
+          let hasRuntimeConfigChanges = false;
+          let providerIdForApiKey: string | undefined;
+
           if (typeof payload.defaultProvider === "string") {
-            setPinchyConfigValue(activeWorkspacePath, "defaultProvider", payload.defaultProvider.trim());
+            const trimmed = payload.defaultProvider.trim();
+            nextRuntimeConfig.defaultProvider = trimmed;
+            hasRuntimeConfigChanges = true;
+            providerIdForApiKey = trimmed;
           }
           if (typeof payload.defaultModel === "string") {
-            setPinchyConfigValue(activeWorkspacePath, "defaultModel", payload.defaultModel.trim());
+            nextRuntimeConfig.defaultModel = payload.defaultModel.trim();
+            hasRuntimeConfigChanges = true;
           }
           if (typeof payload.defaultThinkingLevel === "string") {
             const trimmed = payload.defaultThinkingLevel.trim();
@@ -640,25 +724,76 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
               sendJson(res, 400, { ok: false, error: `invalid thinking level: ${trimmed}` });
               return;
             }
-            setPinchyConfigValue(activeWorkspacePath, "defaultThinkingLevel", trimmed);
+            nextRuntimeConfig.defaultThinkingLevel = trimmed;
+            hasRuntimeConfigChanges = true;
           }
           if (typeof payload.defaultBaseUrl === "string") {
-            setPinchyConfigValue(activeWorkspacePath, "defaultBaseUrl", payload.defaultBaseUrl.trim());
+            nextRuntimeConfig.defaultBaseUrl = payload.defaultBaseUrl.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (payload.modelOptions !== undefined) {
+            const normalized = normalizeRuntimeModelOptions(payload.modelOptions);
+            if (payload.modelOptions && typeof payload.modelOptions === "object" && !normalized) {
+              sendJson(res, 400, { ok: false, error: "invalid modelOptions payload" });
+              return;
+            }
+            nextRuntimeConfig.modelOptions = normalized;
+            hasRuntimeConfigChanges = true;
+          }
+          if (payload.savedModelConfigs !== undefined) {
+            const normalized = normalizeSavedModelConfigs(payload.savedModelConfigs);
+            if (!Array.isArray(payload.savedModelConfigs) || normalized === undefined) {
+              sendJson(res, 400, { ok: false, error: "invalid savedModelConfigs payload" });
+              return;
+            }
+            nextRuntimeConfig.savedModelConfigs = normalized;
+            hasRuntimeConfigChanges = true;
           }
           if (typeof payload.autoDeleteEnabled === "boolean") {
-            setPinchyConfigValue(activeWorkspacePath, "autoDeleteEnabled", payload.autoDeleteEnabled);
+            nextRuntimeConfig.autoDeleteEnabled = payload.autoDeleteEnabled;
+            hasRuntimeConfigChanges = true;
           }
           if (typeof payload.autoDeleteDays === "number") {
             if (!Number.isInteger(payload.autoDeleteDays) || payload.autoDeleteDays <= 0) {
               sendJson(res, 400, { ok: false, error: `invalid auto delete days: ${payload.autoDeleteDays}` });
               return;
             }
-            setPinchyConfigValue(activeWorkspacePath, "autoDeleteDays", payload.autoDeleteDays);
+            nextRuntimeConfig.autoDeleteDays = payload.autoDeleteDays;
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.toolRetryWarningThreshold === "number") {
+            if (!Number.isInteger(payload.toolRetryWarningThreshold) || payload.toolRetryWarningThreshold <= 0) {
+              sendJson(res, 400, { ok: false, error: `invalid tool retry warning threshold: ${payload.toolRetryWarningThreshold}` });
+              return;
+            }
+            nextRuntimeConfig.toolRetryWarningThreshold = payload.toolRetryWarningThreshold;
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.toolRetryHardStopThreshold === "number") {
+            if (!Number.isInteger(payload.toolRetryHardStopThreshold) || payload.toolRetryHardStopThreshold <= 0) {
+              sendJson(res, 400, { ok: false, error: `invalid tool retry hard stop threshold: ${payload.toolRetryHardStopThreshold}` });
+              return;
+            }
+            nextRuntimeConfig.toolRetryHardStopThreshold = payload.toolRetryHardStopThreshold;
+            hasRuntimeConfigChanges = true;
           }
           if (typeof payload.dangerModeEnabled === "boolean") {
-            setPinchyConfigValue(activeWorkspacePath, "dangerModeEnabled", payload.dangerModeEnabled);
+            nextRuntimeConfig.dangerModeEnabled = payload.dangerModeEnabled;
+            hasRuntimeConfigChanges = true;
           }
-          sendJson(res, 200, readDashboardSettings(activeWorkspacePath));
+
+          if (hasRuntimeConfigChanges) {
+            updatePinchyRuntimeConfig(activeWorkspacePath, nextRuntimeConfig);
+          }
+
+          if (typeof payload.providerApiKey === "string" && providerIdForApiKey) {
+            storeProviderApiKey({
+              agentDir,
+              providerId: providerIdForApiKey,
+              apiKey: payload.providerApiKey,
+            });
+          }
+          sendJson(res, 200, readDashboardSettings(activeWorkspacePath, agentDir));
         })
         .catch((error) => {
           sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -823,7 +958,7 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
       const action = req.url.slice("/api/actions/".length);
       void readJsonBody(req)
         .then(async (payload) => {
-          await handleAction(activeWorkspacePath, action, payload);
+          await handleAction(activeWorkspacePath, action, payload, { agentSessionController });
           broadcastState();
           sendJson(res, 200, { ok: true });
         })

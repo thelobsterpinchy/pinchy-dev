@@ -12,6 +12,11 @@ export type StopResult = {
   pid?: number;
 };
 
+export type RestartSummaryInput = {
+  stopped: StopResult[];
+  started: Array<{ name: string; status: "started" | "already_running"; pid: number; logPath: string }>;
+};
+
 export function formatPinchyVersion(version: string) {
   return `[pinchy] version ${version}\n`;
 }
@@ -38,6 +43,19 @@ export function summarizeLogsJson(sections: LogSection[]) {
 
 export function summarizeLogs(sections: LogSection[]) {
   return `${sections.map((section) => [`[pinchy] logs: ${section.name} (${section.logPath})`, section.content || "(no log output yet)"].join("\n")).join("\n\n")}\n`;
+}
+
+export function summarizeRestartResults(result: RestartSummaryInput) {
+  const lines = [
+    "[pinchy] Restarted managed services:",
+    ...result.started.map((entry) => {
+      const stopped = result.stopped.find((candidate) => candidate.name === entry.name);
+      const previous = stopped?.pid ? `replaced pid ${stopped.pid}` : "was not running";
+      return `[pinchy] ${entry.name}: restarted (pid ${entry.pid}) ${previous} log=${entry.logPath}`;
+    }),
+    "[pinchy] Next steps: pinchy status | pinchy logs dashboard | pinchy agent",
+  ];
+  return `${lines.join("\n")}\n`;
 }
 
 export function summarizeStopResults(results: StopResult[]) {

@@ -6,6 +6,7 @@ test("parsePinchyCliArgs defaults to help and recognizes core product commands",
   assert.equal(parsePinchyCliArgs([]).command, "help");
   assert.equal(parsePinchyCliArgs(["up"]).command, "up");
   assert.equal(parsePinchyCliArgs(["down"]).command, "down");
+  assert.equal(parsePinchyCliArgs(["restart"]).command, "restart");
   assert.equal(parsePinchyCliArgs(["status"]).command, "status");
   assert.equal(parsePinchyCliArgs(["logs"]).command, "logs");
   assert.equal(parsePinchyCliArgs(["setup"]).command, "setup");
@@ -27,6 +28,12 @@ test("parsePinchyCliArgs keeps extra args for pass-through commands", () => {
   assert.deepEqual(parsed.args, ["dashboard", "--tail", "200"]);
 });
 
+test("parsePinchyCliArgs accepts pinchy logs daemon end-to-end through the CLI parser", () => {
+  const parsed = parsePinchyCliArgs(["logs", "daemon"]);
+  assert.equal(parsed.command, "logs");
+  assert.deepEqual(parsed.args, ["daemon"]);
+});
+
 test("parsePinchyCliArgs treats unknown commands as help with an error", () => {
   const parsed = parsePinchyCliArgs(["wat"]);
   assert.equal(parsed.command, "help");
@@ -34,7 +41,7 @@ test("parsePinchyCliArgs treats unknown commands as help with an error", () => {
 });
 
 test("summarizePinchyCliHelp documents the npm-installable command surface", () => {
-  const help = summarizePinchyCliHelp(["init", "setup", "version", "config", "up", "down", "status", "logs", "doctor", "dashboard", "api", "worker", "daemon", "agent", "smoke", "help"] satisfies PinchyCliCommandName[]);
+  const help = summarizePinchyCliHelp(["init", "setup", "version", "config", "up", "down", "restart", "status", "logs", "doctor", "dashboard", "api", "worker", "daemon", "agent", "smoke", "help"] satisfies PinchyCliCommandName[]);
   assert.match(help, /pinchy <command>/);
   assert.match(help, /pinchy init/);
   assert.match(help, /pinchy setup/);
@@ -42,6 +49,7 @@ test("summarizePinchyCliHelp documents the npm-installable command surface", () 
   assert.match(help, /pinchy config/);
   assert.match(help, /pinchy up/);
   assert.match(help, /pinchy down/);
+  assert.match(help, /pinchy restart/);
   assert.match(help, /pinchy status/);
   assert.match(help, /pinchy logs/);
   assert.match(help, /pinchy doctor/);

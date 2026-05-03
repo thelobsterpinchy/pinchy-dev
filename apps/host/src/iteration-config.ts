@@ -10,6 +10,22 @@ export type IterationConfig = {
 
 const FILE = ".pinchy-iteration.json";
 
+function parsePositiveNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function parseEdgeCaseFocus(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const normalized: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") return undefined;
+    const trimmed = entry.trim();
+    if (!trimmed) return undefined;
+    normalized.push(trimmed);
+  }
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 export function loadIterationConfig(cwd: string): Required<IterationConfig> {
   const fallback: Required<IterationConfig> = {
     enabled: true,
@@ -30,10 +46,10 @@ export function loadIterationConfig(cwd: string): Required<IterationConfig> {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as IterationConfig;
     return {
-      enabled: parsed.enabled ?? fallback.enabled,
-      intervalMs: parsed.intervalMs ?? fallback.intervalMs,
-      edgeCaseFocus: parsed.edgeCaseFocus?.length ? parsed.edgeCaseFocus : fallback.edgeCaseFocus,
-      maxCyclesPerRun: parsed.maxCyclesPerRun ?? fallback.maxCyclesPerRun,
+      enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : fallback.enabled,
+      intervalMs: parsePositiveNumber(parsed.intervalMs) ?? fallback.intervalMs,
+      edgeCaseFocus: parseEdgeCaseFocus(parsed.edgeCaseFocus) ?? fallback.edgeCaseFocus,
+      maxCyclesPerRun: parsePositiveNumber(parsed.maxCyclesPerRun) ?? fallback.maxCyclesPerRun,
     };
   } catch {
     return fallback;

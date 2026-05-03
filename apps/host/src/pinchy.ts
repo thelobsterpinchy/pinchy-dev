@@ -13,11 +13,11 @@ import {
 } from "./dev-stack.js";
 import { formatPinchyInitSummary, initializePinchyWorkspace } from "./pinchy-init.js";
 import { buildPinchyDoctorReport, summarizePinchyDoctorReport, summarizePinchyDoctorReportJson } from "./pinchy-doctor.js";
-import { formatPinchyVersion, summarizeLogs as summarizeLogSections, summarizeLogsJson, summarizeStatus as summarizeManagedStatus, summarizeStatusJson, summarizeStopResults } from "./pinchy-command-output.js";
+import { formatPinchyVersion, summarizeLogs as summarizeLogSections, summarizeLogsJson, summarizeRestartResults, summarizeStatus as summarizeManagedStatus, summarizeStatusJson, summarizeStopResults } from "./pinchy-command-output.js";
 import { buildPinchySetupPlan, runPinchySetup, summarizePinchySetupPlan } from "./pinchy-setup.js";
 import { parsePinchyCliArgs, PINCHY_CLI_COMMANDS, summarizePinchyCliHelp } from "./pinchy-cli.js";
 import { loadPinchyRuntimeConfig } from "./runtime-config.js";
-import { setPinchyConfigValue } from "./pinchy-config.js";
+import { parsePinchyConfigCliValue, setPinchyConfigValue } from "./pinchy-config.js";
 import { summarizePinchyConfigSet, summarizePinchyConfigView } from "./pinchy-config-cli.js";
 import { buildTsxEntrypointCommand, getPinchyPackageRoot, resolvePinchyPackagePath } from "./package-runtime.js";
 import { shouldRunAsCliEntry } from "./module-entry.js";
@@ -99,7 +99,7 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
         if (!key || value === undefined) {
           throw new Error("Usage: pinchy config set <key> <value>");
         }
-        setPinchyConfigValue(cwd, key, value);
+        setPinchyConfigValue(cwd, key, parsePinchyConfigCliValue(key, value));
         console.log(summarizePinchyConfigSet(key, value));
         return;
       }
@@ -116,12 +116,19 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       console.log(summarizeStopResults(stopManagedServices(cwd)));
       return;
     }
+    case "restart": {
+      const stopped = stopManagedServices(cwd);
+      const started = buildManagedServiceDefinitions().map((service) => startManagedService(cwd, service));
+      await waitForManagedServiceReadiness(buildManagedServiceReadinessChecks());
+      console.log(summarizeRestartResults({ stopped, started }));
+      return;
+    }
     case "status": {
       console.log(summarizeStatus(cwd, parsed.args.includes("--json")));
       return;
     }
     case "logs": {
-      const requested = (["api", "worker", "dashboard"].includes(parsed.args[0] ?? "") ? parsed.args[0] : undefined) as ManagedServiceName | undefined;
+      const requested = (["api", "worker", "dashboard", "daemon"].includes(parsed.args[0] ?? "") ? parsed.args[0] : undefined) as ManagedServiceName | undefined;
       const tailIndex = parsed.args.indexOf("--tail");
       const tailChars = tailIndex >= 0 ? Number(parsed.args[tailIndex + 1] ?? "4000") : 4000;
       console.log(summarizeLogs(cwd, requested, { json: parsed.args.includes("--json"), tailChars: Number.isFinite(tailChars) ? tailChars : 4000 }));

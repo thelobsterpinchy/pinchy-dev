@@ -42,6 +42,9 @@ export type RootLayoutContext = {
   onActivateWorkspace: (workspaceId: string) => Promise<void>;
   onDeleteWorkspace: (workspaceId: string) => Promise<void>;
   onQueueTask: (input: { title: string; prompt: string }) => Promise<void>;
+  onDeleteTask: (taskId: string) => Promise<void>;
+  onClearCompletedTasks: () => Promise<void>;
+  onReprioritizeTask: (input: { taskId: string; direction: "up" | "down" | "top" | "bottom" }) => Promise<void>;
   onCancelRun: (runId: string) => Promise<void>;
   onReplyToQuestion: (input: { questionId: string; content: string }) => Promise<void>;
   onUpdateSettings: (patch: DashboardSettings) => Promise<void>;
@@ -53,4 +56,6 @@ export type RootLayoutContext = {
   agentGuidances: AgentGuidance[];
   artifacts: DashboardArtifact[];
   onSubmitAgentGuidance: (input: { conversationId: string; taskId: string; runId?: string; content: string }) => Promise<void>;
+  onSteerAgentRun: (input: { conversationId: string; runId?: string; content: string }) => Promise<void>;
+  onQueueAgentFollowUp: (input: { conversationId: string; runId?: string; content: string }) => Promise<void>;
 };

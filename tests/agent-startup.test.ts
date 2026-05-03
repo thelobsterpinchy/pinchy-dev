@@ -30,6 +30,30 @@ test("buildAgentStartupSummary reports modern dashboard mode when built assets e
   assert.equal(summary.apiBaseUrl, "http://127.0.0.1:4320");
 });
 
+test("buildAgentStartupSummary falls back to the default dashboard port when the env value is invalid", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-agent-startup-"));
+
+  for (const value of ["", "not-a-number", "0", "-1", "4310.5"]) {
+    const summary = buildAgentStartupSummary(cwd, {
+      PINCHY_DASHBOARD_PORT: value,
+    });
+
+    assert.equal(summary.dashboardUrl, "http://127.0.0.1:4310");
+  }
+});
+
+test("buildAgentStartupSummary falls back to the default API base URL when the env value is empty", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-agent-startup-"));
+
+  for (const value of ["", "   "]) {
+    const summary = buildAgentStartupSummary(cwd, {
+      PINCHY_API_BASE_URL: value,
+    });
+
+    assert.equal(summary.apiBaseUrl, "http://127.0.0.1:4320");
+  }
+});
+
 test("formatAgentStartupNotice explains the Pinchy boot sequence and next actions", () => {
   const notice = formatAgentStartupNotice({
     cwd: "/repo",

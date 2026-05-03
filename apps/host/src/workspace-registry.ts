@@ -71,7 +71,7 @@ export function getActiveWorkspace(cwd: string) {
 
 export function registerWorkspace(cwd: string, input: { path: string; name?: string }) {
   const registry = loadRegistry(cwd);
-  const normalizedPath = resolve(input.path);
+  const normalizedPath = resolve(cwd, input.path);
   const existing = registry.workspaces.find((entry) => entry.path === normalizedPath);
   if (existing) {
     existing.name = input.name?.trim() || existing.name;

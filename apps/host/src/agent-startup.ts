@@ -14,14 +14,23 @@ export function requiresInteractiveTerminal(
   return Boolean(stdin.isTTY && stdout.isTTY);
 }
 
+function resolveDashboardPort(value: string | undefined) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 4310;
+}
+
+function resolveApiBaseUrl(value: string | undefined) {
+  return value?.trim() ? value.trim() : "http://127.0.0.1:4320";
+}
+
 export function buildAgentStartupSummary(cwd: string, env: NodeJS.ProcessEnv = process.env): AgentStartupSummary {
-  const dashboardPort = Number(env.PINCHY_DASHBOARD_PORT ?? 4310);
+  const dashboardPort = resolveDashboardPort(env.PINCHY_DASHBOARD_PORT);
   const dashboardMode = resolveDashboardShellMode(cwd).kind;
   return {
     cwd,
     dashboardMode,
     dashboardUrl: `http://127.0.0.1:${dashboardPort}`,
-    apiBaseUrl: env.PINCHY_API_BASE_URL ?? "http://127.0.0.1:4320",
+    apiBaseUrl: resolveApiBaseUrl(env.PINCHY_API_BASE_URL),
   };
 }
 

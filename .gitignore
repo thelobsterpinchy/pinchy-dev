@@ -26,6 +26,7 @@ playwright-report/
 .pinchy-run-context.json
 .pinchy-run-history.json
 .pinchy-tasks.json
+.pinchy-tasks.json.bak-*
 .pinchy-watch.json
 .pinchy-workspaces.json
 .pinchy-reload-requests.json

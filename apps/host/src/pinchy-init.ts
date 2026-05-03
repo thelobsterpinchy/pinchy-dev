@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { DEFAULT_WATCH_CONFIG } from "./watch-config-defaults.js";
 
 const PINCHY_GITIGNORE_LINES = [
   ".pinchy/run/",
@@ -10,6 +11,7 @@ const PINCHY_GITIGNORE_LINES = [
   ".pinchy-run-context.json",
   ".pinchy-run-history.json",
   ".pinchy-tasks.json",
+  ".pinchy-tasks.json.bak-*",
   ".pinchy-workspaces.json",
   "artifacts/",
   "logs/*.log",
@@ -63,11 +65,7 @@ function buildDefaultGoalsConfig() {
 }
 
 function buildDefaultWatchConfig() {
-  return `${JSON.stringify({
-    watch: ["README.md", "docs", ".pi", "apps", "packages", "services", "scripts"],
-    debounceMs: 4000,
-    prompt: "A watched Pinchy file changed. Run a safe bounded maintenance review for the changed area.",
-  }, null, 2)}\n`;
+  return `${JSON.stringify(DEFAULT_WATCH_CONFIG, null, 2)}\n`;
 }
 
 function mergeGitignore(existingGitignore: string) {
