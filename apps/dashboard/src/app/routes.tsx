@@ -6,6 +6,7 @@ import { OverviewPage } from "./components/OverviewPage.js";
 import { MemoryPage } from "./components/MemoryPage.js";
 import { OrchestrationPage } from "./components/OrchestrationPage.js";
 import { ToolsPage } from "./components/ToolsPage.js";
+import { TasksPage } from "./components/TasksPage.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 
 export const router = createBrowserRouter([
@@ -21,6 +22,7 @@ export const router = createBrowserRouter([
       { path: "operations", Component: OrchestrationPage },
       { path: "orchestration", element: <Navigate to="/operations" replace /> },
       { path: "tools", Component: ToolsPage },
+      { path: "tasks", Component: TasksPage },
       { path: "settings", Component: SettingsPage },
     ],
   },

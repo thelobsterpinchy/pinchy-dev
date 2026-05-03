@@ -97,7 +97,7 @@ test("enqueueIterationRun persists a queued iteration run with validation guidan
   });
 });
 
-test("enqueueQueuedTaskRun persists a queued manual task as a persistent run", () => {
+test("enqueueQueuedTaskRun persists a queued manual task as a background run", () => {
   withTempDir((cwd) => {
     const scheduled = enqueueQueuedTaskRun(cwd, {
       title: "Investigate flaky test",
@@ -112,7 +112,7 @@ test("enqueueQueuedTaskRun persists a queued manual task as a persistent run", (
     assert.equal(conversations[0]?.title, "Pinchy queued tasks");
     assert.equal(runs.length, 1);
     assert.equal(runs[0]?.status, "queued");
-    assert.equal(runs[0]?.kind, "user_prompt");
+    assert.equal(runs[0]?.kind, "queued_task");
     assert.match(runs[0]?.goal ?? "", /Queued task: Investigate flaky test/);
     assert.equal(messages.length, 1);
     assert.match(messages[0]?.content ?? "", /Prefer documentation, tests, guardrails/);

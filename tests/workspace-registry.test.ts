@@ -56,6 +56,15 @@ test("workspace registry de-duplicates paths when the same repo is registered tw
   });
 });
 
+test("workspace registry resolves relative workspace paths against the provided cwd", () => {
+  withTempDir((cwd) => {
+    const added = registerWorkspace(cwd, { path: "nested/demo-repo" });
+
+    assert.equal(added.path, join(cwd, "nested/demo-repo"));
+    assert.equal(listWorkspaces(cwd).some((entry) => entry.path === join(cwd, "nested/demo-repo")), true);
+  });
+});
+
 test("workspace registry deletes a workspace and falls back active selection when needed", () => {
   withTempDir((cwd) => {
     const demo = registerWorkspace(cwd, { path: "/tmp/demo-repo", name: "Demo repo" });

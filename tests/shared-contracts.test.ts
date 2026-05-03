@@ -30,7 +30,7 @@ test("shared contracts expose canonical status values and guards", () => {
   assert.deepEqual(DAEMON_HEALTH_STATUSES, ["starting", "idle", "running", "error", "stopped"]);
   assert.deepEqual(MEMORY_KINDS, ["note", "decision", "fact", "summary"]);
   assert.deepEqual(RELOAD_REQUEST_STATUSES, ["pending", "processed"]);
-  assert.deepEqual(RUN_KINDS, ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal"]);
+  assert.deepEqual(RUN_KINDS, ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal", "queued_task"]);
   assert.deepEqual(RUN_STATUSES, ["queued", "running", "waiting_for_human", "waiting_for_approval", "completed", "failed", "cancelled"]);
   assert.deepEqual(QUESTION_STATUSES, ["pending_delivery", "waiting_for_human", "answered", "expired", "cancelled"]);
   assert.deepEqual(AGENT_GUIDANCE_STATUSES, ["pending", "applied", "cancelled"]);
@@ -58,6 +58,7 @@ test("shared contracts expose canonical status values and guards", () => {
 test("shared contracts provide a reusable dashboard state shape", () => {
   const state: DashboardState = {
     conversationSessions: [{ conversationId: "conversation-1", piSessionPath: "/tmp/pi-thread-session.json", sourceRunId: "run-1", updatedAt: "2026-04-20T00:00:01.000Z" }],
+    runActivities: [{ id: "activity-1", conversationId: "conversation-1", runId: "run-1", kind: "tool", status: "completed", label: "Tool: read", toolName: "read", details: ["path: README.md"], createdAt: "2026-04-20T00:00:00.000Z" }],
     runContext: {
       currentRunId: "run-1",
       currentRunLabel: "task:demo",

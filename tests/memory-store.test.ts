@@ -171,3 +171,73 @@ test("memory store ignores malformed or unsupported on-disk entries", () => {
   writeFileSync(join(cwd, ".pinchy-memory.json"), "{not valid json", "utf8");
   assert.deepEqual(loadMemoryEntries(cwd), []);
 });
+
+
+test("memory store tolerates malformed tag arrays in otherwise valid on-disk entries", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-memory-store-malformed-tags-"));
+
+  writeFileSync(join(cwd, ".pinchy-memory.json"), JSON.stringify([
+    {
+      id: "memory-1",
+      title: "Keep",
+      content: "Malformed tags should not break filtering.",
+      kind: "note",
+      tags: null,
+      pinned: false,
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+    },
+  ], null, 2), "utf8");
+
+  assert.doesNotThrow(() => listMemoryEntries(cwd, { query: "keep" }));
+  assert.deepEqual(listMemoryEntries(cwd, { query: "keep" }).map((entry) => entry.id), ["memory-1"]);
+});
+
+
+test("memory store loads source metadata only when it is well-formed", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-memory-store-source-metadata-"));
+
+  writeFileSync(join(cwd, ".pinchy-memory.json"), JSON.stringify([
+    {
+      id: "memory-1",
+      title: "Keep metadata",
+      content: "Valid source metadata should round-trip from disk.",
+      kind: "note",
+      tags: [],
+      pinned: false,
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+      sourceConversationId: "conversation-123",
+      sourceRunId: "run-123",
+    },
+    {
+      id: "memory-2",
+      title: "Drop malformed metadata",
+      content: "Non-string source metadata should be ignored during load.",
+      kind: "note",
+      tags: [],
+      pinned: false,
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+      sourceConversationId: 42,
+      sourceRunId: { bad: true },
+    },
+  ], null, 2), "utf8");
+
+  assert.deepEqual(loadMemoryEntries(cwd).map((entry) => ({
+    id: entry.id,
+    sourceConversationId: entry.sourceConversationId,
+    sourceRunId: entry.sourceRunId,
+  })), [
+    {
+      id: "memory-2",
+      sourceConversationId: undefined,
+      sourceRunId: undefined,
+    },
+    {
+      id: "memory-1",
+      sourceConversationId: "conversation-123",
+      sourceRunId: "run-123",
+    },
+  ]);
+});

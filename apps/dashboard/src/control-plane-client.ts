@@ -8,6 +8,7 @@ import type {
   SavedMemory,
   WorkspaceEntry,
 } from "../../../packages/shared/src/contracts.js";
+import { firstVisibleRecentChat } from "./recent-chat-filter.js";
 
 export type { ConversationState } from "../../../packages/shared/src/contracts.js";
 
@@ -24,16 +25,91 @@ export type DashboardSettings = {
   defaultModel?: string;
   defaultThinkingLevel?: "off" | "low" | "medium" | "high";
   defaultBaseUrl?: string;
+  modelOptions?: {
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+    minP?: number;
+    maxTokens?: number;
+    seed?: number;
+    stop?: string[];
+    repeatPenalty?: number;
+    frequencyPenalty?: number;
+    presencePenalty?: number;
+    contextWindow?: number;
+  };
+  savedModelConfigs?: Array<{
+    id: string;
+    name: string;
+    provider?: string;
+    model?: string;
+    baseUrl?: string;
+    defaultThinkingLevel?: "off" | "low" | "medium" | "high";
+    thinkingLevel?: "off" | "low" | "medium" | "high";
+    modelOptions?: {
+      temperature?: number;
+      topP?: number;
+      topK?: number;
+      minP?: number;
+      maxTokens?: number;
+      seed?: number;
+      stop?: string[];
+      repeatPenalty?: number;
+      frequencyPenalty?: number;
+      presencePenalty?: number;
+      contextWindow?: number;
+    };
+  }>;
+  storedProviderCredentials?: Record<string, boolean>;
+  providerApiKey?: string;
   autoDeleteEnabled?: boolean;
   autoDeleteDays?: number;
+  toolRetryWarningThreshold?: number;
+  toolRetryHardStopThreshold?: number;
   dangerModeEnabled?: boolean;
   workspaceDefaults?: {
     defaultProvider?: string;
     defaultModel?: string;
     defaultThinkingLevel?: "off" | "low" | "medium" | "high";
     defaultBaseUrl?: string;
+    modelOptions?: {
+      temperature?: number;
+      topP?: number;
+      topK?: number;
+      minP?: number;
+      maxTokens?: number;
+      seed?: number;
+      stop?: string[];
+      repeatPenalty?: number;
+      frequencyPenalty?: number;
+      presencePenalty?: number;
+      contextWindow?: number;
+    };
+    savedModelConfigs?: Array<{
+      id: string;
+      name: string;
+      provider?: string;
+      model?: string;
+      baseUrl?: string;
+      thinkingLevel?: "off" | "low" | "medium" | "high";
+      modelOptions?: {
+        temperature?: number;
+        topP?: number;
+        topK?: number;
+        minP?: number;
+        maxTokens?: number;
+        seed?: number;
+        stop?: string[];
+        repeatPenalty?: number;
+        frequencyPenalty?: number;
+        presencePenalty?: number;
+        contextWindow?: number;
+      };
+    }>;
     autoDeleteEnabled?: boolean;
     autoDeleteDays?: number;
+    toolRetryWarningThreshold?: number;
+    toolRetryHardStopThreshold?: number;
     dangerModeEnabled?: boolean;
   };
   sources?: {
@@ -43,6 +119,8 @@ export type DashboardSettings = {
     defaultBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
     autoDeleteEnabled?: "env" | "workspace" | "pi-agent" | "unset";
     autoDeleteDays?: "env" | "workspace" | "pi-agent" | "unset";
+    toolRetryWarningThreshold?: "env" | "workspace" | "pi-agent" | "unset";
+    toolRetryHardStopThreshold?: "env" | "workspace" | "pi-agent" | "unset";
     dangerModeEnabled?: "env" | "workspace" | "pi-agent" | "unset";
   };
 };
@@ -59,7 +137,7 @@ export function selectConversationId(conversations: Conversation[], currentConve
   if (currentConversationId && conversations.some((conversation) => conversation.id === currentConversationId)) {
     return currentConversationId;
   }
-  return conversations[0]?.id;
+  return firstVisibleRecentChat(conversations)?.id;
 }
 
 export function fetchConversations(fetchImpl?: typeof fetch) {
@@ -144,6 +222,46 @@ export function submitAgentGuidance(input: { conversationId: string; taskId: str
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
+  }, fetchImpl);
+}
+
+export function steerAgentRun(input: { conversationId: string; runId?: string; content: string }, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/agent-steer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  }, fetchImpl);
+}
+
+export function queueAgentFollowUp(input: { conversationId: string; runId?: string; content: string }, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/agent-follow-up`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  }, fetchImpl);
+}
+
+export function reprioritizeTask(input: { taskId: string; direction: "up" | "down" | "top" | "bottom" }, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/task-reprioritize`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  }, fetchImpl);
+}
+
+export function deleteTask(taskId: string, fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/task-delete`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId }),
+  }, fetchImpl);
+}
+
+export function clearCompletedTasks(fetchImpl?: typeof fetch) {
+  return fetchJson<{ ok: true }>(`${DASHBOARD_PREFIX}/actions/task-clear-completed`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
   }, fetchImpl);
 }
 

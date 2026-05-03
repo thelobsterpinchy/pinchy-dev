@@ -110,6 +110,6 @@ export function enqueueQueuedTaskRun(cwd: string, input: { title: string; prompt
     runLabel: `task:${input.title}`,
     historyKind: "task",
     historyLabel: input.title,
-    runKind: "user_prompt",
+    runKind: "queued_task",
   });
 }

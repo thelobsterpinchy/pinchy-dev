@@ -1,6 +1,51 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { getRunById, listConversations } from "../../../apps/host/src/agent-state-store.js";
 import { enqueueDelegationPlan, enqueueTask, loadTasks, updateTaskStatus } from "../../../apps/host/src/task-queue.js";
+import { loadRunContext } from "../../../apps/host/src/run-context.js";
+
+function readTaskContext(cwd: string) {
+  const runContext = loadRunContext(cwd);
+  return {
+    conversationId: runContext?.currentConversationId,
+    runId: runContext?.currentRunId,
+  };
+}
+
+function isMainOrchestrationRun(cwd: string, taskContext: ReturnType<typeof readTaskContext>) {
+  if (!taskContext.runId) {
+    return true;
+  }
+
+  const run = getRunById(cwd, taskContext.runId);
+  if (!run) {
+    return true;
+  }
+
+  const conversationTitle = run.conversationId
+    ? listConversations(cwd).find((conversation) => conversation.id === run.conversationId)?.title
+    : undefined;
+
+  if (run.kind !== "user_prompt") {
+    return false;
+  }
+
+  if (run.goal.startsWith("Queued task:")) {
+    return false;
+  }
+
+  if (conversationTitle === "Pinchy queued tasks") {
+    return false;
+  }
+
+  return true;
+}
+
+function assertDelegationAllowed(cwd: string, taskContext: ReturnType<typeof readTaskContext>) {
+  if (!isMainOrchestrationRun(cwd, taskContext)) {
+    throw new Error("Only the main orchestration thread may spawn subagents. Finish this task directly or report back to the parent thread.");
+  }
+}
 
 export default function taskInbox(pi: ExtensionAPI) {
   pi.registerTool({
@@ -14,8 +59,12 @@ export default function taskInbox(pi: ExtensionAPI) {
       dependsOnTaskIds: Type.Optional(Type.Array(Type.String({ description: "Optional already-known upstream task ids that must complete first." }))),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskContext = readTaskContext(ctx.cwd);
+      assertDelegationAllowed(ctx.cwd, taskContext);
       const task = enqueueTask(ctx.cwd, params.title, params.prompt, {
         source: "agent",
+        conversationId: taskContext.conversationId,
+        runId: taskContext.runId,
         dependsOnTaskIds: params.dependsOnTaskIds,
       });
       return {
@@ -39,6 +88,8 @@ export default function taskInbox(pi: ExtensionAPI) {
       })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskContext = readTaskContext(ctx.cwd);
+      assertDelegationAllowed(ctx.cwd, taskContext);
       const tasks = enqueueDelegationPlan(ctx.cwd, params.tasks.map((task, index) => ({
         id: task.id ?? `task-${index + 1}`,
         title: task.title,
@@ -46,6 +97,8 @@ export default function taskInbox(pi: ExtensionAPI) {
         dependsOn: task.dependsOn,
       })), {
         source: "agent",
+        conversationId: taskContext.conversationId,
+        runId: taskContext.runId,
       });
       return {
         content: [{ type: "text", text: `Delegated ${tasks.length} task${tasks.length === 1 ? "" : "s"}: ${tasks.map((task) => task.title).join(", ")}` }],

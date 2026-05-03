@@ -5,6 +5,7 @@ export const PINCHY_CLI_COMMANDS = [
   "config",
   "up",
   "down",
+  "restart",
   "status",
   "logs",
   "doctor",

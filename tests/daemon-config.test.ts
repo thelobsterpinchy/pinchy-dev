@@ -38,6 +38,10 @@ test("loadDaemonGoalsConfig falls back to enabled when no override exists", () =
     const config = loadDaemonGoalsConfig(cwd);
     assert.equal(config.enabled, true);
     assert.ok(config.goals.length > 0);
+    assert.match(config.goals[0] ?? "", /Prefer docs, prompts, tests, guardrails, and small refactors/i);
+    assert.match(config.goals[0] ?? "", /avoid edited files with unrelated dirty-worktree changes/i);
+    assert.match(config.goals[0] ?? "", /validate any changes when practical/i);
+    assert.match(config.goals[0] ?? "", /If no safe improvement is warranted, explain why and stop/i);
   });
 });
 

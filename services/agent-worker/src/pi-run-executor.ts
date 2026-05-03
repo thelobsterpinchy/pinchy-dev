@@ -1,19 +1,23 @@
 import { AuthStorage, createAgentSession, getAgentDir, ModelRegistry, SessionManager } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { resolve } from "node:path";
-import { getConversationSessionBinding, listRuns } from "../../../apps/host/src/agent-state-store.js";
-import { loadPinchyRuntimeConfig, type PinchyRuntimeConfig, type ThinkingLevel } from "../../../apps/host/src/runtime-config.js";
+import { clearRunCancellationRequest, getConversationSessionBinding, hasRunCancellationRequest, listRuns } from "../../../apps/host/src/agent-state-store.js";
+import { buildRuntimeConfigSignature } from "../../../apps/host/src/runtime-config-signature.js";
+import { loadPinchyRuntimeConfig, type PinchyRuntimeConfig, type RuntimeModelOptions, type ThinkingLevel } from "../../../apps/host/src/runtime-config.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
+import { createRuntimeModelSettingsResourceLoader } from "./pi-model-runtime-settings.js";
 import { normalizeRunOutcome, type PiRunExecutionResult } from "./run-outcomes.js";
-import { buildRunExecutionPrompt } from "./run-orchestration-prompt.js";
+import { buildRunExecutionPrompt, shouldReuseConversationSessionForRun } from "./run-orchestration-prompt.js";
 
 type PiSession = {
+  abort?: () => Promise<void>;
   sessionId?: string;
   sessionFile?: string;
   isStreaming?: boolean;
   messages?: Array<{ role?: string; content?: unknown }>;
   subscribe?: (listener: (event: unknown) => void) => (() => void) | void;
-  prompt: (text: string) => Promise<unknown>;
+  prompt: (text: string, options?: { streamingBehavior?: "steer" | "followUp" }) => Promise<unknown>;
+  steer?: (text: string) => Promise<unknown>;
   followUp: (text: string) => Promise<unknown>;
 };
 
@@ -32,18 +36,20 @@ type CreateSessionArgs = {
   sessionManager: unknown;
   model?: unknown;
   thinkingLevel?: ThinkingLevel;
+  modelOptions?: RuntimeModelOptions;
 };
 
 type PiRunExecutorDependencies = {
+  hasRunCancellationRequest?: (cwd: string, runId: string) => boolean;
+  clearRunCancellationRequest?: (cwd: string, runId: string) => boolean;
   agentDir?: string;
   createSession?: (args: CreateSessionArgs) => Promise<PiSessionResult>;
   sessionManagerFactory?: PiSessionManagerFactory;
   loadRuntimeConfig?: (cwd: string) => PinchyRuntimeConfig;
   resolveModel?: (provider: string, modelId: string, agentDir: string) => unknown;
   loadConversationRuns?: (cwd: string, conversationId: string) => Run[];
-  loadConversationSessionPath?: (cwd: string, conversationId: string) => string | undefined;
+  loadConversationSessionBinding?: (cwd: string, conversationId: string) => { piSessionPath: string; runtimeConfigSignature?: string } | undefined;
 };
-
 function defaultResolveModel(provider: string, modelId: string, agentDir: string) {
   const builtInModel = getModel(
     provider as Parameters<typeof getModel>[0],
@@ -116,7 +122,7 @@ function resolveCapturedAssistantText(streamedText: string, historyText?: string
   return normalizedStreamedText || normalizedHistoryText;
 }
 
-async function executeWithCapturedAssistantText(session: PiSession, operation: () => Promise<unknown>) {
+async function executeWithCapturedAssistantText(session: PiSession, operation: () => Promise<unknown>, options?: { onCancellationCheck?: () => boolean; onCancellationHandled?: () => void }) {
   let streamedText = "";
   const unsubscribe = session.subscribe?.((event) => {
     const delta = readStreamedAssistantText(event);
@@ -124,6 +130,18 @@ async function executeWithCapturedAssistantText(session: PiSession, operation: (
       streamedText += delta;
     }
   });
+
+  let cancellationHandled = false;
+  const cancellationInterval = options?.onCancellationCheck && session.abort
+    ? globalThis.setInterval(() => {
+      if (cancellationHandled || !options.onCancellationCheck?.()) {
+        return;
+      }
+      cancellationHandled = true;
+      options.onCancellationHandled?.();
+      void session.abort?.().catch(() => {});
+    }, 25)
+    : undefined;
 
   try {
     const rawResult = await operation();
@@ -133,18 +151,26 @@ async function executeWithCapturedAssistantText(session: PiSession, operation: (
     const assistantText = resolveCapturedAssistantText(streamedText, readAssistantMessageText(messageFromHistory?.content));
     return { rawResult, assistantText };
   } finally {
+    if (cancellationInterval !== undefined) {
+      globalThis.clearInterval(cancellationInterval);
+    }
     unsubscribe?.();
   }
 }
 
 export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}) {
   const agentDir = dependencies.agentDir ?? getAgentDir();
-  const createSession = dependencies.createSession ?? ((args: CreateSessionArgs) => createAgentSession({
+  const createSession = dependencies.createSession ?? (async (args: CreateSessionArgs) => createAgentSession({
     cwd: args.cwd,
     agentDir: args.agentDir,
     sessionManager: args.sessionManager as SessionManager,
     model: args.model as never,
     thinkingLevel: args.thinkingLevel,
+    resourceLoader: await createRuntimeModelSettingsResourceLoader({
+      cwd: args.cwd,
+      agentDir: args.agentDir,
+      options: args.modelOptions,
+    }),
   }));
   const sessionManagerFactory = dependencies.sessionManagerFactory ?? {
     create: (cwd: string) => SessionManager.create(cwd),
@@ -153,7 +179,9 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
   const loadRuntimeConfig = dependencies.loadRuntimeConfig ?? loadPinchyRuntimeConfig;
   const resolveModel = dependencies.resolveModel ?? defaultResolveModel;
   const loadConversationRuns = dependencies.loadConversationRuns ?? ((cwd: string, conversationId: string) => listRuns(cwd, conversationId));
-  const loadConversationSessionPath = dependencies.loadConversationSessionPath ?? ((cwd: string, conversationId: string) => getConversationSessionBinding(cwd, conversationId)?.piSessionPath);
+  const loadConversationSessionBinding = dependencies.loadConversationSessionBinding ?? ((cwd: string, conversationId: string) => getConversationSessionBinding(cwd, conversationId));
+  const hasCancellationRequest = dependencies.hasRunCancellationRequest ?? ((cwd: string, runId: string) => hasRunCancellationRequest(cwd, runId));
+  const clearCancellationRequest = dependencies.clearRunCancellationRequest ?? ((cwd: string, runId: string) => clearRunCancellationRequest(cwd, runId));
 
   function buildSessionDefaults(cwd: string) {
     const runtimeConfig = loadRuntimeConfig(cwd);
@@ -167,39 +195,75 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
     return {
       model,
       thinkingLevel: runtimeConfig.defaultThinkingLevel,
+      modelOptions: runtimeConfig.modelOptions,
+      runtimeConfigSignature: buildRuntimeConfigSignature(runtimeConfig),
     };
   }
 
-  function findReusableConversationSessionPath(cwd: string, run: Run) {
-    const canonicalSessionPath = loadConversationSessionPath(cwd, run.conversationId);
-    if (typeof canonicalSessionPath === "string" && canonicalSessionPath.trim()) {
-      return canonicalSessionPath;
+  function hasCompatibleRuntimeConfigSignature(signature: string | undefined, run: Run) {
+    return Boolean(signature && run.runtimeConfigSignature && signature === run.runtimeConfigSignature);
+  }
+
+  function findReusableConversationSessionPath(cwd: string, run: Run, runtimeConfigSignature: string | undefined) {
+    const canonicalBinding = loadConversationSessionBinding(cwd, run.conversationId);
+    if (canonicalBinding?.piSessionPath?.trim() && canonicalBinding.runtimeConfigSignature === runtimeConfigSignature) {
+      return canonicalBinding.piSessionPath;
     }
-    if (typeof run.piSessionPath === "string" && run.piSessionPath.trim()) {
+    if (typeof run.piSessionPath === "string" && run.piSessionPath.trim() && hasCompatibleRuntimeConfigSignature(runtimeConfigSignature, run)) {
       return run.piSessionPath;
     }
     const priorRuns = loadConversationRuns(cwd, run.conversationId)
       .filter((entry) => entry.id !== run.id && typeof entry.piSessionPath === "string" && entry.piSessionPath.trim().length > 0)
+      .filter((entry) => hasCompatibleRuntimeConfigSignature(runtimeConfigSignature, entry))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     return priorRuns[0]?.piSessionPath;
+  }
+
+  async function openExistingConversationSession(cwd: string, run: Run) {
+    const defaults = buildSessionDefaults(cwd);
+    const canonicalSessionPath = loadConversationSessionBinding(cwd, run.conversationId)?.piSessionPath?.trim();
+    const activeRunSessionPath = typeof run.piSessionPath === "string" ? run.piSessionPath.trim() : undefined;
+    const sessionPath = canonicalSessionPath
+      || activeRunSessionPath
+      || findReusableConversationSessionPath(cwd, run, defaults.runtimeConfigSignature);
+    if (!sessionPath) {
+      throw new Error(`Cannot find an active Pi session for conversation: ${run.conversationId}`);
+    }
+    const { session } = await createSession({
+      cwd,
+      agentDir,
+      sessionManager: sessionManagerFactory.open(sessionPath),
+      model: defaults.model,
+      thinkingLevel: defaults.thinkingLevel,
+      modelOptions: defaults.modelOptions,
+    });
+    return { session, sessionPath };
   }
 
   return {
     async executeRun({ cwd, run }: { cwd: string; run: Run }): Promise<PiRunExecutionResult> {
       const defaults = buildSessionDefaults(cwd);
-      const reusableSessionPath = run.kind === "user_prompt" ? findReusableConversationSessionPath(cwd, run) : undefined;
+      const reusableSessionPath = shouldReuseConversationSessionForRun(run)
+        ? findReusableConversationSessionPath(cwd, run, defaults.runtimeConfigSignature)
+        : undefined;
       const { session } = await createSession({
         cwd,
         agentDir,
         sessionManager: reusableSessionPath ? sessionManagerFactory.open(reusableSessionPath) : sessionManagerFactory.create(cwd),
         model: defaults.model,
         thinkingLevel: defaults.thinkingLevel,
+        modelOptions: defaults.modelOptions,
       });
       const executionPrompt = buildRunExecutionPrompt(run);
       const sendExecutionPrompt = reusableSessionPath && session.isStreaming
         ? () => session.followUp(executionPrompt)
         : () => session.prompt(executionPrompt);
-      const { rawResult, assistantText } = await executeWithCapturedAssistantText(session, sendExecutionPrompt);
+      const { rawResult, assistantText } = await executeWithCapturedAssistantText(session, sendExecutionPrompt, {
+        onCancellationCheck: () => hasCancellationRequest(cwd, run.id),
+        onCancellationHandled: () => {
+          clearCancellationRequest(cwd, run.id);
+        },
+      });
       return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run completed for goal: ${run.goal}`,
         message: assistantText ?? `Pi completed run: ${run.goal}`,
@@ -217,13 +281,31 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
         sessionManager: sessionManagerFactory.open(run.piSessionPath),
         model: defaults.model,
         thinkingLevel: defaults.thinkingLevel,
+        modelOptions: defaults.modelOptions,
       });
-      const { rawResult, assistantText } = await executeWithCapturedAssistantText(session, () => session.followUp(reply));
+      const { rawResult, assistantText } = await executeWithCapturedAssistantText(session, () => session.followUp(reply), {
+        onCancellationCheck: () => hasCancellationRequest(cwd, run.id),
+        onCancellationHandled: () => {
+          clearCancellationRequest(cwd, run.id);
+        },
+      });
       return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run resumed for goal: ${run.goal}`,
         message: assistantText ?? `Pi resumed run: ${run.goal}`,
         piSessionPath: session.sessionFile ?? run.piSessionPath,
       });
+    },
+    async steerRun({ cwd, run, content }: { cwd: string; run: Run; content: string }) {
+      const { session } = await openExistingConversationSession(cwd, run);
+      if (session.steer) {
+        await session.steer(content);
+        return;
+      }
+      await session.prompt(content, { streamingBehavior: "steer" });
+    },
+    async queueFollowUp({ cwd, run, content }: { cwd: string; run: Run; content: string }) {
+      const { session } = await openExistingConversationSession(cwd, run);
+      await session.followUp(content);
     },
   };
 }

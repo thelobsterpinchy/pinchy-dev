@@ -1,128 +1,163 @@
 # pinchy-dev
 
-`pinchy-dev` is a local-first autonomous coding agent workspace built on the **Pi coding agent** framework.
+`pinchy-dev` is Pinchy: a local-first coding agent you run on your own machine.
 
-## Install as a CLI
+Pinchy wraps the **Pi coding agent** framework with a chat-first local product surface:
+- a `pinchy` CLI
+- a local dashboard
+- persistent conversations and runs
+- bounded delegated task execution
+- website, browser, desktop, and simulator debugging workflows
+- local runtime state, auditability, and operator controls
 
-Pinchy now exposes a real installable `pinchy` command.
+## Install Pinchy
 
-Current install paths:
+Install Pinchy globally:
 
 ```bash
-# from the GitHub repo
+npm install -g pinchy-dev
+```
+
+If you are trying Pinchy before npm publishing is available, you can also install from GitHub:
+
+```bash
 npm install -g github:thelobsterpinchy/pinchy-dev
-
-# or from a local checkout
-npm install -g .
 ```
 
-Then use it from any repository:
+## Quick start
 
-```bash
-cd /path/to/your/repo
-pinchy init
-pinchy up
-pinchy status
-pinchy agent
-```
-
-Core commands:
-- `pinchy init`
-- `pinchy setup`
-- `pinchy doctor`
-- `pinchy version`
-- `pinchy up`
-- `pinchy down`
-- `pinchy status`
-- `pinchy logs [api|worker|dashboard]`
-- `pinchy dashboard`
-- `pinchy api`
-- `pinchy worker`
-- `pinchy daemon`
-- `pinchy agent`
-- `pinchy smoke`
-
-Recommended first-run flow:
+Inside the repository you want Pinchy to work on:
 
 ```bash
 cd /path/to/your/repo
 pinchy init
 pinchy setup
 pinchy doctor
-pinchy up
-pinchy agent
 ```
 
-It is designed to run on your own machine, use your local LLMs, debug websites/apps, and follow strict coding discipline such as TDD, design patterns, clean code, explicit structure, and safe refactoring.
+### Universal start command
 
-## Included capabilities
+If you want **one command that works across local terminals, SSH sessions, and other non-interactive environments**, use:
 
-### Continuous iteration
+```bash
+pinchy up
+```
+
+`pinchy up` starts Pinchy's managed local services without requiring an interactive TTY.
+
+After that, use whichever operator surface fits your environment:
+- **local machine**: open the dashboard at `http://127.0.0.1:4310`
+- **SSH / remote host**: port-forward `4310` and open the dashboard locally
+- **interactive terminal with a real TTY**: run `pinchy agent`
+
+Examples:
+
+```bash
+# local interactive shell
+pinchy agent
+
+# remote dashboard over SSH
+ssh -L 4310:127.0.0.1:4310 your-host
+
+# remote interactive shell with forced TTY
+ssh -tt your-host 'cd /path/to/your/repo && pinchy agent'
+```
+
+## What Pinchy does
+
+Pinchy is designed for developers who want a local coding agent that stays usable as a real everyday tool.
+
+Pinchy is:
+- **local-first** — your runtime state, dashboard, and workflows stay on your machine
+- **chat-first** — the main experience is conversation-oriented rather than a pile of disconnected tools
+- **orchestration-aware** — Pinchy can break multi-part requests into bounded delegated tasks
+- **inspectable** — runs, agent activity, questions, artifacts, and local state are visible and auditable
+- **debugging-oriented** — especially strong at website, browser, and local app debugging
+- **disciplined** — built to prefer TDD, small changes, and explicit validation
+
+## Typical workflows
+
+### Ask Pinchy to work in a repo
+Use the chat shell or dashboard to ask Pinchy to inspect code, plan changes, implement a fix, or validate a result.
+
+### Debug a website or browser flow
+Pinchy can reproduce issues, capture screenshots and DOM snapshots, inspect console/network failures, and compare artifacts.
+
+### Debug a local app or simulator flow
+Pinchy includes local desktop and simulator observation/control tools with approval-aware actions for bounded debugging work.
+
+### Delegate multi-part work
+For broader requests, Pinchy can break work into bounded delegated tasks, keep progress visible, and synthesize results back in-thread.
+
+### Steer an active agent
+When delegated work is running, you can inspect the agent session and submit scoped guidance rather than losing control of the thread.
+
+## Capability highlights
+
+### Autonomous and iterative work
 - scheduled defect-hunting cycles via `.pinchy-iteration.json`
 - edge-case focused review prompts
 - validation-aware iteration using detected test command
 - bounded autonomous bug-finding and fixing loop
-- daemon health and run timeline visibility via dashboard state files
+- daemon health and run timeline visibility
 
-### Browser debugging
+### Website and browser debugging
 - `browser_debug_scan`
 - `browser_dom_snapshot`
 - `browser_run_probe`
 - `browser_execute_steps`
 - `browser_compare_artifacts`
-- `npm run playwright:install` provisions the local Chromium runtime these tools use
+- Playwright-backed browser investigation workflows
+
+### Internet search
+- `internet_search`
+- provider-backed web lookup with saved JSON artifacts
+- useful for targeted external fact-finding when local repo context is insufficient
 
 ### Desktop and simulator debugging
-- `desktop_click`
-- `desktop_type_text`
-- `desktop_press_keycode`
-- `screen_find_template`
-- `screen_click_template`
-- `screen_ocr_extract`
-- `screen_find_text`
-- `screen_click_text`
-- `window_bounds`
-- `window_click_relative`
-- `simulator_tap`
-- `simulator_swipe`
-- `simulator_type_text`
+- desktop interaction and inspection tools
+- screen text/template targeting helpers
+- simulator tap, swipe, type, screenshot, and URL-opening workflows
+- approval-aware local action controls
 
-### Routines and control
-- `save_routine`
-- `list_routines`
-- `queue_routine_run`
-- `/routines`
-- `/run-routine <name>`
-- `/allow-session <scope>`
-- `/allow-persistent <scope>`
-- local dashboard with artifact gallery, filters, routine actions, and queue-task form
-- repo-default low-friction approval scopes for `desktop.actions`, `simulator.actions`, `validation.exec`, and `routine.exec`
-- workspace-local `dangerModeEnabled` setting for sandbox-only risky local actions
+### Routines, approvals, and local control
+- saved routines and queued routine execution
+- session and persistent approval scopes
+- queue-task and delegated-task workflows
+- sandbox-only `dangerModeEnabled` support for explicit local risk acceptance
 
-### Run metadata
-- current run context stored in `.pinchy-run-context.json`
-- artifact metadata can include tags and run labels
-- `/current-run` to inspect the latest run context
+### Design guidance
+- `design-pattern-review` skill for structure-heavy planning
+- `search_design_patterns` and `get_design_pattern` tools for local pattern reference lookup
+- `detect_design_anti_patterns` and `get_design_anti_pattern` tools for naming unhealthy structure and moving toward documented patterns
+- `diagnose_design_problem`, `analyze_design_structure`, and `scan_repository_design_structure` for query-based, file-based, and repo-wide structural diagnosis
+- concise local pattern and anti-pattern cards covering GoF, architectural, resilience, and refactoring guidance
 
-## Dashboard usability
+### Local state and auditability
+- persistent conversations, runs, and artifacts
+- run context and run history metadata
+- local runtime state files under the workspace
+- visible questions, replies, and operator controls in the dashboard
 
-The dashboard is designed to be used as a real local operator UI:
-- large action buttons
-- responsive card layout
+## Dashboard
+
+Pinchy includes a local dashboard designed as a real operator UI.
+
+For most setups, the dashboard is the easiest cross-platform way to use Pinchy after `pinchy up`, especially on remote machines or over SSH.
+
+The dashboard is centered on the chat workspace and supports:
+- conversation-first chat threads
+- workspace-aware conversations
+- delegated task and orchestration visibility
+- ephemeral agent-session takeover in the center pane
+- scoped guidance for active delegated agents
 - artifact filtering by query/tool/tag
-- visible task and approval summaries
-- routine visibility and queue-run buttons
-- queue-task form
-- generated tool review with inline git diff and one-click runtime reload requests
-- artifact previews that open in a modal or new tab
 - live updates through the local dashboard API/SSE stream
-- daemon health panel and recent run timeline visibility
+- daemon health and recent run visibility
 
-There are now two dashboard surfaces:
-- `npm run dashboard` — server-rendered local dashboard + API
-- `npm run dashboard:web` — richer React/Vite dashboard app
-
-The React dashboard can now issue one-click runtime reload requests. When the Pinchy daemon is running, it consumes the reload request and triggers `/reload-runtime` directly inside the Pi session.
+Main dashboard entrypoints:
+- `pinchy dashboard` — local dashboard server + API on port `4310`
+- `npm run dashboard:web` — Vite dev server for dashboard UI development on port `4311`
 
 ### Danger Mode
 
@@ -136,26 +171,37 @@ Use it only in a sandboxed environment when you want the workspace configuration
 
 This setting is intentionally descriptive and repo-local. It does **not** guarantee that host-level or platform-level approval prompts disappear, because some approval enforcement lives outside this repository.
 
-The React dashboard also acts as a control-plane operator UI over the persistent Pinchy run model:
-- browse conversations from the Pinchy API
-- inspect runs, blocked questions, replies, and delivery attempts per conversation
-- submit dashboard replies to waiting questions
-- cancel in-flight runs from the operator surface
+The dashboard also acts as the operator view over Pinchy's persistent run model:
+- browse conversations
+- inspect runs, blocked questions, replies, and delivery attempts
+- inspect delegated agent sessions for a conversation
+- submit scoped guidance to an active delegated agent
+- reply to waiting questions
+- cancel in-flight runs
 
-## Runtime services
+## Main commands
 
-Current local entrypoints include:
-- `npm run agent` — interactive Pi-backed Pinchy shell
-- `npm run daemon` — recurring autonomous maintenance/debugging loop
-- `npm run api` — Pinchy control-plane API on port `4320`
-- `npm run worker` — Pi-backed Pinchy worker loop for queued and resumable runs
-- `npm run dashboard` — server-rendered dashboard + local API on port `4310`
-- `npm run dashboard:web` — React dashboard app on port `4311`
+Common Pinchy commands:
+- `pinchy init`
+- `pinchy setup`
+- `pinchy doctor`
+- `pinchy up` — universal startup command for the managed local stack
+- `pinchy down`
+- `pinchy status`
+- `pinchy logs [api|worker|dashboard]`
+- `pinchy agent` — interactive shell, requires a real TTY
+- `pinchy dashboard`
+- `pinchy smoke`
+
+If you are running from a source checkout instead of a published install, the equivalent `npm run ...` entrypoints are also available.
 
 Pinchy can also load non-secret runtime defaults from `.pinchy-runtime.json`, including:
 - `defaultProvider`
 - `defaultModel`
 - `defaultThinkingLevel`
+- `dangerModeEnabled`
+
+These runtime files are intended to be **workspace-local preferences and runtime state**, not shared secrets. In normal usage they are best treated as local/generated files created by `pinchy init`.
 
 For the first async notification adapter, Discord webhook delivery is supported through:
 - `PINCHY_DISCORD_WEBHOOK_URL`
@@ -171,18 +217,16 @@ If Playwright is upgraded and browser tools start failing with a missing executa
 ## Runtime boundary
 
 Pinchy now treats these path classes explicitly:
-- **workspace-local**: `.pi/`, `.pinchy-runtime.json`, `.pinchy-goals.json`, `.pinchy-watch.json`, `.pinchy/run`, `.pinchy/state`, `logs/`
+- **workspace-local**: `.pi/`, `.pinchy-runtime.json`, `.pinchy-goals.json`, `.pinchy-watch.json`, `.pinchy-daemon-health.json`, `.pinchy/run`, `.pinchy/state`, `logs/`
 - **user-global**: `~/.pinchy/cache`, `~/.pinchy/tmp`
 
-That keeps portable repo behavior inside the repo while leaving room for user-level cache/temp data outside it.
+That keeps portable repo behavior inside the repo while leaving room for user-level cache/temp data outside it. In practice, the `.pinchy-*.json` runtime/config files are best treated as local workspace files rather than team-shared source files.
 
-## Releasing
+## For source-checkout development
 
-- manual release steps: `docs/RELEASING.md`
-- packaged install verification: `npm run pinchy:install-smoke`
-- tag-based npm publish workflow: `.github/workflows/publish-npm.yml`
+If you are developing Pinchy itself from this repository, source-checkout commands are available too.
 
-## Run locally
+## Run from source
 
 ```bash
 cd pinchy-dev
@@ -192,6 +236,7 @@ npm run pinchy -- init
 npm run pinchy -- up
 npm run pinchy -- status
 npm run pinchy -- agent
+npm run dashboard
 npm run dashboard:web
 npm test
 ```

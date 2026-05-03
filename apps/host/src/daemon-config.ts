@@ -32,7 +32,7 @@ function parseEnvGoals(): string[] {
 
 function getDefaultGoals() {
   return [
-    "Run a safe self-improvement cycle for this repository. Inspect docs, prompts, extensions, tests, and scripts. Prefer small improvements, tests, and safety. Use /skill:self-improvement-loop if helpful.",
+    "Run a safe self-improvement cycle for this repository. Inspect docs, prompts, extensions, tests, and scripts. Prefer docs, prompts, tests, guardrails, and small refactors. Avoid edited files with unrelated dirty-worktree changes. Validate any changes when practical. If no safe improvement is warranted, explain why and stop. Use /skill:self-improvement-loop if helpful.",
     "Run a safe local debugging readiness review for this repository. Inspect browser debugging, desktop observation, and guardrail workflows for small high-value improvements.",
   ];
 }

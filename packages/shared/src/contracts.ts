@@ -13,7 +13,7 @@ export type DaemonHealthStatus = typeof DAEMON_HEALTH_STATUSES[number];
 export const RELOAD_REQUEST_STATUSES = ["pending", "processed"] as const;
 export type ReloadRequestStatus = typeof RELOAD_REQUEST_STATUSES[number];
 
-export const RUN_KINDS = ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal"] as const;
+export const RUN_KINDS = ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal", "queued_task"] as const;
 export type RunKind = typeof RUN_KINDS[number];
 
 export const RUN_STATUSES = ["queued", "running", "waiting_for_human", "waiting_for_approval", "completed", "failed", "cancelled"] as const;
@@ -72,6 +72,7 @@ export function isMemoryKind(value: string): value is MemoryKind {
 export type RunContext = {
   currentRunId: string;
   currentRunLabel: string;
+  currentConversationId?: string;
   updatedAt: string;
 };
 
@@ -81,6 +82,17 @@ export type WorkspaceEntry = {
   path: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type PinchyTaskExecution = {
+  queueState: "waiting_for_dependencies" | "ready" | "linked_run";
+  blockedByTaskIds?: string[];
+  blockedByTaskTitles?: string[];
+  linkedRunStatus?: RunStatus;
+  piSessionPath?: string;
+  conversationSessionPath?: string;
+  workerPid?: number;
+  workerStatus?: "running" | "stopped";
 };
 
 export type PinchyTask = {
@@ -93,7 +105,9 @@ export type PinchyTask = {
   source?: "user" | "agent" | "daemon" | "qa" | "watcher" | "routine";
   conversationId?: string;
   runId?: string;
+  executionRunId?: string;
   dependsOnTaskIds?: string[];
+  execution?: PinchyTaskExecution;
 };
 
 export type ApprovalRecord = {
@@ -191,11 +205,28 @@ export type ConversationSessionBinding = {
   conversationId: string;
   piSessionPath: string;
   sourceRunId?: string;
+  runtimeConfigSignature?: string;
   updatedAt: string;
+};
+
+export type RunActivityKind = "tool";
+export type RunActivityStatus = "completed" | "failed";
+
+export type RunActivity = {
+  id: string;
+  conversationId: string;
+  runId: string;
+  kind: RunActivityKind;
+  status: RunActivityStatus;
+  label: string;
+  toolName?: string;
+  details: string[];
+  createdAt: string;
 };
 
 export type DashboardState = {
   conversationSessions: ConversationSessionBinding[];
+  runActivities: RunActivity[];
   runContext?: RunContext;
   workspaces: WorkspaceEntry[];
   activeWorkspaceId?: string;
@@ -224,6 +255,8 @@ export type ApprovalStatus = ApprovalRecord["status"];
 export type NotificationChannel = "discord" | "imessage" | "pinchy-app" | "dashboard";
 export type NotificationDeliveryStatus = "pending" | "sent" | "delivered" | "failed";
 
+export type ConversationAttentionStatus = "needs_reply" | "needs_approval" | "working" | "idle";
+
 export type Conversation = {
   id: string;
   title: string;
@@ -231,6 +264,9 @@ export type Conversation = {
   updatedAt: string;
   status: ConversationStatus;
   latestRunId?: string;
+  hasActiveRun?: boolean;
+  pendingQuestionCount?: number;
+  attentionStatus?: ConversationAttentionStatus;
 };
 
 export type ConversationState = {
@@ -240,6 +276,7 @@ export type ConversationState = {
   questions: Question[];
   replies: HumanReply[];
   deliveries: NotificationDelivery[];
+  runActivities: RunActivity[];
   sessionBinding?: ConversationSessionBinding;
 };
 
@@ -266,6 +303,7 @@ export type Run = {
   blockedReason?: string;
   summary?: string;
   piSessionPath?: string;
+  runtimeConfigSignature?: string;
 };
 
 export type Question = {

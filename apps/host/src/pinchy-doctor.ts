@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { chromium } from "playwright";
 
 export type PinchyDoctorCheckStatus = "ok" | "warn" | "fail";
 
@@ -25,6 +26,7 @@ export type PinchyDoctorReport = {
 export type PinchyDoctorDependencies = {
   pathExists?: (path: string) => boolean;
   commandExists?: (command: string) => boolean;
+  resolvePlaywrightBrowserPath?: () => string | undefined;
 };
 
 function hasLocalModelSupport(hasCommand: (command: string) => boolean) {
@@ -50,9 +52,18 @@ function commandExists(command: string) {
   return result.status === 0;
 }
 
+function resolvePlaywrightBrowserPath() {
+  try {
+    return chromium.executablePath();
+  } catch {
+    return undefined;
+  }
+}
+
 export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorDependencies = {}): PinchyDoctorReport {
   const pathExists = dependencies.pathExists ?? existsSync;
   const hasCommand = dependencies.commandExists ?? commandExists;
+  const getPlaywrightBrowserPath = dependencies.resolvePlaywrightBrowserPath ?? resolvePlaywrightBrowserPath;
 
   const checks: PinchyDoctorCheck[] = [];
 
@@ -81,11 +92,18 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
     hint: hasCommand("git") ? undefined : "Install Git so Pinchy can work with repository state reliably.",
   });
 
-  const hasPlaywrightChromium = pathExists(resolve(cwd, "node_modules/.bin/playwright"));
+  const hasPlaywrightCli = pathExists(resolve(cwd, "node_modules/.bin/playwright"));
+  const playwrightBrowserPath = getPlaywrightBrowserPath();
+  const hasPlaywrightBrowserBinary = playwrightBrowserPath ? pathExists(playwrightBrowserPath) : false;
+  const hasPlaywrightChromium = hasPlaywrightCli && hasPlaywrightBrowserBinary;
   checks.push({
     name: "playwright_chromium",
     status: hasPlaywrightChromium ? "ok" : "warn",
-    message: hasPlaywrightChromium ? "Playwright tooling is available for browser debugging." : "Playwright tooling is missing for browser debugging.",
+    message: hasPlaywrightChromium
+      ? "Playwright tooling and Chromium browser binaries are available for browser debugging."
+      : hasPlaywrightCli
+        ? "Playwright CLI is installed, but browser binaries are missing for browser debugging."
+        : "Playwright tooling is missing for browser debugging.",
     hint: hasPlaywrightChromium ? undefined : "Run `pinchy setup` or `npm run playwright:install`.",
   });
 

@@ -16,12 +16,14 @@ test("dashboard smoke selector registry stays unique and data-testid-based", () 
   assert.ok(selectors.some((entry) => entry.name === "chat-tools-toggle"));
   assert.ok(selectors.some((entry) => entry.name === "chat-workflows-toggle"));
   assert.ok(selectors.some((entry) => entry.name === "nav-settings"));
-  assert.ok(selectors.some((entry) => entry.name === "settings-provider-input"));
-  assert.ok(selectors.some((entry) => entry.name === "settings-preset-local-server"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-provider-select"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-provider-api-key-input"));
   assert.ok(selectors.some((entry) => entry.name === "settings-detected-model"));
   assert.ok(selectors.some((entry) => entry.name === "tools-agent-resource-skill"));
   assert.ok(selectors.some((entry) => entry.name === "settings-base-url-input"));
   assert.ok(selectors.some((entry) => entry.name === "settings-danger-mode-enabled"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-tool-retry-warning-threshold"));
+  assert.ok(selectors.some((entry) => entry.name === "settings-tool-retry-hard-stop-threshold"));
   assert.ok(selectors.some((entry) => entry.name === "settings-save"));
 });
 

@@ -13,6 +13,7 @@ import {
   listNotificationDeliveries,
   listQuestions,
   listReplies,
+  listRunActivities,
   listRuns,
   updateRunStatus,
 } from "../../host/src/agent-state-store.js";
@@ -24,6 +25,8 @@ import { shouldRunAsCliEntry } from "../../host/src/module-entry.js";
 type ApiServerOptions = {
   cwd: string;
 };
+
+class InvalidJsonBodyError extends Error {}
 
 function decodeWorkspaceOverrideHeaderValue(value: string) {
   try {
@@ -51,6 +54,10 @@ function sendJsonBodyError(res: http.ServerResponse, error: unknown) {
     sendJson(res, 400, { ok: false, error: "invalid JSON body" });
     return;
   }
+  if (error instanceof InvalidJsonBodyError) {
+    sendJson(res, 400, { ok: false, error: error.message });
+    return;
+  }
   sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
 }
 
@@ -60,7 +67,14 @@ async function readJsonBody(req: http.IncomingMessage) {
     chunks.push(Buffer.from(chunk));
   }
   const text = Buffer.concat(chunks).toString("utf8");
-  return text ? JSON.parse(text) as Record<string, unknown> : {};
+  if (!text) return {};
+
+  const parsed = JSON.parse(text) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new InvalidJsonBodyError("JSON body must be an object");
+  }
+
+  return parsed as Record<string, unknown>;
 }
 
 function getRouteParams(pathname: string, prefix: string, suffix = "") {
@@ -70,7 +84,11 @@ function getRouteParams(pathname: string, prefix: string, suffix = "") {
   const raw = suffix ? remainder.slice(0, -suffix.length) : remainder;
   const value = raw.replace(/^\//, "");
   if (!value || value.includes("/")) return undefined;
-  return decodeURIComponent(value);
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function getConversationById(cwd: string, conversationId: string) {
@@ -128,6 +146,10 @@ export function createApiServer({ cwd }: ApiServerOptions) {
     if (conversationIdForMessages && req.method === "POST") {
       void readJsonBody(req)
         .then((payload) => {
+          if (!getConversationById(requestCwd, conversationIdForMessages)) {
+            sendJson(res, 404, { ok: false, error: `Conversation not found: ${conversationIdForMessages}` });
+            return;
+          }
           if (payload.role !== "user" && payload.role !== "agent" && payload.role !== "system") {
             sendJson(res, 400, { ok: false, error: "valid role is required" });
             return;
@@ -166,6 +188,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
       const runIds = new Set(runs.map((run) => run.id));
       const replies = listReplies(requestCwd).filter((reply) => questionIds.has(reply.questionId));
       const deliveries = listNotificationDeliveries(requestCwd).filter((delivery) => (delivery.questionId ? questionIds.has(delivery.questionId) : false) || (delivery.runId ? runIds.has(delivery.runId) : false));
+      const runActivities = listRunActivities(requestCwd, { conversationId: conversationIdForState }).filter((activity) => runIds.has(activity.runId));
       sendJson(res, 200, {
         conversation,
         messages,
@@ -173,6 +196,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
         questions,
         replies,
         deliveries,
+        runActivities,
         sessionBinding: getConversationSessionBinding(requestCwd, conversationIdForState),
       });
       return;

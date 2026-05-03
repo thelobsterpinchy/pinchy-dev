@@ -49,12 +49,52 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function collapseExactRepeatedText(value: string) {
+  const text = value.trim();
+  for (let size = 1; size <= Math.floor(text.length / 2); size += 1) {
+    if (text.length % size !== 0) continue;
+    const chunk = text.slice(0, size);
+    if (chunk.repeat(text.length / size) === text) {
+      return chunk;
+    }
+  }
+  return text;
+}
+
+function collapseAdjacentDuplicateChunks(value: string) {
+  let text = collapseExactRepeatedText(value);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    outer: for (let size = Math.floor(text.length / 2); size >= 8; size -= 1) {
+      for (let start = 0; start + (size * 2) <= text.length; start += 1) {
+        const chunk = text.slice(start, start + size);
+        if (!chunk.trim()) continue;
+        if (chunk === text.slice(start + size, start + (size * 2))) {
+          text = `${text.slice(0, start + size)}${text.slice(start + (size * 2))}`;
+          changed = true;
+          break outer;
+        }
+      }
+    }
+  }
+
+  return text;
+}
+
+function normalizeAssistantMessageText(value: string | undefined, fallback?: string) {
+  const candidate = typeof value === "string" && value.trim() ? value : fallback;
+  if (!candidate) return candidate;
+  return collapseAdjacentDuplicateChunks(candidate);
+}
+
 function readCompletedMessage(value: unknown, fallback: string) {
-  return typeof value === "string" && value.trim() ? value : fallback;
+  return normalizeAssistantMessageText(typeof value === "string" ? value : undefined, fallback) ?? fallback;
 }
 
 function readString(value: unknown) {
-  return typeof value === "string" ? value : undefined;
+  return typeof value === "string" ? normalizeAssistantMessageText(value) : undefined;
 }
 
 function readChannelHints(value: unknown): NotificationChannel[] | undefined {

@@ -100,8 +100,8 @@ test("api server exposes health and conversation endpoints", async () => {
 });
 
 
-test("api server deletes a conversation session and its linked records", async () => {
-  await withServer(async ({ baseUrl }) => {
+test("api server deletes a conversation session, its linked records, and requests cancellation for active runs", async () => {
+  await withServer(async ({ baseUrl, cwd }) => {
     const conversation = await fetch(`${baseUrl}/conversations`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -114,11 +114,14 @@ test("api server deletes a conversation session and its linked records", async (
       body: JSON.stringify({ role: "user", content: "delete this chat" }),
     });
 
-    await fetch(`${baseUrl}/conversations/${conversation.id}/runs`, {
+    const run = await fetch(`${baseUrl}/conversations/${conversation.id}/runs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ goal: "delete this chat session" }),
-    });
+    }).then((response) => response.json() as Promise<{ id: string }>);
+
+    const { updateRunStatus, listRunCancellationRequests } = await import("../apps/host/src/agent-state-store.js");
+    updateRunStatus(cwd, run.id, "running", { piSessionPath: "/tmp/pi-session-delete.json" });
 
     const deleteResponse = await fetch(`${baseUrl}/conversations/${conversation.id}`, {
       method: "DELETE",
@@ -131,6 +134,24 @@ test("api server deletes a conversation session and its linked records", async (
 
     const aggregateResponse = await fetch(`${baseUrl}/conversations/${conversation.id}/state`);
     assert.equal(aggregateResponse.status, 404);
+    assert.equal(listRunCancellationRequests(cwd)[0]?.runId, run.id);
+  });
+});
+
+test("api server returns 404 when posting a message to a missing conversation", async () => {
+  await withServer(async ({ baseUrl, cwd }) => {
+    const missingConversationId = "missing-conversation";
+    const response = await fetch(`${baseUrl}/conversations/${missingConversationId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "user", content: "hello" }),
+    });
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { ok: false, error: `Conversation not found: ${missingConversationId}` });
+
+    const { listMessages } = await import("../apps/host/src/agent-state-store.js");
+    assert.deepEqual(listMessages(cwd, missingConversationId), []);
   });
 });
 
@@ -205,6 +226,34 @@ test("api server returns 400 for malformed JSON request bodies", async () => {
   });
 });
 
+test("api server returns 400 for valid JSON bodies that are not objects", async () => {
+  await withServer(async ({ baseUrl }) => {
+    for (const requestBody of ["null", "[]", '"hello"', "42"]) {
+      const response = await fetch(`${baseUrl}/conversations`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: requestBody,
+      });
+
+      assert.equal(response.status, 400);
+      const body = await response.json() as { ok: boolean; error: string };
+      assert.equal(body.ok, false);
+      assert.match(body.error, /must be an object/i);
+    }
+  });
+});
+
+test("api server returns 404 instead of crashing on malformed percent-encoded route ids", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/conversations/%E0%A4%A/state`);
+
+    assert.equal(response.status, 404);
+    const body = await response.json() as { ok: boolean; error: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error, /not found/i);
+  });
+});
+
 test("api server exposes notification deliveries with query filters", async () => {
   await withServer(async ({ baseUrl, cwd }) => {
     const { createNotificationDelivery } = await import("../apps/host/src/agent-state-store.js");
@@ -239,7 +288,7 @@ test("api server exposes notification deliveries with query filters", async () =
 
 test("api server exposes run detail, question detail, and aggregate conversation state", async () => {
   await withServer(async ({ baseUrl, cwd }) => {
-    const { createNotificationDelivery, updateRunStatus } = await import("../apps/host/src/agent-state-store.js");
+    const { appendRunActivity, createNotificationDelivery, updateRunStatus } = await import("../apps/host/src/agent-state-store.js");
 
     const conversation = await fetch(`${baseUrl}/conversations`, {
       method: "POST",
@@ -281,6 +330,15 @@ test("api server exposes run detail, question detail, and aggregate conversation
       questionId: question.id,
       runId: run.id,
     });
+    appendRunActivity(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      kind: "tool",
+      status: "completed",
+      label: "Tool: read",
+      toolName: "read",
+      details: ["path: README.md"],
+    });
 
     const runDetailResponse = await fetch(`${baseUrl}/runs/${run.id}`);
     assert.equal(runDetailResponse.status, 200);
@@ -304,6 +362,7 @@ test("api server exposes run detail, question detail, and aggregate conversation
       questions: Array<{ id: string }>;
       replies: Array<{ questionId: string }>;
       deliveries: Array<{ questionId?: string; runId?: string }>;
+      runActivities: Array<{ runId: string; toolName?: string; label: string }>;
       sessionBinding?: { conversationId: string; piSessionPath: string; sourceRunId?: string; updatedAt?: string };
     };
 
@@ -321,6 +380,10 @@ test("api server exposes run detail, question detail, and aggregate conversation
     assert.equal(aggregate.deliveries.length, 1);
     assert.equal(aggregate.deliveries[0]?.questionId, question.id);
     assert.equal(aggregate.deliveries[0]?.runId, run.id);
+    assert.equal(aggregate.runActivities.length, 1);
+    assert.equal(aggregate.runActivities[0]?.runId, run.id);
+    assert.equal(aggregate.runActivities[0]?.toolName, "read");
+    assert.equal(aggregate.runActivities[0]?.label, "Tool: read");
   });
 });
 

@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { loadPinchyRuntimeConfig } from "./runtime-config.js";
+import { buildRuntimeConfigSignature } from "./runtime-config-signature.js";
+import { assessUserRequestTasks } from "./orchestration-policy.js";
 import type {
   Conversation,
   ConversationStatus,
@@ -13,12 +16,21 @@ import type {
   NotificationDeliveryStatus,
   ConversationSessionBinding,
   Question,
+  RunActivity,
+  RunActivityKind,
+  RunActivityStatus,
   QuestionPriority,
   QuestionStatus,
   Run,
   RunKind,
   RunStatus,
 } from "../../../packages/shared/src/contracts.js";
+
+type RunCancellationRequest = {
+  runId: string;
+  reason?: string;
+  requestedAt: string;
+};
 
 const STATE_DIR = ".pinchy/state";
 const CONVERSATIONS_FILE = "conversations.json";
@@ -29,6 +41,8 @@ const REPLIES_FILE = "replies.json";
 const DELIVERIES_FILE = "deliveries.json";
 const AGENT_GUIDANCES_FILE = "agent-guidances.json";
 const CONVERSATION_SESSIONS_FILE = "conversation-sessions.json";
+const RUN_ACTIVITIES_FILE = "run-activities.json";
+const RUN_CANCELLATIONS_FILE = "run-cancellations.json";
 const LOCK_RETRY_MS = 10;
 const LOCK_TIMEOUT_MS = 1000;
 
@@ -92,7 +106,31 @@ function nowIso() {
 }
 
 export function listConversations(cwd: string) {
-  return loadCollection<Conversation>(cwd, CONVERSATIONS_FILE).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const runs = loadCollection<Run>(cwd, RUNS_FILE);
+  const questions = loadCollection<Question>(cwd, QUESTIONS_FILE);
+
+  return loadCollection<Conversation>(cwd, CONVERSATIONS_FILE)
+    .map((conversation) => {
+      const conversationRuns = runs.filter((run) => run.conversationId === conversation.id);
+      const pendingQuestionCount = questions.filter((question) => question.conversationId === conversation.id && (question.status === "pending_delivery" || question.status === "waiting_for_human")).length;
+      const hasWaitingForHuman = pendingQuestionCount > 0 || conversationRuns.some((run) => run.status === "waiting_for_human");
+      const hasWaitingForApproval = conversationRuns.some((run) => run.status === "waiting_for_approval");
+      const hasActiveRun = conversationRuns.some((run) => run.status === "queued" || run.status === "running" || run.status === "waiting_for_human" || run.status === "waiting_for_approval");
+      const attentionStatus = hasWaitingForHuman
+        ? "needs_reply"
+        : hasWaitingForApproval
+          ? "needs_approval"
+          : hasActiveRun
+            ? "working"
+            : "idle";
+      return {
+        ...conversation,
+        pendingQuestionCount,
+        hasActiveRun,
+        attentionStatus,
+      } satisfies Conversation;
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function createConversation(cwd: string, input: { title: string; status?: ConversationStatus }) {
@@ -117,9 +155,25 @@ export function deleteConversation(cwd: string, conversationId: string) {
   }
 
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
-  const removedRunIds = new Set(runs.filter((run) => run.conversationId === conversationId).map((run) => run.id));
+  const removedRuns = runs.filter((run) => run.conversationId === conversationId);
+  const removedRunIds = new Set(removedRuns.map((run) => run.id));
+  const activeRemovedRunIds = new Set<string>();
   const questions = loadCollection<Question>(cwd, QUESTIONS_FILE);
   const removedQuestionIds = new Set(questions.filter((question) => question.conversationId === conversationId).map((question) => question.id));
+  const runCancellationRequests = loadCollection<RunCancellationRequest>(cwd, RUN_CANCELLATIONS_FILE)
+    .filter((request) => !removedRunIds.has(request.runId));
+
+  for (const run of removedRuns) {
+    if (["completed", "failed", "cancelled"].includes(run.status)) {
+      continue;
+    }
+    activeRemovedRunIds.add(run.id);
+    runCancellationRequests.push({
+      runId: run.id,
+      reason: "Conversation deleted",
+      requestedAt: nowIso(),
+    });
+  }
 
   saveCollection(cwd, CONVERSATIONS_FILE, remainingConversations);
   saveCollection(cwd, MESSAGES_FILE, loadCollection<Message>(cwd, MESSAGES_FILE).filter((message) => message.conversationId !== conversationId));
@@ -129,10 +183,19 @@ export function deleteConversation(cwd: string, conversationId: string) {
   saveCollection(cwd, DELIVERIES_FILE, loadCollection<NotificationDelivery>(cwd, DELIVERIES_FILE).filter((delivery) => !removedQuestionIds.has(delivery.questionId ?? "") && !removedRunIds.has(delivery.runId ?? "")));
   saveCollection(cwd, AGENT_GUIDANCES_FILE, loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE).filter((guidance) => guidance.conversationId !== conversationId));
   saveCollection(cwd, CONVERSATION_SESSIONS_FILE, loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE).filter((entry) => entry.conversationId !== conversationId));
+  saveCollection(cwd, RUN_ACTIVITIES_FILE, loadCollection<RunActivity>(cwd, RUN_ACTIVITIES_FILE).filter((activity) => activity.conversationId !== conversationId));
+  saveCollection(cwd, RUN_CANCELLATIONS_FILE, runCancellationRequests);
   return true;
 }
 
 export function appendMessage(cwd: string, input: { conversationId: string; role: MessageRole; content: string; runId?: string; kind?: MessageKind }) {
+  if (!hasConversation(cwd, input.conversationId)) {
+    return undefined;
+  }
+  const run = input.runId ? getRunById(cwd, input.runId) : undefined;
+  if (input.runId && (!run || run.conversationId !== input.conversationId)) {
+    return undefined;
+  }
   const messages = loadCollection<Message>(cwd, MESSAGES_FILE);
   const message: Message = {
     id: createId("message"),
@@ -154,19 +217,26 @@ export function listMessages(cwd: string, conversationId: string) {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export function createRun(cwd: string, input: { conversationId: string; goal: string; kind?: RunKind; status?: RunStatus }) {
+export function createRun(cwd: string, input: { conversationId: string; goal: string; kind?: RunKind; status?: RunStatus; runtimeConfigSignature?: string }) {
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
   const now = nowIso();
+  const runtimeConfigSignature = input.runtimeConfigSignature ?? buildRuntimeConfigSignature(loadPinchyRuntimeConfig(cwd));
   const sessionBinding = getConversationSessionBinding(cwd, input.conversationId);
+  const kind = input.kind ?? "user_prompt";
+  const canSeedConversationSession = kind !== "user_prompt"
+    || assessUserRequestTasks(input.goal).requiresDelegation;
   const run: Run = {
     id: createId("run"),
     conversationId: input.conversationId,
     goal: input.goal,
-    kind: input.kind ?? "user_prompt",
+    kind,
     status: input.status ?? "queued",
     createdAt: now,
     updatedAt: now,
-    piSessionPath: sessionBinding?.piSessionPath,
+    piSessionPath: canSeedConversationSession && sessionBinding?.runtimeConfigSignature === runtimeConfigSignature
+      ? sessionBinding.piSessionPath
+      : undefined,
+    runtimeConfigSignature,
   };
   saveCollection(cwd, RUNS_FILE, [run, ...runs]);
   touchConversation(cwd, input.conversationId, { latestRunId: run.id });
@@ -183,10 +253,21 @@ export function getRunById(cwd: string, runId: string) {
   return loadCollection<Run>(cwd, RUNS_FILE).find((run) => run.id === runId);
 }
 
-export function claimNextQueuedRun(cwd: string) {
+export type WorkerLane = "interactive" | "background";
+
+function isInteractiveRunKind(kind: RunKind) {
+  return kind === "user_prompt" || kind === "resume_reply";
+}
+
+function matchesWorkerLane(run: Run, lane?: WorkerLane) {
+  if (!lane) return true;
+  return lane === "interactive" ? isInteractiveRunKind(run.kind) : !isInteractiveRunKind(run.kind);
+}
+
+export function claimNextQueuedRun(cwd: string, options: { lane?: WorkerLane } = {}) {
   return withStateFileLock(cwd, RUNS_FILE, () => {
     const runs = loadCollection<Run>(cwd, RUNS_FILE);
-    const nextQueuedRun = [...runs].reverse().find((run) => run.status === "queued");
+    const nextQueuedRun = [...runs].reverse().find((run) => run.status === "queued" && matchesWorkerLane(run, options.lane));
 
     if (!nextQueuedRun) {
       return undefined;
@@ -202,7 +283,7 @@ export function claimNextQueuedRun(cwd: string) {
   });
 }
 
-export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "piSessionPath">> = {}) {
+export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "piSessionPath" | "runtimeConfigSignature">> = {}) {
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
   const match = runs.find((run) => run.id === runId);
   if (!match) return undefined;
@@ -218,12 +299,14 @@ export function updateRunStatus(cwd: string, runId: string, status: RunStatus, p
   match.blockedReason = patch.blockedReason ?? match.blockedReason;
   match.summary = patch.summary ?? match.summary;
   match.piSessionPath = patch.piSessionPath ?? match.piSessionPath;
+  match.runtimeConfigSignature = patch.runtimeConfigSignature ?? match.runtimeConfigSignature;
   saveCollection(cwd, RUNS_FILE, runs);
   if (match.piSessionPath) {
     setConversationSessionBinding(cwd, {
       conversationId: match.conversationId,
       piSessionPath: match.piSessionPath,
       sourceRunId: match.id,
+      runtimeConfigSignature: match.runtimeConfigSignature,
     });
   }
   touchConversation(cwd, match.conversationId, { latestRunId: match.id });
@@ -308,6 +391,39 @@ export function listReplies(cwd: string, questionId?: string) {
     .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
 }
 
+export function appendRunActivity(cwd: string, input: {
+  conversationId: string;
+  runId: string;
+  kind: RunActivityKind;
+  status: RunActivityStatus;
+  label: string;
+  toolName?: string;
+  details?: string[];
+}) {
+  const activities = loadCollection<RunActivity>(cwd, RUN_ACTIVITIES_FILE);
+  const activity: RunActivity = {
+    id: createId("activity"),
+    conversationId: input.conversationId,
+    runId: input.runId,
+    kind: input.kind,
+    status: input.status,
+    label: input.label,
+    toolName: input.toolName,
+    details: input.details ?? [],
+    createdAt: nowIso(),
+  };
+  saveCollection(cwd, RUN_ACTIVITIES_FILE, [activity, ...activities]);
+  touchConversation(cwd, input.conversationId, { latestRunId: input.runId });
+  return activity;
+}
+
+export function listRunActivities(cwd: string, filter: { conversationId?: string; runId?: string } = {}) {
+  return loadCollection<RunActivity>(cwd, RUN_ACTIVITIES_FILE)
+    .filter((activity) => !filter.conversationId || activity.conversationId === filter.conversationId)
+    .filter((activity) => !filter.runId || activity.runId === filter.runId)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
 export function listConversationSessions(cwd: string) {
   return loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -317,19 +433,21 @@ export function getConversationSessionBinding(cwd: string, conversationId: strin
   return listConversationSessions(cwd).find((entry) => entry.conversationId === conversationId);
 }
 
-export function setConversationSessionBinding(cwd: string, input: { conversationId: string; piSessionPath: string; sourceRunId?: string }) {
+export function setConversationSessionBinding(cwd: string, input: { conversationId: string; piSessionPath: string; sourceRunId?: string; runtimeConfigSignature?: string }) {
   const sessions = loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE);
   const now = nowIso();
   const existing = sessions.find((entry) => entry.conversationId === input.conversationId);
   if (existing) {
     existing.piSessionPath = input.piSessionPath;
     existing.sourceRunId = input.sourceRunId;
+    existing.runtimeConfigSignature = input.runtimeConfigSignature;
     existing.updatedAt = now;
   } else {
     sessions.push({
       conversationId: input.conversationId,
       piSessionPath: input.piSessionPath,
       sourceRunId: input.sourceRunId,
+      runtimeConfigSignature: input.runtimeConfigSignature,
       updatedAt: now,
     });
   }
@@ -409,6 +527,42 @@ export function listNotificationDeliveries(cwd: string, filter: { questionId?: s
       const right = a.sentAt ?? a.deliveredAt ?? a.failedAt ?? "";
       return left.localeCompare(right);
     });
+}
+
+export function requestRunCancellation(cwd: string, runId: string, reason?: string) {
+  const requests = loadCollection<RunCancellationRequest>(cwd, RUN_CANCELLATIONS_FILE);
+  const existing = requests.find((request) => request.runId === runId);
+  if (existing) {
+    existing.reason = reason ?? existing.reason;
+    existing.requestedAt = nowIso();
+  } else {
+    requests.push({ runId, reason, requestedAt: nowIso() });
+  }
+  saveCollection(cwd, RUN_CANCELLATIONS_FILE, requests);
+  return requests.find((request) => request.runId === runId);
+}
+
+export function listRunCancellationRequests(cwd: string) {
+  return loadCollection<RunCancellationRequest>(cwd, RUN_CANCELLATIONS_FILE)
+    .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt));
+}
+
+export function hasRunCancellationRequest(cwd: string, runId: string) {
+  return listRunCancellationRequests(cwd).some((request) => request.runId === runId);
+}
+
+export function clearRunCancellationRequest(cwd: string, runId: string) {
+  const requests = loadCollection<RunCancellationRequest>(cwd, RUN_CANCELLATIONS_FILE);
+  const remainingRequests = requests.filter((request) => request.runId !== runId);
+  if (remainingRequests.length === requests.length) {
+    return false;
+  }
+  saveCollection(cwd, RUN_CANCELLATIONS_FILE, remainingRequests);
+  return true;
+}
+
+export function hasConversation(cwd: string, conversationId: string) {
+  return loadCollection<Conversation>(cwd, CONVERSATIONS_FILE).some((conversation) => conversation.id === conversationId);
 }
 
 function touchConversation(cwd: string, conversationId: string, patch: Partial<Pick<Conversation, "latestRunId">> = {}) {

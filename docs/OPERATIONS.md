@@ -68,6 +68,18 @@ Suggested evidence bundle for a reproducible bug:
 
 This keeps website debugging evidence-first and aligned with the repo’s website investigation skills.
 
+## Internet search
+
+Useful tools:
+- `internet_search`
+
+Suggested workflow:
+1. use `internet_search` for narrow external lookups that need current web evidence
+2. keep queries specific and do not include secrets, credentials, or private workspace-only data in the query
+3. inspect the returned URLs/snippets before relying on them
+4. treat provider outages, rate limits, and result relevance as possible failure modes
+5. use the saved JSON artifact when you want a durable record of what the search returned; it is also indexed in `artifacts/index.json`
+
 ## Local app debugging
 
 Useful tools:
@@ -81,6 +93,8 @@ Suggested workflow:
 2. inspect the frontmost app/window with `active_app_info`
 3. use `desktop_ui_snapshot` for lightweight control visibility before interacting
 4. only use `desktop_open_app` when clearly helpful and after approval
+
+`active_app_info` and `desktop_ui_snapshot` now also save JSON artifacts under `artifacts/` and index them in `artifacts/index.json`, so app-debugging investigations keep durable observation evidence alongside screenshots.
 
 This keeps local app debugging observation-first and aligned with the repo’s app-debugger workflow.
 

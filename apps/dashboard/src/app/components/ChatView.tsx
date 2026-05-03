@@ -1,13 +1,22 @@
-import { useEffect, useRef, useState } from "react";
-import { PanelLeftOpen, PanelRightOpen, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, PanelLeftOpen, PanelRightOpen, Send } from "lucide-react";
 import { Button } from "./ui/button.js";
 import { Textarea } from "./ui/textarea.js";
 import { ScrollArea } from "./ui/scroll-area.js";
 import { Badge } from "./ui/badge.js";
 import { cn } from "./ui/utils.js";
-import { buildConversationTranscriptState, decideTranscriptFollowUp } from "../../dashboard-model.js";
+import { buildConversationRunActivityListState, buildConversationThinkingState, buildConversationTranscriptState, buildTranscriptMessagePresentation, decideTranscriptFollowUp } from "../../dashboard-model.js";
 import type { RootLayoutContext } from "../types.js";
-import type { Message } from "../../../../../packages/shared/src/contracts.js";
+import type { Message, Run } from "../../../../../packages/shared/src/contracts.js";
+
+export function scrollTranscriptViewportToBottom(viewport: Pick<HTMLDivElement, "scrollTop" | "scrollHeight">) {
+  viewport.scrollTop = viewport.scrollHeight;
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+  }
+}
 
 export function ChatView({
   conversationState,
@@ -20,6 +29,8 @@ export function ChatView({
   isRightSidebarOpen,
 }: Pick<RootLayoutContext, "conversationState" | "selectedConversation" | "onSendMessage" | "isLoading" | "onToggleLeftSidebar" | "onToggleRightSidebar" | "isLeftSidebarOpen" | "isRightSidebarOpen">) {
   const [input, setInput] = useState("");
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [thinkingNow, setThinkingNow] = useState(() => Date.now());
   const scrollRef = useRef<HTMLDivElement>(null);
   const previousTranscriptRef = useRef<{
     conversationId?: string;
@@ -28,11 +39,35 @@ export function ChatView({
     latestMessageContent?: string;
   } | null>(null);
   const messages = conversationState?.messages || [];
+  const runs = conversationState?.runs ?? [];
+  const visibleMessages = useMemo(() => selectVisibleTranscriptMessages(messages, runs), [messages, runs]);
   const transcriptState = buildConversationTranscriptState({
-    messages,
-    runs: conversationState?.runs ?? [],
+    messages: visibleMessages,
+    runs,
     hasUnreadLatestMessages: false,
   });
+  const thinkingState = buildConversationThinkingState({
+    runs,
+    messages,
+    now: thinkingNow,
+  });
+  const runActivityState = buildConversationRunActivityListState({
+    runActivities: conversationState?.runActivities ?? [],
+  });
+
+  useEffect(() => {
+    if (!thinkingState.visible) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setThinkingNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [thinkingState.visible, selectedConversation?.id]);
+
+  useEffect(() => {
+    setThinkingExpanded(false);
+  }, [selectedConversation?.id, thinkingState.runId]);
 
   useEffect(() => {
     const viewport = scrollRef.current?.querySelector<HTMLDivElement>("[data-slot='scroll-area-viewport']");
@@ -40,18 +75,18 @@ export function ChatView({
       return;
     }
 
-    const latestMessage = messages.at(-1);
+    const latestMessage = visibleMessages.at(-1);
     const nextTranscript = {
       conversationId: selectedConversation?.id,
-      messageCount: messages.length,
+      messageCount: visibleMessages.length,
       latestMessageId: latestMessage?.id,
       latestMessageContent: latestMessage?.content,
     };
     const previousTranscript = previousTranscriptRef.current;
 
     if (!previousTranscript) {
-      if (messages.length > 0) {
-        viewport.scrollTop = viewport.scrollHeight;
+      if (visibleMessages.length > 0) {
+        scrollTranscriptViewportToBottom(viewport);
       }
       previousTranscriptRef.current = nextTranscript;
       return;
@@ -59,7 +94,7 @@ export function ChatView({
 
     const changedConversation = previousTranscript.conversationId !== nextTranscript.conversationId;
     if (changedConversation) {
-      viewport.scrollTop = viewport.scrollHeight;
+      scrollTranscriptViewportToBottom(viewport);
       previousTranscriptRef.current = nextTranscript;
       return;
     }
@@ -71,14 +106,15 @@ export function ChatView({
         previousTranscript.latestMessageId !== nextTranscript.latestMessageId ||
         previousTranscript.latestMessageContent !== nextTranscript.latestMessageContent,
       isNearBottom: viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48,
+      hadMessagesBefore: previousTranscript.messageCount > 0,
     });
 
     if (followUp.shouldScrollToBottom) {
-      viewport.scrollTop = viewport.scrollHeight;
+      scrollTranscriptViewportToBottom(viewport);
     }
 
     previousTranscriptRef.current = nextTranscript;
-  }, [messages, selectedConversation?.id]);
+  }, [selectedConversation?.id, visibleMessages]);
 
   const handleSubmit = () => {
     if (input.trim() && !isLoading) {
@@ -89,6 +125,8 @@ export function ChatView({
 
   const title = selectedConversation?.title || "New Session";
   const statusLabel = selectedConversation?.status || "idle";
+  const showThinkingIndicator = isLoading || transcriptState.showTypingIndicator;
+  const showEmptyOnboarding = visibleMessages.length === 0 && !showThinkingIndicator;
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col bg-[#020617] h-full overflow-hidden text-gray-200">
@@ -114,7 +152,7 @@ export function ChatView({
       <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
         <div className="w-full flex flex-col pb-6 pt-4">
           <div className="max-w-3xl mx-auto w-full px-4 space-y-6">
-            {messages.length === 0 ? (
+            {showEmptyOnboarding ? (
               <div className="h-[50vh] flex flex-col items-center justify-center text-center opacity-80">
                 <div className="w-16 h-16 rounded-3xl bg-[#1e293b] flex items-center justify-center border border-[#334155] shadow-sm mb-6">
                   <span className="text-3xl leading-none">🦞</span>
@@ -123,20 +161,48 @@ export function ChatView({
                 <p className="text-[15px] text-gray-400">Send a message to start the conversation.</p>
               </div>
             ) : (
-              messages.map((message) => <MessageBubble key={message.id} message={message} />)
+              visibleMessages.map((message) => <MessageBubble key={message.id} message={message} />)
             )}
 
-            {(isLoading || transcriptState.showTypingIndicator) && (
+            {showThinkingIndicator && (
               <div className="flex gap-4 items-start pb-4">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center font-bold shadow-sm">
                   <span className="text-blue-400 text-sm leading-none">🦞</span>
                 </div>
                 <div className="flex-1 mt-1.5">
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-[#0f172a] border border-[#1e293b] px-3 py-2">
-                    <span className="h-2 w-2 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.3s]" />
-                    <span className="h-2 w-2 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.15s]" />
-                    <span className="h-2 w-2 rounded-full bg-blue-400 animate-bounce" />
-                  </div>
+                  {thinkingState.visible ? (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        data-testid="conversation-thinking-toggle"
+                        onClick={() => setThinkingExpanded((value) => !value)}
+                        className="inline-flex items-center gap-2 rounded-full border border-[#273244] bg-[#0f172a] px-3 py-2 text-sm text-gray-400 transition-colors hover:border-[#334155] hover:text-gray-300"
+                      >
+                        {thinkingExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        <span>{thinkingState.label}</span>
+                      </button>
+                      {thinkingExpanded && (
+                        <div className="space-y-2">
+                          <div className="rounded-2xl border border-[#1e293b] bg-[#0b1220] px-4 py-3 text-sm text-gray-400">
+                            <div className="space-y-1 whitespace-pre-wrap break-words">
+                              {thinkingState.details.map((detail) => (
+                                <div key={detail}>{detail}</div>
+                              ))}
+                            </div>
+                          </div>
+                          {runActivityState.activities.map((activity) => (
+                            <ToolActivityDisclosure key={activity.id} label={activity.label} details={activity.details} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 rounded-full bg-[#0f172a] border border-[#1e293b] px-3 py-2">
+                      <span className="h-2 w-2 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.3s]" />
+                      <span className="h-2 w-2 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.15s]" />
+                      <span className="h-2 w-2 rounded-full bg-blue-400 animate-bounce" />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -176,8 +242,35 @@ export function ChatView({
   );
 }
 
+function ToolActivityDisclosure({ label, details }: { label: string; details: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="inline-flex items-center gap-2 rounded-full border border-[#273244] bg-[#0f172a] px-3 py-2 text-sm text-gray-400 transition-colors hover:border-[#334155] hover:text-gray-300"
+      >
+        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <span>{label}</span>
+      </button>
+      {expanded && (
+        <div className="rounded-2xl border border-[#1e293b] bg-[#0b1220] px-4 py-3 text-sm text-gray-400">
+          <div className="space-y-1 whitespace-pre-wrap break-words">
+            {details.map((detail) => (
+              <div key={detail}>{detail}</div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
+  const presentation = buildTranscriptMessagePresentation(message);
 
   return (
     <div className={cn("flex w-full gap-4", isUser ? "justify-end" : "justify-start")}>
@@ -186,26 +279,193 @@ function MessageBubble({ message }: { message: Message }) {
           <span className="text-gray-100 text-sm leading-none">🦞</span>
         </div>
       )}
-      
+
       <div className={cn(
         "flex flex-col max-w-[80%]",
-        isUser ? "items-end" : "items-start"
+        isUser ? "items-end" : "items-start",
       )}>
         {message.runId && !isUser && (
           <div className="mb-1 px-1">
-            <Badge className="bg-slate-800/50 hover:bg-slate-800/50 text-[10px] px-1.5 py-0 text-gray-400">run</Badge>
+            <Badge className="bg-slate-800/50 hover:bg-slate-800/50 text-[10px] px-1.5 py-0 text-gray-400">{presentation.roleLabel}</Badge>
           </div>
         )}
-        
+
         <div className={cn(
-          "text-[15px] leading-relaxed whitespace-pre-wrap break-words px-5 py-3 shadow-sm",
-          isUser 
-            ? "bg-[#2563eb] text-white rounded-3xl rounded-tr-md" 
-            : "bg-transparent text-gray-200 px-0 shadow-none pt-1"
+          "text-[15px] leading-relaxed break-words px-5 py-3 shadow-sm [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l [&_blockquote]:border-[#334155] [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-black/20 [&_code]:px-1.5 [&_code]:py-0.5 [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mb-2 [&_li]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-1 [&_p]:my-0 [&_pre]:overflow-x-auto [&_pre]:rounded-2xl [&_pre]:bg-[#0b1220] [&_pre]:px-4 [&_pre]:py-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_ul]:list-disc [&_ul]:space-y-1",
+          isUser
+            ? "bg-[#2563eb] text-white rounded-3xl rounded-tr-md [&_code]:bg-white/15 [&_pre]:bg-blue-950/60"
+            : "bg-transparent text-gray-200 px-0 shadow-none pt-1",
         )}>
-          {message.content}
+          <div dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(message.content) }} />
         </div>
       </div>
     </div>
   );
+}
+
+function isPlainHumanFacingAgentMessage(message: Pick<Message, "role" | "kind">) {
+  return message.role === "agent" && (message.kind === undefined || message.kind === "default");
+}
+
+function selectVisibleTranscriptMessages(messages: Message[], runs: Run[]) {
+  const runsById = new Map(runs.map((run) => [run.id, run]));
+  const latestAgentMessageIdByRun = new Map<string, string>();
+  const latestPlainAgentMessageIdByRun = new Map<string, string>();
+
+  for (const message of messages) {
+    if (message.role === "agent" && message.runId) {
+      latestAgentMessageIdByRun.set(message.runId, message.id);
+      if (isPlainHumanFacingAgentMessage(message)) {
+        latestPlainAgentMessageIdByRun.set(message.runId, message.id);
+      }
+    }
+  }
+
+  function hasLaterPlainAgentReplyBeforeNextUser(currentIndex: number) {
+    for (let index = currentIndex + 1; index < messages.length; index += 1) {
+      const nextMessage = messages[index];
+      if (!nextMessage) continue;
+      if (nextMessage.role === "user") {
+        return false;
+      }
+      if (isPlainHumanFacingAgentMessage(nextMessage)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return messages.filter((message, index) => {
+    if (message.kind === "orchestration_update" || message.kind === "orchestration_final") {
+      return false;
+    }
+
+    if (message.role !== "agent" || !message.runId) {
+      return true;
+    }
+
+    const run = runsById.get(message.runId);
+    if (run && run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled") {
+      return false;
+    }
+
+    if (hasLaterPlainAgentReplyBeforeNextUser(index)) {
+      return false;
+    }
+
+    const preferredVisibleMessageId = latestPlainAgentMessageIdByRun.get(message.runId)
+      ?? latestAgentMessageIdByRun.get(message.runId);
+
+    return preferredVisibleMessageId === message.id;
+  });
+}
+
+function renderMarkdownToHtml(markdown: string) {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !(lines[index] ?? "").trim().startsWith("```")) {
+        codeLines.push(escapeHtml(lines[index] ?? ""));
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (index < lines.length && /^[-*]\s+/.test((lines[index] ?? "").trim())) {
+        items.push(`<li>${renderInlineMarkdown((lines[index] ?? "").trim().replace(/^[-*]\s+/, ""))}</li>`);
+        index += 1;
+      }
+      blocks.push(`<ul>${items.join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (index < lines.length && /^\d+\.\s+/.test((lines[index] ?? "").trim())) {
+        items.push(`<li>${renderInlineMarkdown((lines[index] ?? "").trim().replace(/^\d+\.\s+/, ""))}</li>`);
+        index += 1;
+      }
+      blocks.push(`<ol>${items.join("")}</ol>`);
+      continue;
+    }
+
+    if (trimmed.startsWith(">")) {
+      const quoteLines: string[] = [];
+      while (index < lines.length && (lines[index] ?? "").trim().startsWith(">")) {
+        quoteLines.push(renderInlineMarkdown((lines[index] ?? "").trim().replace(/^>\s?/, "")));
+        index += 1;
+      }
+      blocks.push(`<blockquote>${quoteLines.join("<br />")}</blockquote>`);
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (
+      index < lines.length &&
+      (lines[index] ?? "").trim() &&
+      !/^(#{1,6})\s+/.test((lines[index] ?? "").trim()) &&
+      !(lines[index] ?? "").trim().startsWith("```") &&
+      !/^[-*]\s+/.test((lines[index] ?? "").trim()) &&
+      !/^\d+\.\s+/.test((lines[index] ?? "").trim()) &&
+      !(lines[index] ?? "").trim().startsWith(">")
+    ) {
+      paragraphLines.push(renderInlineMarkdown((lines[index] ?? "").trim()));
+      index += 1;
+    }
+    blocks.push(`<p>${paragraphLines.join("<br />")}</p>`);
+  }
+
+  return blocks.join("");
+}
+
+function renderInlineMarkdown(content: string) {
+  const tokens: string[] = [];
+  let html = escapeHtml(content).replace(/`([^`]+)`/g, (_, code: string) => {
+    const token = `__PINCHY_CODE_${tokens.length}__`;
+    tokens.push(`<code>${code}</code>`);
+    return token;
+  });
+
+  html = html
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+
+  return tokens.reduce((result, token, index) => result.replace(`__PINCHY_CODE_${index}__`, token), html);
+}
+
+function escapeHtml(content: string) {
+  return content
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }

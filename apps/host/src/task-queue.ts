@@ -24,7 +24,7 @@ export function saveTasks(cwd: string, tasks: PinchyTask[]) {
   writeFileSync(path, JSON.stringify(tasks, null, 2), "utf8");
 }
 
-type EnqueueTaskOptions = Partial<Pick<PinchyTask, "source" | "conversationId" | "runId" | "dependsOnTaskIds">>;
+type EnqueueTaskOptions = Partial<Pick<PinchyTask, "source" | "conversationId" | "runId" | "executionRunId" | "dependsOnTaskIds">>;
 
 type DelegationPlanTaskInput = {
   id?: string;
@@ -32,6 +32,8 @@ type DelegationPlanTaskInput = {
   prompt: string;
   dependsOn?: string[];
 };
+
+export type TaskReprioritizationDirection = "up" | "down" | "top" | "bottom";
 
 function createTaskRecord(input: {
   title: string;
@@ -49,6 +51,7 @@ function createTaskRecord(input: {
     source: input.options?.source,
     conversationId: input.options?.conversationId,
     runId: input.options?.runId,
+    executionRunId: input.options?.executionRunId,
     dependsOnTaskIds: input.options?.dependsOnTaskIds?.filter(Boolean),
   };
 }
@@ -101,6 +104,8 @@ export function enqueueDelegationPlan(
   }).map(({ input, created }, index) => ({
     ...created,
     dependsOnTaskIds: (input.dependsOn ?? [])
+      .map((dependencyId) => dependencyId.trim())
+      .filter(Boolean)
       .map((dependencyId) => localIdToTaskId.get(dependencyId))
       .filter((value): value is string => Boolean(value)),
   } satisfies PinchyTask));
@@ -109,7 +114,7 @@ export function enqueueDelegationPlan(
   return createdTasks;
 }
 
-export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["status"], patch: Partial<Pick<PinchyTask, "conversationId" | "runId">> = {}): PinchyTask | undefined {
+export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["status"], patch: Partial<Pick<PinchyTask, "conversationId" | "runId" | "executionRunId">> = {}): PinchyTask | undefined {
   const tasks = loadTasks(cwd);
   const match = tasks.find((task) => task.id === id);
   if (!match) return undefined;
@@ -117,18 +122,61 @@ export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["st
   match.updatedAt = new Date().toISOString();
   match.conversationId = patch.conversationId ?? match.conversationId;
   match.runId = patch.runId ?? match.runId;
+  match.executionRunId = patch.executionRunId ?? match.executionRunId;
   saveTasks(cwd, tasks);
   return match;
 }
 
-export function updateTaskStatusByRunId(cwd: string, runId: string, status: PinchyTask["status"]): PinchyTask | undefined {
+export function updateTaskStatusByExecutionRunId(cwd: string, runId: string, status: PinchyTask["status"]): PinchyTask | undefined {
   const tasks = loadTasks(cwd);
-  const match = tasks.find((task) => task.runId === runId);
+  const match = tasks.find((task) => task.executionRunId === runId);
   if (!match) return undefined;
   match.status = status;
   match.updatedAt = new Date().toISOString();
   saveTasks(cwd, tasks);
   return match;
+}
+
+export function reprioritizeTask(cwd: string, id: string, direction: TaskReprioritizationDirection): PinchyTask | undefined {
+  const tasks = loadTasks(cwd);
+  const index = tasks.findIndex((task) => task.id === id);
+  if (index < 0) return undefined;
+
+  const targetIndex = direction === "up"
+    ? Math.max(0, index - 1)
+    : direction === "down"
+      ? Math.min(tasks.length - 1, index + 1)
+      : direction === "top"
+        ? 0
+        : tasks.length - 1;
+  if (targetIndex === index) {
+    return tasks[index];
+  }
+
+  const [task] = tasks.splice(index, 1);
+  task.updatedAt = new Date().toISOString();
+  tasks.splice(targetIndex, 0, task);
+  saveTasks(cwd, tasks);
+  return task;
+}
+
+export function clearCompletedTasks(cwd: string): PinchyTask[] {
+  const tasks = loadTasks(cwd);
+  const removed = tasks.filter((task) => task.status === "done");
+  if (removed.length === 0) {
+    return [];
+  }
+  saveTasks(cwd, tasks.filter((task) => task.status !== "done"));
+  return removed;
+}
+
+export function deleteTask(cwd: string, id: string): PinchyTask | undefined {
+  const tasks = loadTasks(cwd);
+  const index = tasks.findIndex((task) => task.id === id);
+  if (index < 0) return undefined;
+  const [deleted] = tasks.splice(index, 1);
+  saveTasks(cwd, tasks);
+  return deleted;
 }
 
 export function getNextPendingTask(cwd: string): PinchyTask | undefined {

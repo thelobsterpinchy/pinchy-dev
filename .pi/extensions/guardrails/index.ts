@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import { isTestLikePath, shouldEnforceTddForPath } from "../../../apps/host/src/engineering-policy.js";
 import { assessUserRequestTasks } from "../../../apps/host/src/orchestration-policy.js";
+import { loadPinchyRuntimeConfig } from "../../../apps/host/src/runtime-config.js";
 
 const BLOCKED_BASH_PATTERNS = [
   /rm\s+-rf\s+\//,
@@ -29,6 +30,9 @@ const PROTECTED_PATH_PATTERNS = [
   /auth\.json$/,
 ];
 
+const DEFAULT_TOOL_RETRY_WARNING_THRESHOLD = 5;
+const DEFAULT_TOOL_RETRY_HARD_STOP_THRESHOLD = 10;
+
 function isProtectedPath(path: string) {
   return PROTECTED_PATH_PATTERNS.some((pattern) => pattern.test(path));
 }
@@ -37,15 +41,45 @@ function shouldRemindAboutTests(path: string) {
   return !/(test|spec|fixture|snapshot)/i.test(path);
 }
 
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerialize(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function buildToolRetrySignature(event: { toolName?: string; input?: unknown }) {
+  if (!event.toolName) return undefined;
+  return `${event.toolName}:${stableSerialize(event.input ?? null)}`;
+}
+
+function readToolRetryThresholds(cwd: string) {
+  const runtimeConfig = loadPinchyRuntimeConfig(cwd);
+  return {
+    warningThreshold: runtimeConfig.toolRetryWarningThreshold ?? DEFAULT_TOOL_RETRY_WARNING_THRESHOLD,
+    hardStopThreshold: runtimeConfig.toolRetryHardStopThreshold ?? DEFAULT_TOOL_RETRY_HARD_STOP_THRESHOLD,
+  };
+}
+
 export default function guardrails(pi: ExtensionAPI) {
   let hasTouchedTestsThisSession = false;
   let currentTurnRequiresDelegation = false;
   let delegationStartedThisTurn = false;
+  let lastToolRetrySignature: string | undefined;
+  let lastToolRetryCount = 0;
 
   pi.on("session_start", async () => {
     hasTouchedTestsThisSession = false;
     currentTurnRequiresDelegation = false;
     delegationStartedThisTurn = false;
+    lastToolRetrySignature = undefined;
+    lastToolRetryCount = 0;
   });
 
   pi.on("message_start", async (event) => {
@@ -55,6 +89,8 @@ export default function guardrails(pi: ExtensionAPI) {
     const assessment = assessUserRequestTasks((message as { content: string }).content);
     currentTurnRequiresDelegation = assessment.requiresDelegation;
     delegationStartedThisTurn = false;
+    lastToolRetrySignature = undefined;
+    lastToolRetryCount = 0;
   });
 
   pi.on("before_agent_start", async (event) => {
@@ -67,6 +103,7 @@ Engineering Guardrails:
 - Use /skill:tdd-implementation for behavior changes and /skill:design-pattern-review or /skill:engineering-excellence for structural changes.
 - Keep code clean: small focused functions, explicit names, cohesive modules, clear boundaries, and composition over unnecessary inheritance.
 - Prefer the lightest design pattern that solves the real problem. Avoid speculative abstractions.
+- Stay in the orchestration layer for coding work; delegate coding changes to a subagent first, even for a single change when practical.
 - Do not bypass quality checks with shortcuts like broad eslint disables or ts-ignore unless explicitly justified.
 - If tests are impractical, explain why before changing implementation code.
 - Do not access secrets or protected files.
@@ -78,6 +115,30 @@ Engineering Guardrails:
   pi.on("tool_call", async (event, ctx) => {
     if (event?.toolName === "delegate_task_plan" || event?.toolName === "queue_task") {
       delegationStartedThisTurn = true;
+    }
+
+    const toolRetrySignature = buildToolRetrySignature(event ?? {});
+    if (toolRetrySignature && toolRetrySignature === lastToolRetrySignature) {
+      lastToolRetryCount += 1;
+    } else {
+      lastToolRetrySignature = toolRetrySignature;
+      lastToolRetryCount = toolRetrySignature ? 1 : 0;
+    }
+
+    const { warningThreshold, hardStopThreshold } = readToolRetryThresholds(ctx.cwd);
+
+    if (toolRetrySignature && lastToolRetryCount === warningThreshold) {
+      ctx.ui.notify(
+        `Tool retry penalty warning: ${event.toolName} has been called ${warningThreshold} times with the same input in this turn. Reassess before continuing to retry the same action.`,
+        "warning",
+      );
+    }
+
+    if (toolRetrySignature && lastToolRetryCount >= hardStopThreshold) {
+      return {
+        block: true,
+        reason: `Tool retry penalty: ${event.toolName} was called ${hardStopThreshold} times with the same input in this turn. Reassess the approach before retrying again.`,
+      };
     }
 
     if (isToolCallEventType("bash", event)) {

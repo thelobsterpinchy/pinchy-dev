@@ -22,7 +22,7 @@ test("buildPinchyDoctorReport flags missing workspace initialization and optiona
   assert.match(tesseractCheck?.hint ?? "", /brew install tesseract/);
 });
 
-test("buildPinchyDoctorReport detects Playwright and local model readiness", () => {
+test("buildPinchyDoctorReport warns when the Playwright CLI exists but the Chromium browser binary is missing", () => {
   const existingPaths = new Set([
     "/tmp/project/.pi/settings.json",
     "/tmp/project/.pinchy-runtime.json",
@@ -34,6 +34,30 @@ test("buildPinchyDoctorReport detects Playwright and local model readiness", () 
   const report = buildPinchyDoctorReport("/tmp/project", {
     pathExists: (path) => existingPaths.has(path),
     commandExists: (command) => ["git", "ollama"].includes(command),
+    resolvePlaywrightBrowserPath: () => "/Users/example/Library/Caches/ms-playwright/chromium/chrome",
+  });
+
+  const playwrightCheck = report.checks.find((check) => check.name === "playwright_chromium");
+  assert.equal(playwrightCheck?.status, "warn");
+  assert.match(playwrightCheck?.message ?? "", /browser binaries are missing/i);
+  assert.match(playwrightCheck?.hint ?? "", /playwright:install/);
+  assert.equal(report.checks.find((check) => check.name === "local_models")?.status, "ok");
+});
+
+test("buildPinchyDoctorReport detects Playwright browser readiness when the CLI and Chromium binary are both available", () => {
+  const existingPaths = new Set([
+    "/tmp/project/.pi/settings.json",
+    "/tmp/project/.pinchy-runtime.json",
+    "/tmp/project/.pinchy-goals.json",
+    "/tmp/project/.pinchy-watch.json",
+    "/tmp/project/node_modules/.bin/playwright",
+    "/Users/example/Library/Caches/ms-playwright/chromium/chrome",
+  ]);
+
+  const report = buildPinchyDoctorReport("/tmp/project", {
+    pathExists: (path) => existingPaths.has(path),
+    commandExists: (command) => ["git", "ollama"].includes(command),
+    resolvePlaywrightBrowserPath: () => "/Users/example/Library/Caches/ms-playwright/chromium/chrome",
   });
 
   assert.equal(report.checks.find((check) => check.name === "playwright_chromium")?.status, "ok");
@@ -47,11 +71,13 @@ test("buildPinchyDoctorReport reports a healthy initialized workspace when core 
     "/tmp/project/.pinchy-goals.json",
     "/tmp/project/.pinchy-watch.json",
     "/tmp/project/node_modules/.bin/playwright",
+    "/Users/example/Library/Caches/ms-playwright/chromium/chrome",
   ]);
 
   const report = buildPinchyDoctorReport("/tmp/project", {
     pathExists: (path) => existingPaths.has(path),
     commandExists: (command) => ["git", "cliclick", "tesseract", "ollama"].includes(command),
+    resolvePlaywrightBrowserPath: () => "/Users/example/Library/Caches/ms-playwright/chromium/chrome",
   });
 
   assert.equal(report.summary.status, "ok");

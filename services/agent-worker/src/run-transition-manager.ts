@@ -1,4 +1,4 @@
-import { appendMessage, createQuestion, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
+import { appendMessage, createQuestion, getRunById, hasConversation, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import type { RunOutcome } from "./run-outcomes.js";
 
@@ -9,6 +9,10 @@ type ApplyRunOutcomeArgs = {
 };
 
 export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
+  if (!hasConversation(cwd, run.conversationId) || !getRunById(cwd, run.id)) {
+    return undefined;
+  }
+
   switch (outcome.kind) {
     case "completed": {
       const completed = updateRunStatus(cwd, run.id, "completed", {

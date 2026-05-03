@@ -5,7 +5,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import chokidar from "chokidar";
 import { resolve } from "node:path";
-import { getNextPendingTask, updateTaskStatus } from "./task-queue.js";
+import { getNextPendingTask, getTasksPath, updateTaskStatus } from "./task-queue.js";
 import { loadDaemonGoalsConfig } from "./daemon-config.js";
 import { shouldRunAsCliEntry } from "./module-entry.js";
 import { loadIterationConfig } from "./iteration-config.js";
@@ -14,7 +14,7 @@ import { buildStackAwareIterationGuidance } from "./stack-prompts.js";
 import { createRunContext } from "./run-context.js";
 import { appendRunHistory } from "./run-history.js";
 import { updateDaemonHealth } from "./daemon-health.js";
-import { consumeNextReloadRequest } from "./reload-requests.js";
+import { consumeNextReloadRequest, getPendingReloadRequests } from "./reload-requests.js";
 import { enqueueAutonomousGoalRun, enqueueIterationRun, enqueueQueuedTaskRun, enqueueWatcherFollowUpRun } from "./run-enqueue.js";
 import { loadWatchConfig } from "./watch-config.js";
 import { applyAutoDeleteRetention } from "./auto-delete-retention.js";
@@ -56,6 +56,20 @@ type PendingTaskRunDependencies = {
   enqueueTaskRun: (cwd: string, input: { title: string; prompt: string }) => ReturnType<typeof enqueueQueuedTaskRun> | Promise<ReturnType<typeof enqueueQueuedTaskRun>>;
 };
 
+type ReloadSession = {
+  prompt: (text: string) => Promise<unknown>;
+  followUp?: (text: string) => Promise<unknown>;
+};
+
+type SleepUntilDueDependencies = {
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  hasPendingTask?: (cwd: string) => boolean;
+  hasPendingReloadRequest?: (cwd: string) => boolean;
+  consumePendingTaskWakeSignal?: () => boolean;
+  pollMs?: number;
+};
+
 export async function processNextPendingTaskRun(cwd: string, dependencies: PendingTaskRunDependencies = { enqueueTaskRun: enqueueQueuedTaskRun }) {
   const task = getNextPendingTask(cwd);
   if (!task) return undefined;
@@ -72,8 +86,9 @@ export async function processNextPendingTaskRun(cwd: string, dependencies: Pendi
       prompt: task.prompt,
     });
     updateTaskStatus(cwd, task.id, "running", {
-      conversationId: scheduled.conversation.id,
-      runId: scheduled.run.id,
+      conversationId: task.conversationId ?? scheduled.conversation.id,
+      runId: task.runId ?? scheduled.run.id,
+      executionRunId: scheduled.run.id,
     });
     appendRunHistory(cwd, { kind: "task", label: task.title, status: "completed", details: `queued run ${scheduled.run.id}` });
     updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString() });
@@ -105,6 +120,50 @@ export async function processPendingTaskRuns(
   return scheduled;
 }
 
+export async function sleepUntilDueOrWorkAvailable(cwd: string, dueAtMs: number, dependencies: SleepUntilDueDependencies = {}) {
+  const now = dependencies.now ?? (() => Date.now());
+  const sleeper = dependencies.sleep ?? sleep;
+  const hasPendingTask = dependencies.hasPendingTask ?? ((currentCwd: string) => Boolean(getNextPendingTask(currentCwd)));
+  const hasPendingReloadRequest = dependencies.hasPendingReloadRequest ?? ((currentCwd: string) => getPendingReloadRequests(currentCwd).length > 0);
+  const consumePendingTaskWakeSignal = dependencies.consumePendingTaskWakeSignal ?? (() => false);
+  const pollMs = Math.max(50, Math.floor(dependencies.pollMs ?? 250));
+
+  while (true) {
+    if (consumePendingTaskWakeSignal() || hasPendingTask(cwd) || hasPendingReloadRequest(cwd)) {
+      return "work_available" as const;
+    }
+
+    const remainingMs = dueAtMs - now();
+    if (remainingMs <= 0) {
+      return "due" as const;
+    }
+
+    await sleeper(Math.min(pollMs, remainingMs));
+  }
+}
+
+export async function processNextReloadRequest(cwd: string, session: ReloadSession) {
+  const reloadRequest = consumeNextReloadRequest(cwd);
+  if (!reloadRequest) return undefined;
+
+  const label = reloadRequest.toolName ? `reload:${reloadRequest.toolName}` : "reload:runtime";
+  createRunContext(cwd, label);
+  appendRunHistory(cwd, { kind: "reload", label, status: "started" });
+  updateDaemonHealth(cwd, { status: "running", currentActivity: label });
+  console.log(`[pinchy-daemon] processing reload request ${reloadRequest.id}`);
+
+  try {
+    await session.prompt("/reload-runtime");
+    appendRunHistory(cwd, { kind: "reload", label, status: "completed" });
+    updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString(), lastError: undefined });
+    return reloadRequest;
+  } catch (error) {
+    appendRunHistory(cwd, { kind: "reload", label, status: "failed", details: error instanceof Error ? error.message : String(error) });
+    updateDaemonHealth(cwd, { status: "error", currentActivity: label, lastError: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
+}
+
 async function main() {
   const cwd = process.env.PINCHY_CWD ?? process.cwd();
   updateDaemonHealth(cwd, { status: "starting", pid: process.pid, startedAt: new Date().toISOString(), currentActivity: "boot" });
@@ -132,15 +191,29 @@ async function main() {
     intervalMs = nextGoals.intervalMs;
     watchConfig = loadWatchConfig(cwd);
     iteration = buildIterationPrompt(cwd, 0);
+    nextIterationDueAt = Date.now();
+    nextGoalDueAt = Date.now();
     console.log(`[pinchy-daemon] reloaded config enabled=${goalsEnabled} goals=${goals.length} intervalMs=${intervalMs}`);
   });
 
   let watcherQueued = false;
   let watcherChangedFiles = new Set<string>();
   let watcherTimer: NodeJS.Timeout | undefined;
+  let nextIterationDueAt = Date.now();
+  let nextGoalDueAt = Date.now();
 
   const repoWatcher = chokidar.watch(watchConfig.watch.map((entry) => resolve(cwd, entry)), {
     ignoreInitial: true,
+  });
+  let taskWakeRequested = false;
+  const taskWatcher = chokidar.watch(getTasksPath(cwd), {
+    ignoreInitial: true,
+  });
+  taskWatcher.on("add", () => {
+    taskWakeRequested = true;
+  });
+  taskWatcher.on("change", () => {
+    taskWakeRequested = true;
   });
   const queueWatcherPrompt = (filePath: string) => {
     watcherChangedFiles.add(filePath.replace(`${cwd}/`, ""));
@@ -173,22 +246,8 @@ async function main() {
     while (true) {
       updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined });
       applyAutoDeleteRetention(cwd);
-      const reloadRequest = consumeNextReloadRequest(cwd);
+      const reloadRequest = await processNextReloadRequest(cwd, session);
       if (reloadRequest) {
-        const label = reloadRequest.toolName ? `reload:${reloadRequest.toolName}` : "reload:runtime";
-        createRunContext(cwd, label);
-        appendRunHistory(cwd, { kind: "reload", label, status: "started" });
-        updateDaemonHealth(cwd, { status: "running", currentActivity: label });
-        console.log(`[pinchy-daemon] processing reload request ${reloadRequest.id}`);
-        try {
-          await session.followUp("/reload-runtime");
-          appendRunHistory(cwd, { kind: "reload", label, status: "completed" });
-          updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString() });
-        } catch (error) {
-          appendRunHistory(cwd, { kind: "reload", label, status: "failed", details: error instanceof Error ? error.message : String(error) });
-          updateDaemonHealth(cwd, { status: "error", currentActivity: label, lastError: error instanceof Error ? error.message : String(error) });
-          throw error;
-        }
         await sleep(500);
         continue;
       }
@@ -203,40 +262,67 @@ async function main() {
 
       if (iteration.enabled && iterationCycle < iteration.maxCyclesPerRun) {
         const currentIteration = buildIterationPrompt(cwd, iterationCycle);
-        updateDaemonHealth(cwd, { status: "running", currentActivity: `iteration:${iterationCycle + 1}` });
-        console.log(`[pinchy-daemon] iteration-cycle=${iterationCycle + 1} intervalMs=${currentIteration.intervalMs}`);
-        enqueueIterationRun(cwd, {
-          cycle: iterationCycle + 1,
-          prompt: currentIteration.prompt,
-          validationCommand: currentIteration.validationCommand,
+        if (Date.now() >= nextIterationDueAt) {
+          updateDaemonHealth(cwd, { status: "running", currentActivity: `iteration:${iterationCycle + 1}` });
+          console.log(`[pinchy-daemon] iteration-cycle=${iterationCycle + 1} intervalMs=${currentIteration.intervalMs}`);
+          enqueueIterationRun(cwd, {
+            cycle: iterationCycle + 1,
+            prompt: currentIteration.prompt,
+            validationCommand: currentIteration.validationCommand,
+          });
+          updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString() });
+          iterationCycle += 1;
+          nextIterationDueAt = Date.now() + currentIteration.intervalMs;
+        }
+        await sleepUntilDueOrWorkAvailable(cwd, nextIterationDueAt, {
+          consumePendingTaskWakeSignal: () => {
+            const wakeRequested = taskWakeRequested;
+            taskWakeRequested = false;
+            return wakeRequested;
+          },
         });
-        updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString() });
-        iterationCycle += 1;
-        await sleep(currentIteration.intervalMs);
         continue;
       }
 
       iterationCycle = 0;
+      nextIterationDueAt = Math.max(nextIterationDueAt, Date.now() + iteration.intervalMs);
       if (!goalsEnabled) {
-        await sleep(intervalMs);
+        nextGoalDueAt = Math.max(nextGoalDueAt, Date.now() + intervalMs);
+        await sleepUntilDueOrWorkAvailable(cwd, nextGoalDueAt, {
+          consumePendingTaskWakeSignal: () => {
+            const wakeRequested = taskWakeRequested;
+            taskWakeRequested = false;
+            return wakeRequested;
+          },
+        });
         continue;
       }
 
-      const goal = goals[cycle % goals.length];
-      updateDaemonHealth(cwd, { status: "running", currentActivity: `goal:${cycle + 1}` });
-      console.log(`[pinchy-daemon] cycle=${cycle + 1} intervalMs=${intervalMs}`);
-      enqueueAutonomousGoalRun(cwd, {
-        cycle: cycle + 1,
-        goal,
-        watcherQueued,
+      if (Date.now() >= nextGoalDueAt) {
+        const goal = goals[cycle % goals.length];
+        updateDaemonHealth(cwd, { status: "running", currentActivity: `goal:${cycle + 1}` });
+        console.log(`[pinchy-daemon] cycle=${cycle + 1} intervalMs=${intervalMs}`);
+        enqueueAutonomousGoalRun(cwd, {
+          cycle: cycle + 1,
+          goal,
+          watcherQueued,
+        });
+        updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString() });
+        cycle += 1;
+        nextGoalDueAt = Date.now() + intervalMs;
+      }
+      await sleepUntilDueOrWorkAvailable(cwd, nextGoalDueAt, {
+        consumePendingTaskWakeSignal: () => {
+          const wakeRequested = taskWakeRequested;
+          taskWakeRequested = false;
+          return wakeRequested;
+        },
       });
-      updateDaemonHealth(cwd, { status: "idle", currentActivity: undefined, lastCompletedAt: new Date().toISOString() });
-      cycle += 1;
-      await sleep(intervalMs);
     }
   } finally {
     updateDaemonHealth(cwd, { status: "stopped", currentActivity: undefined });
     if (watcherTimer) clearTimeout(watcherTimer);
+    await taskWatcher.close();
     await repoWatcher.close();
     await configWatcher.close();
   }

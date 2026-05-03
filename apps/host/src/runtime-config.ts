@@ -6,13 +6,41 @@ export const THINKING_LEVELS = ["off", "low", "medium", "high"] as const;
 export type ThinkingLevel = typeof THINKING_LEVELS[number];
 export type RuntimeConfigSource = "env" | "workspace" | "pi-agent" | "unset";
 
+export type RuntimeModelOptions = {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  maxTokens?: number;
+  seed?: number;
+  stop?: string[];
+  repeatPenalty?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  contextWindow?: number;
+};
+
+export type SavedModelConfig = {
+  id: string;
+  name: string;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  thinkingLevel?: ThinkingLevel;
+  modelOptions?: RuntimeModelOptions;
+};
+
 export type PinchyRuntimeConfig = {
   defaultProvider?: string;
   defaultModel?: string;
   defaultThinkingLevel?: ThinkingLevel;
   defaultBaseUrl?: string;
+  modelOptions?: RuntimeModelOptions;
+  savedModelConfigs?: SavedModelConfig[];
   autoDeleteEnabled?: boolean;
   autoDeleteDays?: number;
+  toolRetryWarningThreshold?: number;
+  toolRetryHardStopThreshold?: number;
   dangerModeEnabled?: boolean;
 };
 
@@ -24,6 +52,8 @@ export type PinchyRuntimeConfigDetails = PinchyRuntimeConfig & {
     defaultBaseUrl: RuntimeConfigSource;
     autoDeleteEnabled: RuntimeConfigSource;
     autoDeleteDays: RuntimeConfigSource;
+    toolRetryWarningThreshold: RuntimeConfigSource;
+    toolRetryHardStopThreshold: RuntimeConfigSource;
     dangerModeEnabled: RuntimeConfigSource;
   };
 };
@@ -33,8 +63,12 @@ type RuntimeConfigFile = {
   defaultModel?: string;
   defaultThinkingLevel?: string;
   defaultBaseUrl?: string;
+  modelOptions?: unknown;
+  savedModelConfigs?: unknown;
   autoDeleteEnabled?: boolean;
   autoDeleteDays?: number;
+  toolRetryWarningThreshold?: number;
+  toolRetryHardStopThreshold?: number;
   dangerModeEnabled?: boolean;
 };
 
@@ -70,6 +104,84 @@ function normalizeOptionalPositiveInteger(value: number | undefined) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+function normalizeOptionalFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeOptionalStringArray(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .flatMap((entry) => typeof entry === "string" && entry.trim().length > 0 ? [entry] : []);
+  return items.length > 0 ? items : undefined;
+}
+
+export function normalizeRuntimeModelOptions(value: unknown): RuntimeModelOptions | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const normalized: RuntimeModelOptions = {};
+
+  const temperature = normalizeOptionalFiniteNumber(record.temperature);
+  if (temperature !== undefined) normalized.temperature = temperature;
+
+  const topP = normalizeOptionalFiniteNumber(record.topP);
+  if (topP !== undefined) normalized.topP = topP;
+
+  const topK = normalizeOptionalPositiveInteger(record.topK as number | undefined);
+  if (topK !== undefined) normalized.topK = topK;
+
+  const minP = normalizeOptionalFiniteNumber(record.minP);
+  if (minP !== undefined) normalized.minP = minP;
+
+  const maxTokens = normalizeOptionalPositiveInteger(record.maxTokens as number | undefined);
+  if (maxTokens !== undefined) normalized.maxTokens = maxTokens;
+
+  const seed = typeof record.seed === "number" && Number.isInteger(record.seed) ? record.seed : undefined;
+  if (seed !== undefined) normalized.seed = seed;
+
+  const stop = normalizeOptionalStringArray(record.stop);
+  if (stop !== undefined) normalized.stop = stop;
+
+  const repeatPenalty = normalizeOptionalFiniteNumber(record.repeatPenalty);
+  if (repeatPenalty !== undefined) normalized.repeatPenalty = repeatPenalty;
+
+  const frequencyPenalty = normalizeOptionalFiniteNumber(record.frequencyPenalty);
+  if (frequencyPenalty !== undefined) normalized.frequencyPenalty = frequencyPenalty;
+
+  const presencePenalty = normalizeOptionalFiniteNumber(record.presencePenalty);
+  if (presencePenalty !== undefined) normalized.presencePenalty = presencePenalty;
+
+  const contextWindow = normalizeOptionalPositiveInteger(record.contextWindow as number | undefined);
+  if (contextWindow !== undefined) normalized.contextWindow = contextWindow;
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function normalizeSavedModelConfigs(value: unknown): SavedModelConfig[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const configs = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    const id = normalizeOptionalString(typeof record.id === "string" ? record.id : undefined);
+    const name = normalizeOptionalString(typeof record.name === "string" ? record.name : undefined);
+    if (!id || !name) return [];
+
+    const config: SavedModelConfig = { id, name };
+    const provider = normalizeOptionalString(typeof record.provider === "string" ? record.provider : undefined);
+    if (provider !== undefined) config.provider = provider;
+    const model = normalizeOptionalString(typeof record.model === "string" ? record.model : undefined);
+    if (model !== undefined) config.model = model;
+    const baseUrl = normalizeOptionalString(typeof record.baseUrl === "string" ? record.baseUrl : undefined);
+    if (baseUrl !== undefined) config.baseUrl = baseUrl;
+    const thinkingLevel = normalizeThinkingLevel(typeof record.thinkingLevel === "string" ? record.thinkingLevel : undefined);
+    if (thinkingLevel !== undefined) config.thinkingLevel = thinkingLevel;
+    const modelOptions = normalizeRuntimeModelOptions(record.modelOptions);
+    if (modelOptions !== undefined) config.modelOptions = modelOptions;
+
+    return [config];
+  });
+  return configs;
+}
+
 function resolveConfigValue<T>(sources: Array<{ value: T | undefined; source: RuntimeConfigSource }>) {
   const match = sources.find((entry) => entry.value !== undefined);
   return {
@@ -84,29 +196,35 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
   const globalFile = loadJsonFile<RuntimeConfigFile>(globalSettingsPath) ?? {};
 
   const provider = resolveConfigValue<string>([
-    { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_PROVIDER), source: "env" },
     { value: normalizeOptionalString(workspaceFile.defaultProvider), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_PROVIDER), source: "env" },
     { value: normalizeOptionalString(globalFile.defaultProvider), source: "pi-agent" },
   ]);
   const model = resolveConfigValue<string>([
-    { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_MODEL), source: "env" },
     { value: normalizeOptionalString(workspaceFile.defaultModel), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_MODEL), source: "env" },
     { value: normalizeOptionalString(globalFile.defaultModel), source: "pi-agent" },
   ]);
   const thinking = resolveConfigValue<ThinkingLevel>([
-    { value: normalizeThinkingLevel(process.env.PINCHY_DEFAULT_THINKING_LEVEL), source: "env" },
     { value: normalizeThinkingLevel(workspaceFile.defaultThinkingLevel), source: "workspace" },
+    { value: normalizeThinkingLevel(process.env.PINCHY_DEFAULT_THINKING_LEVEL), source: "env" },
     { value: normalizeThinkingLevel(globalFile.defaultThinkingLevel), source: "pi-agent" },
   ]);
   const baseUrl = resolveConfigValue<string>([
-    { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_BASE_URL), source: "env" },
     { value: normalizeOptionalString(workspaceFile.defaultBaseUrl), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_DEFAULT_BASE_URL), source: "env" },
   ]);
   const autoDeleteEnabled = resolveConfigValue<boolean>([
     { value: normalizeOptionalBoolean(workspaceFile.autoDeleteEnabled), source: "workspace" },
   ]);
   const autoDeleteDays = resolveConfigValue<number>([
     { value: normalizeOptionalPositiveInteger(workspaceFile.autoDeleteDays), source: "workspace" },
+  ]);
+  const toolRetryWarningThreshold = resolveConfigValue<number>([
+    { value: normalizeOptionalPositiveInteger(workspaceFile.toolRetryWarningThreshold), source: "workspace" },
+  ]);
+  const toolRetryHardStopThreshold = resolveConfigValue<number>([
+    { value: normalizeOptionalPositiveInteger(workspaceFile.toolRetryHardStopThreshold), source: "workspace" },
   ]);
   const dangerModeEnabled = resolveConfigValue<boolean>([
     { value: normalizeOptionalBoolean(workspaceFile.dangerModeEnabled), source: "workspace" },
@@ -117,8 +235,12 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     defaultModel: model.value,
     defaultThinkingLevel: thinking.value,
     defaultBaseUrl: baseUrl.value,
+    modelOptions: normalizeRuntimeModelOptions(workspaceFile.modelOptions),
+    savedModelConfigs: normalizeSavedModelConfigs(workspaceFile.savedModelConfigs),
     autoDeleteEnabled: autoDeleteEnabled.value,
     autoDeleteDays: autoDeleteDays.value,
+    toolRetryWarningThreshold: toolRetryWarningThreshold.value,
+    toolRetryHardStopThreshold: toolRetryHardStopThreshold.value,
     dangerModeEnabled: dangerModeEnabled.value,
     sources: {
       defaultProvider: provider.source,
@@ -127,6 +249,8 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
       defaultBaseUrl: baseUrl.source,
       autoDeleteEnabled: autoDeleteEnabled.source,
       autoDeleteDays: autoDeleteDays.source,
+      toolRetryWarningThreshold: toolRetryWarningThreshold.source,
+      toolRetryHardStopThreshold: toolRetryHardStopThreshold.source,
       dangerModeEnabled: dangerModeEnabled.source,
     },
   };
@@ -139,8 +263,12 @@ export function loadPinchyRuntimeConfig(cwd: string, options: RuntimeConfigLoadO
     defaultModel: details.defaultModel,
     defaultThinkingLevel: details.defaultThinkingLevel,
     defaultBaseUrl: details.defaultBaseUrl,
+    modelOptions: details.modelOptions,
+    savedModelConfigs: details.savedModelConfigs,
     autoDeleteEnabled: details.autoDeleteEnabled,
     autoDeleteDays: details.autoDeleteDays,
+    toolRetryWarningThreshold: details.toolRetryWarningThreshold,
+    toolRetryHardStopThreshold: details.toolRetryHardStopThreshold,
     dangerModeEnabled: details.dangerModeEnabled,
   };
 }

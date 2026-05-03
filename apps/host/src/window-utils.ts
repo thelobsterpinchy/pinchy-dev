@@ -11,6 +11,23 @@ export type WindowBounds = {
   height: number;
 };
 
+export function parseWindowBoundsOutput(stdout: string): WindowBounds | undefined {
+  const [resolvedAppName, x, y, width, height, ...extra] = stdout.trim().split("|");
+  if (!resolvedAppName || extra.length > 0) return undefined;
+
+  const numericValues = [x, y, width, height].map((value) => Number(value));
+  if (numericValues.some((value) => !Number.isFinite(value))) return undefined;
+
+  const [parsedX, parsedY, parsedWidth, parsedHeight] = numericValues;
+  return {
+    appName: resolvedAppName,
+    x: parsedX,
+    y: parsedY,
+    width: parsedWidth,
+    height: parsedHeight,
+  };
+}
+
 export async function getFrontWindowBounds(appName?: string): Promise<WindowBounds | undefined> {
   const targetClause = appName
     ? `whose frontmost is true and name is ${JSON.stringify(appName)}`
@@ -27,14 +44,7 @@ export async function getFrontWindowBounds(appName?: string): Promise<WindowBoun
 
   try {
     const { stdout } = await execFileAsync("osascript", ["-e", script]);
-    const [resolvedAppName, x, y, width, height] = stdout.trim().split("|");
-    return {
-      appName: resolvedAppName,
-      x: Number(x),
-      y: Number(y),
-      width: Number(width),
-      height: Number(height),
-    };
+    return parseWindowBoundsOutput(stdout);
   } catch {
     return undefined;
   }

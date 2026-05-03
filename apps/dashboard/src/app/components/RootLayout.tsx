@@ -22,6 +22,11 @@ import {
   reloadRuntime,
   replyToQuestion,
   setActiveWorkspace,
+  steerAgentRun,
+  queueAgentFollowUp,
+  reprioritizeTask,
+  clearCompletedTasks,
+  deleteTask,
   submitAgentGuidance,
   submitPromptToConversation,
   updateMemory,
@@ -216,6 +221,18 @@ export function RootLayout() {
       await queueManualTask(input);
       await refreshAll();
     },
+    onDeleteTask: async (taskId) => {
+      await deleteTask(taskId);
+      await refreshAll();
+    },
+    onClearCompletedTasks: async () => {
+      await clearCompletedTasks();
+      await refreshAll();
+    },
+    onReprioritizeTask: async (input) => {
+      await reprioritizeTask(input);
+      await refreshAll();
+    },
     onCancelRun: async (runId) => {
       await cancelRun(runId);
       await refreshAll();
@@ -239,6 +256,20 @@ export function RootLayout() {
     artifacts: state?.artifacts ?? [],
     onSubmitAgentGuidance: async (input) => {
       await submitAgentGuidance(input);
+      await refreshAll();
+      if (conversationId) {
+        await loadConversation(conversationId);
+      }
+    },
+    onSteerAgentRun: async (input) => {
+      await steerAgentRun(input);
+      await refreshAll();
+      if (conversationId) {
+        await loadConversation(conversationId);
+      }
+    },
+    onQueueAgentFollowUp: async (input) => {
+      await queueAgentFollowUp(input);
       await refreshAll();
       if (conversationId) {
         await loadConversation(conversationId);

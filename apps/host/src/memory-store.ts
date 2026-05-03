@@ -26,12 +26,41 @@ function sortEntries(entries: SavedMemory[]) {
   });
 }
 
+function normalizeLoadedMemoryEntry(entry: unknown): SavedMemory | undefined {
+  if (!entry || typeof entry !== "object") return undefined;
+
+  const record = entry as Partial<SavedMemory> & { tags?: unknown };
+  if (!isMemoryKind(record.kind)) return undefined;
+  if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.content !== "string") {
+    return undefined;
+  }
+  if (typeof record.createdAt !== "string" || typeof record.updatedAt !== "string") {
+    return undefined;
+  }
+
+  return {
+    id: record.id,
+    title: record.title,
+    content: record.content,
+    kind: record.kind,
+    tags: Array.isArray(record.tags)
+      ? record.tags.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean)
+      : [],
+    pinned: record.pinned === true,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    sourceConversationId: typeof record.sourceConversationId === "string" ? record.sourceConversationId : undefined,
+    sourceRunId: typeof record.sourceRunId === "string" ? record.sourceRunId : undefined,
+  };
+}
+
 export function loadMemoryEntries(cwd: string): SavedMemory[] {
   const path = getMemoryPath(cwd);
   if (!existsSync(path)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as SavedMemory[];
-    return sortEntries(parsed.filter((entry) => isMemoryKind(entry.kind)));
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return sortEntries(parsed.map((entry) => normalizeLoadedMemoryEntry(entry)).filter((entry): entry is SavedMemory => Boolean(entry)));
   } catch {
     return [];
   }

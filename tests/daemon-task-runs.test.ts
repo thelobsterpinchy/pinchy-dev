@@ -39,6 +39,39 @@ test("processNextPendingTaskRun enqueues the next pending task as a persistent r
     assert.equal(tasks[0]?.status, "running");
     assert.equal(tasks[0]?.conversationId, scheduled?.conversation.id);
     assert.equal(tasks[0]?.runId, scheduled?.run.id);
+    assert.equal(tasks[0]?.executionRunId, scheduled?.run.id);
+  });
+});
+
+test("processNextPendingTaskRun preserves the parent orchestration run and stores a distinct child execution run", async () => {
+  await withTempDir(async (cwd) => {
+    const parentConversation = createConversation(cwd, { title: "Main orchestration thread" });
+    const parentRun = createRun(cwd, {
+      conversationId: parentConversation.id,
+      goal: "Coordinate background work",
+    });
+    const task = enqueueTask(cwd, "Investigate flaky test", "Check the flaky worker test and fix it safely.", {
+      conversationId: parentConversation.id,
+      runId: parentRun.id,
+    });
+
+    const scheduled = await processNextPendingTaskRun(cwd, {
+      enqueueTaskRun: async () => {
+        const conversation = createConversation(cwd, { title: "Pinchy queued tasks" });
+        const run = createRun(cwd, {
+          conversationId: conversation.id,
+          goal: "Queued task: Investigate flaky test",
+          kind: "user_prompt",
+        });
+        return { conversation, run };
+      },
+    });
+
+    const persistedTask = loadTasks(cwd).find((entry) => entry.id === task.id);
+    assert.equal(persistedTask?.status, "running");
+    assert.equal(persistedTask?.conversationId, parentConversation.id);
+    assert.equal(persistedTask?.runId, parentRun.id);
+    assert.equal(persistedTask?.executionRunId, scheduled?.run.id);
   });
 });
 
