@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6
+
+- add local design-pattern, anti-pattern, diagnosis, repository-scan, and remediation planning tools for more structured code review workflows
+- add repo-local web search capability plus broader desktop-observer coverage and related validation
+- expand the dashboard with task-focused views, recent-chat filtering, and richer task/run details
+- improve provider/runtime configuration, task observability, daemon behavior, and local runtime documentation for day-to-day operator use
+
 ## 0.2.4
 
 - keep one persistent Pi session per conversation by introducing canonical conversation session bindings in agent state
