@@ -30,7 +30,7 @@ function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskBy
       queueState: blocked.blockedByTaskIds.length > 0 ? "waiting_for_dependencies" as const : "ready" as const,
       blockedByTaskIds: blocked.blockedByTaskIds,
       blockedByTaskTitles: blocked.blockedByTaskTitles,
-      conversationSessionPath: conversationSession?.piSessionPath,
+      conversationSessionPath: conversationSession?.sessionPath,
       workerPid: worker?.pid,
       workerStatus: worker?.status ?? "stopped",
     };
@@ -44,8 +44,8 @@ function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskBy
       blockedByTaskIds: blocked.blockedByTaskIds,
       blockedByTaskTitles: blocked.blockedByTaskTitles,
       linkedRunStatus: run.status,
-      piSessionPath: run.piSessionPath,
-      conversationSessionPath: conversationSession?.piSessionPath,
+      sessionPath: run.sessionPath,
+      conversationSessionPath: conversationSession?.sessionPath,
       workerPid: worker?.pid,
       workerStatus: worker?.status ?? "stopped",
     };
@@ -55,7 +55,7 @@ function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskBy
     queueState: blocked.blockedByTaskIds.length > 0 ? "waiting_for_dependencies" as const : "ready" as const,
     blockedByTaskIds: blocked.blockedByTaskIds,
     blockedByTaskTitles: blocked.blockedByTaskTitles,
-    conversationSessionPath: conversationSession?.piSessionPath,
+    conversationSessionPath: conversationSession?.sessionPath,
     workerPid: worker?.pid,
     workerStatus: worker?.status ?? "stopped",
   };

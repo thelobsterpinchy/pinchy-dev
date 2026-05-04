@@ -195,7 +195,7 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
         summary: `Run execution failed before outcome persistence: ${runningRun.goal}`,
         message: `Pinchy could not finish this run because execution failed: ${errorMessage}`,
         error: errorMessage,
-        piSessionPath: runningRun.piSessionPath,
+        sessionPath: runningRun.sessionPath,
       },
     });
     appendAuditEntry(cwd, {
@@ -258,7 +258,7 @@ export async function processAvailableQueuedRuns(cwd: string, dependencies: Work
 }
 
 function getNextResumableRun(cwd: string) {
-  const waitingRuns = listRuns(cwd).filter((run) => run.status === "waiting_for_human" && !!run.piSessionPath);
+  const waitingRuns = listRuns(cwd).filter((run) => run.status === "waiting_for_human" && !!run.sessionPath);
   if (waitingRuns.length === 0) return undefined;
 
   const questions = listQuestions(cwd);
@@ -384,7 +384,7 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
         summary: `Run resume failed before outcome persistence: ${runningRun.goal}`,
         message: `Pinchy could not finish this run because execution failed: ${errorMessage}`,
         error: errorMessage,
-        piSessionPath: runningRun.piSessionPath,
+        sessionPath: runningRun.sessionPath,
       },
     });
     appendAuditEntry(cwd, {

@@ -27,7 +27,7 @@ test("processNextQueuedRun completes the next queued run, writes an agent messag
       executeRun: async (run) => ({
         summary: `Completed: ${run.goal}`,
         message: `Finished run ${run.id}`,
-        piSessionPath: "/tmp/pi-session-run-1.json",
+        sessionPath: "/tmp/pi-session-run-1.json",
       }),
     });
 
@@ -42,7 +42,7 @@ test("processNextQueuedRun completes the next queued run, writes an agent messag
 
     assert.equal(completedRun?.status, "completed");
     assert.equal(completedRun?.summary, "Completed: Investigate failing tests");
-    assert.equal(completedRun?.piSessionPath, "/tmp/pi-session-run-1.json");
+    assert.equal(completedRun?.sessionPath, "/tmp/pi-session-run-1.json");
     assert.equal(messages.length, 1);
     assert.equal(messages[0]?.role, "agent");
     assert.equal(messages[0]?.content, `Finished run ${firstRun.id}`);
@@ -103,7 +103,7 @@ test("processNextQueuedRun drops outcome persistence when the conversation is de
           kind: "completed",
           summary: "Should not persist",
           message: "This message should be discarded.",
-          piSessionPath: "/tmp/pi-session-deleted.json",
+          sessionPath: "/tmp/pi-session-deleted.json",
         };
       },
     });
@@ -313,7 +313,7 @@ test("processNextQueuedRun persists waiting_for_human outcomes as blocked runs a
           priority: "normal",
           channelHints: ["discord"],
         },
-        piSessionPath: "/tmp/pi-session-waiting.json",
+        sessionPath: "/tmp/pi-session-waiting.json",
       }),
     });
 
@@ -323,7 +323,7 @@ test("processNextQueuedRun persists waiting_for_human outcomes as blocked runs a
 
     assert.equal(processed?.status, "waiting_for_human");
     assert.equal(runs[0]?.blockedReason, "Need persistence choice");
-    assert.equal(runs[0]?.piSessionPath, "/tmp/pi-session-waiting.json");
+    assert.equal(runs[0]?.sessionPath, "/tmp/pi-session-waiting.json");
     assert.equal(questions.length, 1);
     assert.equal(questions[0]?.prompt, "Should I use JSON files or SQLite?");
     assert.equal(questions[0]?.status, "pending_delivery");
@@ -387,7 +387,7 @@ test("processNextQueuedRun persists waiting_for_approval outcomes without creati
         summary: "Waiting for approval",
         message: "Need approval before opening the app.",
         blockedReason: "desktop_open_app requires approval",
-        piSessionPath: "/tmp/pi-session-approval.json",
+        sessionPath: "/tmp/pi-session-approval.json",
       }),
     });
 
@@ -397,7 +397,7 @@ test("processNextQueuedRun persists waiting_for_approval outcomes without creati
 
     assert.equal(processed?.status, "waiting_for_approval");
     assert.equal(runs[0]?.blockedReason, "desktop_open_app requires approval");
-    assert.equal(runs[0]?.piSessionPath, "/tmp/pi-session-approval.json");
+    assert.equal(runs[0]?.sessionPath, "/tmp/pi-session-approval.json");
     assert.equal(questions.length, 0);
     assert.equal(messages[0]?.content, "Need approval before opening the app.");
   });
@@ -448,7 +448,7 @@ test("processNextQueuedRun persists failed outcomes without creating questions a
         summary: "Run failed",
         message: "Pi could not finish the migration plan.",
         error: "tool execution failed",
-        piSessionPath: "/tmp/pi-session-failed.json",
+        sessionPath: "/tmp/pi-session-failed.json",
       }),
     });
 
@@ -461,7 +461,7 @@ test("processNextQueuedRun persists failed outcomes without creating questions a
     assert.equal(processed?.status, "failed");
     assert.equal(runs[0]?.summary, "Run failed");
     assert.equal(runs[0]?.blockedReason, "tool execution failed");
-    assert.equal(runs[0]?.piSessionPath, "/tmp/pi-session-failed.json");
+    assert.equal(runs[0]?.sessionPath, "/tmp/pi-session-failed.json");
     assert.equal(questions.length, 0);
     assert.equal(messages[0]?.content, "Pi could not finish the migration plan.");
     assert.equal(finishEntry?.summary, "Run failed");
@@ -536,7 +536,7 @@ test("processNextResumableRun persists a failed run when resumeRun throws", asyn
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Thrown resume run" });
     const run = createRun(cwd, { conversationId: conversation.id, goal: "Continue after provider failure" });
-    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", piSessionPath: "/tmp/pi-session-run-2.json" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", sessionPath: "/tmp/pi-session-run-2.json" });
     const question = createQuestion(cwd, {
       conversationId: conversation.id,
       runId: run.id,
@@ -579,7 +579,7 @@ test("processNextResumableRun resumes a waiting run after a human reply", async 
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Resume demo" });
     const run = createRun(cwd, { conversationId: conversation.id, goal: "Continue after clarification" });
-    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need a persistence decision", piSessionPath: "/tmp/pi-session-run-2.json" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need a persistence decision", sessionPath: "/tmp/pi-session-run-2.json" });
     const question = createQuestion(cwd, {
       conversationId: conversation.id,
       runId: run.id,
@@ -600,7 +600,7 @@ test("processNextResumableRun resumes a waiting run after a human reply", async 
         kind: "completed",
         summary: `Resumed: ${resumableRun.goal}`,
         message: `Applied human reply: ${reply}`,
-        piSessionPath: resumableRun.piSessionPath,
+        sessionPath: resumableRun.sessionPath,
       }),
     });
 
@@ -662,7 +662,7 @@ test("processNextResumableRun appends pending scoped agent guidance to the resum
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Resume guidance demo" });
     const run = createRun(cwd, { conversationId: conversation.id, goal: "Continue after steering" });
-    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", piSessionPath: "/tmp/pi-session-resume-guidance.json" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", sessionPath: "/tmp/pi-session-resume-guidance.json" });
     const question = createQuestion(cwd, {
       conversationId: conversation.id,
       runId: run.id,
@@ -692,7 +692,7 @@ test("processNextResumableRun appends pending scoped agent guidance to the resum
           kind: "completed",
           summary: "Resumed with guidance",
           message: "Applied resume guidance",
-          piSessionPath: "/tmp/pi-session-resume-guidance.json",
+          sessionPath: "/tmp/pi-session-resume-guidance.json",
         };
       },
     });

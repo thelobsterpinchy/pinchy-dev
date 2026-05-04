@@ -31,7 +31,7 @@ export function buildManagedServiceDefinitions(): ManagedServiceDefinition[] {
   const api = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/api/src/server.ts"));
   const worker = buildTsxEntrypointCommand(resolvePinchyPackagePath("services/agent-worker/src/worker.ts"));
   const dashboard = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/dashboard.ts"));
-  const daemon = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/daemon.ts"));
+  const daemon = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/pinchy-daemon.ts"));
   return [
     { name: "api", command: api.command, args: api.args },
     { name: "worker", command: worker.command, args: worker.args },

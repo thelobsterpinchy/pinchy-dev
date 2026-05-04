@@ -51,7 +51,7 @@ test("enqueueWatcherFollowUpRun reuses its conversation and persists changed-fil
   withTempDir((cwd) => {
     const first = enqueueWatcherFollowUpRun(cwd, {
       prompt: "A watched Pinchy file changed. Run a bounded maintenance review for the changed area.",
-      changedFiles: ["apps/host/src/daemon.ts", "docs/ROADMAP_STATUS.md"],
+      changedFiles: ["apps/host/src/pinchy-daemon.ts", "docs/ROADMAP_STATUS.md"],
     });
     const second = enqueueWatcherFollowUpRun(cwd, {
       prompt: "A watched Pinchy file changed. Run a bounded maintenance review for the changed area.",

@@ -233,8 +233,8 @@ export function createRun(cwd: string, input: { conversationId: string; goal: st
     status: input.status ?? "queued",
     createdAt: now,
     updatedAt: now,
-    piSessionPath: canSeedConversationSession && sessionBinding?.runtimeConfigSignature === runtimeConfigSignature
-      ? sessionBinding.piSessionPath
+    sessionPath: canSeedConversationSession && sessionBinding?.runtimeConfigSignature === runtimeConfigSignature
+      ? sessionBinding.sessionPath
       : undefined,
     runtimeConfigSignature,
   };
@@ -283,7 +283,7 @@ export function claimNextQueuedRun(cwd: string, options: { lane?: WorkerLane } =
   });
 }
 
-export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "piSessionPath" | "runtimeConfigSignature">> = {}) {
+export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "sessionPath" | "runtimeConfigSignature">> = {}) {
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
   const match = runs.find((run) => run.id === runId);
   if (!match) return undefined;
@@ -298,13 +298,13 @@ export function updateRunStatus(cwd: string, runId: string, status: RunStatus, p
   }
   match.blockedReason = patch.blockedReason ?? match.blockedReason;
   match.summary = patch.summary ?? match.summary;
-  match.piSessionPath = patch.piSessionPath ?? match.piSessionPath;
+  match.sessionPath = patch.sessionPath ?? match.sessionPath;
   match.runtimeConfigSignature = patch.runtimeConfigSignature ?? match.runtimeConfigSignature;
   saveCollection(cwd, RUNS_FILE, runs);
-  if (match.piSessionPath) {
+  if (match.sessionPath) {
     setConversationSessionBinding(cwd, {
       conversationId: match.conversationId,
-      piSessionPath: match.piSessionPath,
+      sessionPath: match.sessionPath,
       sourceRunId: match.id,
       runtimeConfigSignature: match.runtimeConfigSignature,
     });
@@ -433,19 +433,19 @@ export function getConversationSessionBinding(cwd: string, conversationId: strin
   return listConversationSessions(cwd).find((entry) => entry.conversationId === conversationId);
 }
 
-export function setConversationSessionBinding(cwd: string, input: { conversationId: string; piSessionPath: string; sourceRunId?: string; runtimeConfigSignature?: string }) {
+export function setConversationSessionBinding(cwd: string, input: { conversationId: string; sessionPath: string; sourceRunId?: string; runtimeConfigSignature?: string }) {
   const sessions = loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE);
   const now = nowIso();
   const existing = sessions.find((entry) => entry.conversationId === input.conversationId);
   if (existing) {
-    existing.piSessionPath = input.piSessionPath;
+    existing.sessionPath = input.sessionPath;
     existing.sourceRunId = input.sourceRunId;
     existing.runtimeConfigSignature = input.runtimeConfigSignature;
     existing.updatedAt = now;
   } else {
     sessions.push({
       conversationId: input.conversationId,
-      piSessionPath: input.piSessionPath,
+      sessionPath: input.sessionPath,
       sourceRunId: input.sourceRunId,
       runtimeConfigSignature: input.runtimeConfigSignature,
       updatedAt: now,

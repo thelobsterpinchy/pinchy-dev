@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   AGENT_GUIDANCE_STATUSES,
+  AGENT_RUN_STATUSES,
   DAEMON_HEALTH_STATUSES,
+  ORCHESTRATION_EVENT_TYPES,
   QUESTION_STATUSES,
   MEMORY_KINDS,
   RELOAD_REQUEST_STATUSES,
@@ -12,7 +14,9 @@ import {
   RUN_STATUSES,
   TASK_STATUSES,
   isAgentGuidanceStatus,
+  isAgentRunStatus,
   isDaemonHealthStatus,
+  isOrchestrationEventType,
   isQuestionStatus,
   isReloadRequestStatus,
   isRunHistoryKind,
@@ -20,7 +24,10 @@ import {
   isRunKind,
   isRunStatus,
   isTaskStatus,
+  type AgentRun,
   type DashboardState,
+  type OrchestrationEvent,
+  type OrchestrationTask,
 } from "../packages/shared/src/contracts.js";
 
 test("shared contracts expose canonical status values and guards", () => {
@@ -31,9 +38,11 @@ test("shared contracts expose canonical status values and guards", () => {
   assert.deepEqual(MEMORY_KINDS, ["note", "decision", "fact", "summary"]);
   assert.deepEqual(RELOAD_REQUEST_STATUSES, ["pending", "processed"]);
   assert.deepEqual(RUN_KINDS, ["user_prompt", "qa_cycle", "watch_followup", "self_improvement", "resume_reply", "autonomous_goal", "queued_task"]);
-  assert.deepEqual(RUN_STATUSES, ["queued", "running", "waiting_for_human", "waiting_for_approval", "completed", "failed", "cancelled"]);
+  assert.deepEqual(RUN_STATUSES, ["queued", "planning", "running", "waiting_for_human", "waiting_for_approval", "cancelling", "completed", "failed", "cancelled"]);
   assert.deepEqual(QUESTION_STATUSES, ["pending_delivery", "waiting_for_human", "answered", "expired", "cancelled"]);
   assert.deepEqual(AGENT_GUIDANCE_STATUSES, ["pending", "applied", "cancelled"]);
+  assert.deepEqual(AGENT_RUN_STATUSES, ["queued", "starting", "running", "blocked", "cancelling", "completed", "failed", "cancelled"]);
+  assert.deepEqual(ORCHESTRATION_EVENT_TYPES, ["RunCreated", "RunPlanned", "TaskReady", "AgentSpawnRequested", "AgentStarted", "AgentProgressReported", "AgentBlockedWithQuestion", "HumanReplyReceived", "GuidanceQueued", "AgentCompleted", "AgentFailed", "TaskCompleted", "RunReadyForSynthesis", "RunSummarized", "CancellationRequested", "RunCancelled"]);
 
   assert.equal(isTaskStatus("pending"), true);
   assert.equal(isTaskStatus("unknown"), false);
@@ -53,11 +62,53 @@ test("shared contracts expose canonical status values and guards", () => {
   assert.equal(isQuestionStatus("open"), false);
   assert.equal(isAgentGuidanceStatus("applied"), true);
   assert.equal(isAgentGuidanceStatus("done"), false);
+  assert.equal(isAgentRunStatus("blocked"), true);
+  assert.equal(isAgentRunStatus("paused"), false);
+  assert.equal(isOrchestrationEventType("AgentCompleted"), true);
+  assert.equal(isOrchestrationEventType("AgentPaused"), false);
+});
+
+test("shared contracts provide orchestration-core entity shapes", () => {
+  const task: OrchestrationTask = {
+    id: "task-1",
+    parentRunId: "run-1",
+    title: "Patch queue wakeups",
+    prompt: "Implement a minimal wakeup flow",
+    status: "ready",
+    dependsOnTaskIds: [],
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+  const agentRun: AgentRun = {
+    id: "agent-run-1",
+    parentRunId: "run-1",
+    conversationId: "conversation-1",
+    taskId: task.id,
+    backend: "pi",
+    backendRunRef: "pi-session-1",
+    status: "running",
+    goal: task.prompt,
+    modelProfile: "coding-default",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+  const event: OrchestrationEvent = {
+    type: "AgentStarted",
+    runId: "run-1",
+    taskId: task.id,
+    agentRunId: agentRun.id,
+    backendRunRef: agentRun.backendRunRef,
+    at: "2026-04-20T00:00:00.000Z",
+  };
+
+  assert.equal(task.status, "ready");
+  assert.equal(agentRun.status, "running");
+  assert.equal(event.type, "AgentStarted");
 });
 
 test("shared contracts provide a reusable dashboard state shape", () => {
   const state: DashboardState = {
-    conversationSessions: [{ conversationId: "conversation-1", piSessionPath: "/tmp/pi-thread-session.json", sourceRunId: "run-1", updatedAt: "2026-04-20T00:00:01.000Z" }],
+    conversationSessions: [{ conversationId: "conversation-1", sessionPath: "/tmp/pi-thread-session.json", sourceRunId: "run-1", updatedAt: "2026-04-20T00:00:01.000Z" }],
     runActivities: [{ id: "activity-1", conversationId: "conversation-1", runId: "run-1", kind: "tool", status: "completed", label: "Tool: read", toolName: "read", details: ["path: README.md"], createdAt: "2026-04-20T00:00:00.000Z" }],
     runContext: {
       currentRunId: "run-1",

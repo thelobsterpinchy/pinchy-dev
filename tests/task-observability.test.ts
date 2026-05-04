@@ -33,11 +33,11 @@ test("buildObservableTasks prefers executionRunId over parent runId for linked d
       summary: "Parent thread finished planning.",
     });
     updateRunStatus(cwd, childRun.id, "running", {
-      piSessionPath: "/tmp/pi-child-run.json",
+      sessionPath: "/tmp/pi-child-run.json",
     });
     setConversationSessionBinding(cwd, {
       conversationId: conversation.id,
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
       sourceRunId: parentRun.id,
     });
 
@@ -55,7 +55,7 @@ test("buildObservableTasks prefers executionRunId over parent runId for linked d
 
     assert.equal(observableTask?.execution?.queueState, "linked_run");
     assert.equal(observableTask?.execution?.linkedRunStatus, "running");
-    assert.equal(observableTask?.execution?.piSessionPath, "/tmp/pi-child-run.json");
+    assert.equal(observableTask?.execution?.sessionPath, "/tmp/pi-child-run.json");
     assert.equal(observableTask?.execution?.conversationSessionPath, "/tmp/pi-thread-session.json");
   });
 });

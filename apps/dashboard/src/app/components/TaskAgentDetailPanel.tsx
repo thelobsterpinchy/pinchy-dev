@@ -210,7 +210,7 @@ function TaskExecutionDiagnostics({ task }: { task: PinchyTask }) {
     task.execution?.blockedByTaskTitles && task.execution.blockedByTaskTitles.length > 0
       ? { label: "Waiting on", value: task.execution.blockedByTaskTitles.join(", ") }
       : undefined,
-    task.execution?.piSessionPath ? { label: "Pi session", value: task.execution.piSessionPath } : undefined,
+    task.execution?.sessionPath ? { label: "Pi session", value: task.execution.sessionPath } : undefined,
   ].filter((row): row is { label: string; value: string } => Boolean(row));
 
   if (rows.length === 0) {

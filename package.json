@@ -47,7 +47,7 @@
   "scripts": {
     "pinchy": "node bin/pinchy.js",
     "agent": "tsx apps/host/src/main.ts",
-    "daemon": "tsx apps/host/src/daemon.ts",
+    "daemon": "tsx apps/host/src/pinchy-daemon.ts",
     "dashboard": "tsx apps/host/src/dashboard.ts",
     "dashboard:web": "vite --config apps/dashboard/vite.config.ts",
     "dashboard:build": "vite build --config apps/dashboard/vite.config.ts",

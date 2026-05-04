@@ -17,7 +17,7 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
     case "completed": {
       const completed = updateRunStatus(cwd, run.id, "completed", {
         summary: outcome.summary,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return completed;
@@ -26,7 +26,7 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
       const waiting = updateRunStatus(cwd, run.id, "waiting_for_human", {
         summary: outcome.summary,
         blockedReason: outcome.blockedReason,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       createQuestion(cwd, {
         conversationId: run.conversationId,
@@ -42,7 +42,7 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
       const waiting = updateRunStatus(cwd, run.id, "waiting_for_approval", {
         summary: outcome.summary,
         blockedReason: outcome.blockedReason,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return waiting;
@@ -51,7 +51,7 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
       const failed = updateRunStatus(cwd, run.id, "failed", {
         summary: outcome.summary,
         blockedReason: outcome.error,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return failed;

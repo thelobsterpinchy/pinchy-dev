@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadDaemonHealth } from "../apps/host/src/daemon-health.js";
 import { loadRunHistory } from "../apps/host/src/run-history.js";
-import { processNextReloadRequest } from "../apps/host/src/daemon.js";
+import { processNextReloadRequest } from "../apps/host/src/pinchy-daemon.js";
 import { queueReloadRequest } from "../apps/host/src/reload-requests.js";
 
 function withTempDir(run: (cwd: string) => Promise<void> | void) {

@@ -674,7 +674,7 @@ test("buildConversationAgentListState surfaces ephemeral conversation agents and
         runId: "run-1",
         createdAt: "2026-04-20T00:00:00.000Z",
         updatedAt: "2026-04-20T00:00:04.000Z",
-        execution: { queueState: "linked_run", linkedRunStatus: "running", workerStatus: "running", workerPid: 4242, piSessionPath: "/tmp/pi-session-1.json" },
+        execution: { queueState: "linked_run", linkedRunStatus: "running", workerStatus: "running", workerPid: 4242, sessionPath: "/tmp/pi-session-1.json" },
       },
       {
         id: "task-2",
@@ -705,7 +705,7 @@ test("buildConversationAgentListState surfaces ephemeral conversation agents and
         latestUpdate: "Comparing route refresh behavior now.",
         dependencyCount: 0,
         isActive: true,
-        execution: { queueState: "linked_run", linkedRunStatus: "running", workerStatus: "running", workerPid: 4242, piSessionPath: "/tmp/pi-session-1.json" },
+        execution: { queueState: "linked_run", linkedRunStatus: "running", workerStatus: "running", workerPid: 4242, sessionPath: "/tmp/pi-session-1.json" },
       },
       {
         id: "task-2",

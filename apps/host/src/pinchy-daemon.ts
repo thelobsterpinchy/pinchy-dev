@@ -1,10 +1,6 @@
-import {
-  createAgentSession,
-  getAgentDir,
-  SessionManager,
-} from "@mariozechner/pi-coding-agent";
 import chokidar from "chokidar";
 import { resolve } from "node:path";
+import type { PinchySessionManager } from "../../../services/agent-worker/src/pinchy-session-manager.js";
 import { getNextPendingTask, getTasksPath, updateTaskStatus } from "./task-queue.js";
 import { loadDaemonGoalsConfig } from "./daemon-config.js";
 import { shouldRunAsCliEntry } from "./module-entry.js";
@@ -59,6 +55,11 @@ type PendingTaskRunDependencies = {
 type ReloadSession = {
   prompt: (text: string) => Promise<unknown>;
   followUp?: (text: string) => Promise<unknown>;
+};
+
+type DaemonDependencies = {
+  sessionManager?: PinchySessionManager;
+  createReloadSession?: (cwd: string) => Promise<ReloadSession>;
 };
 
 type SleepUntilDueDependencies = {
@@ -171,11 +172,17 @@ async function main() {
   let watchConfig = loadWatchConfig(cwd);
   let iteration = buildIterationPrompt(cwd, 0);
 
-  const { session } = await createAgentSession({
-    cwd,
-    agentDir: getAgentDir(),
-    sessionManager: SessionManager.continueRecent(cwd),
-  });
+  const createDefaultReloadSession = async (sessionCwd: string): Promise<ReloadSession> => {
+    const { createAgentSession, getAgentDir, SessionManager } = await import("@mariozechner/pi-coding-agent");
+    const { session } = await createAgentSession({
+      cwd: sessionCwd,
+      agentDir: getAgentDir(),
+      sessionManager: SessionManager.continueRecent(sessionCwd),
+    });
+    return session as ReloadSession;
+  };
+
+  const session = await createDefaultReloadSession(cwd);
 
   const configWatcher = chokidar.watch([
     resolve(cwd, ".pinchy-goals.json"),

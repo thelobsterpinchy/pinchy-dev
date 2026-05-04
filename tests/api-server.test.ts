@@ -121,7 +121,7 @@ test("api server deletes a conversation session, its linked records, and request
     }).then((response) => response.json() as Promise<{ id: string }>);
 
     const { updateRunStatus, listRunCancellationRequests } = await import("../apps/host/src/agent-state-store.js");
-    updateRunStatus(cwd, run.id, "running", { piSessionPath: "/tmp/pi-session-delete.json" });
+    updateRunStatus(cwd, run.id, "running", { sessionPath: "/tmp/pi-session-delete.json" });
 
     const deleteResponse = await fetch(`${baseUrl}/conversations/${conversation.id}`, {
       method: "DELETE",
@@ -309,7 +309,7 @@ test("api server exposes run detail, question detail, and aggregate conversation
     }).then((response) => response.json() as Promise<{ id: string; kind: string; status: string }>);
 
     updateRunStatus(cwd, run.id, "completed", {
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
     });
 
     const question = await fetch(`${baseUrl}/questions`, {
@@ -363,7 +363,7 @@ test("api server exposes run detail, question detail, and aggregate conversation
       replies: Array<{ questionId: string }>;
       deliveries: Array<{ questionId?: string; runId?: string }>;
       runActivities: Array<{ runId: string; toolName?: string; label: string }>;
-      sessionBinding?: { conversationId: string; piSessionPath: string; sourceRunId?: string; updatedAt?: string };
+      sessionBinding?: { conversationId: string; sessionPath: string; sourceRunId?: string; updatedAt?: string };
     };
 
     assert.equal(aggregate.conversation.id, conversation.id);
@@ -371,7 +371,7 @@ test("api server exposes run detail, question detail, and aggregate conversation
     assert.equal(aggregate.runs.length, 1);
     assert.equal(aggregate.runs[0]?.id, run.id);
     assert.equal(aggregate.sessionBinding?.conversationId, conversation.id);
-    assert.equal(aggregate.sessionBinding?.piSessionPath, "/tmp/pi-thread-session.json");
+    assert.equal(aggregate.sessionBinding?.sessionPath, "/tmp/pi-thread-session.json");
     assert.equal(aggregate.sessionBinding?.sourceRunId, run.id);
     assert.match(aggregate.sessionBinding?.updatedAt ?? "", /^20/);
     assert.equal(aggregate.questions.length, 1);
