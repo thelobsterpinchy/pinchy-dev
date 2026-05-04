@@ -13,6 +13,8 @@ import {
   formatNonInteractiveAgentError,
   requiresInteractiveTerminal,
 } from "./agent-startup.js";
+import { loadPinchyRuntimeConfig } from "./runtime-config.js";
+import { createSubmarineInteractiveRuntime } from "./submarine-interactive-runtime.js";
 
 async function main() {
   const cwd = process.env.PINCHY_CWD ?? process.cwd();
@@ -26,6 +28,15 @@ async function main() {
 
   const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
     const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
+    const runtimeConfig = loadPinchyRuntimeConfig(cwd);
+    if (runtimeConfig.submarine?.enabled) {
+      return createSubmarineInteractiveRuntime({
+        cwd,
+        sessionManager,
+        services,
+        sessionStartEvent,
+      });
+    }
     return {
       ...(await createAgentSessionFromServices({
         services,
