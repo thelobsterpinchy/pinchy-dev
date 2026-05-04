@@ -352,3 +352,12 @@ export type NotificationDelivery = {
   externalId?: string;
   error?: string;
 };
+
+export type SubmarineSession = {
+  runId: string;
+  sessionKey: string;
+  waitingTaskId?: string;
+  lastTaskMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};

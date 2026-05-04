@@ -20,6 +20,36 @@ export type RuntimeModelOptions = {
   contextWindow?: number;
 };
 
+export type SubmarineBackendConfig = {
+  type?: string;
+  command?: string | string[];
+  pythonPath?: string;
+  scriptModule?: string;
+  env?: Record<string, string>;
+  extra?: Record<string, unknown>;
+};
+
+export type SubmarineAgentConfig = {
+  model?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  systemPrompt?: string;
+  timeout?: number;
+  workspace?: string;
+  backend?: SubmarineBackendConfig;
+};
+
+export type SubmarineRuntimeConfig = {
+  enabled?: boolean;
+  pythonPath?: string;
+  scriptModule?: string;
+  supervisorModel?: string;
+  supervisorBaseUrl?: string;
+  supervisorApiKey?: string;
+  agents?: Record<string, SubmarineAgentConfig>;
+  runKindRoutes?: Record<string, { role?: string; model?: string }>;
+};
+
 export type SavedModelConfig = {
   id: string;
   name: string;
@@ -42,6 +72,7 @@ export type PinchyRuntimeConfig = {
   toolRetryWarningThreshold?: number;
   toolRetryHardStopThreshold?: number;
   dangerModeEnabled?: boolean;
+  submarine?: SubmarineRuntimeConfig;
 };
 
 export type PinchyRuntimeConfigDetails = PinchyRuntimeConfig & {
@@ -70,6 +101,7 @@ type RuntimeConfigFile = {
   toolRetryWarningThreshold?: number;
   toolRetryHardStopThreshold?: number;
   dangerModeEnabled?: boolean;
+  submarine?: SubmarineRuntimeConfig;
 };
 
 export type RuntimeConfigLoadOptions = {
@@ -242,6 +274,7 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     toolRetryWarningThreshold: toolRetryWarningThreshold.value,
     toolRetryHardStopThreshold: toolRetryHardStopThreshold.value,
     dangerModeEnabled: dangerModeEnabled.value,
+    submarine: workspaceFile.submarine,
     sources: {
       defaultProvider: provider.source,
       defaultModel: model.source,
@@ -270,5 +303,6 @@ export function loadPinchyRuntimeConfig(cwd: string, options: RuntimeConfigLoadO
     toolRetryWarningThreshold: details.toolRetryWarningThreshold,
     toolRetryHardStopThreshold: details.toolRetryHardStopThreshold,
     dangerModeEnabled: details.dangerModeEnabled,
+    submarine: details.submarine,
   };
 }

@@ -24,6 +24,7 @@ import type {
   Run,
   RunKind,
   RunStatus,
+  SubmarineSession,
 } from "../../../packages/shared/src/contracts.js";
 
 type RunCancellationRequest = {
@@ -43,6 +44,7 @@ const AGENT_GUIDANCES_FILE = "agent-guidances.json";
 const CONVERSATION_SESSIONS_FILE = "conversation-sessions.json";
 const RUN_ACTIVITIES_FILE = "run-activities.json";
 const RUN_CANCELLATIONS_FILE = "run-cancellations.json";
+const SUBMARINE_SESSIONS_FILE = "submarine-sessions.json";
 const LOCK_RETRY_MS = 10;
 const LOCK_TIMEOUT_MS = 1000;
 
@@ -576,4 +578,35 @@ function touchConversation(cwd: string, conversationId: string, patch: Partial<P
 
 export function getAgentStateDirectory(cwd: string) {
   return join(cwd, STATE_DIR);
+}
+
+export function createSubmarineSession(cwd: string, input: { runId: string; sessionKey: string }) {
+  const sessions = loadCollection<SubmarineSession>(cwd, SUBMARINE_SESSIONS_FILE);
+  const existing = sessions.find((s) => s.runId === input.runId);
+  if (existing) return existing;
+  const now = nowIso();
+  const session: SubmarineSession = { ...input, createdAt: now, updatedAt: now };
+  saveCollection(cwd, SUBMARINE_SESSIONS_FILE, [session, ...sessions]);
+  return session;
+}
+
+export function getSubmarineSession(cwd: string, runId: string) {
+  return loadCollection<SubmarineSession>(cwd, SUBMARINE_SESSIONS_FILE).find((s) => s.runId === runId);
+}
+
+export function updateSubmarineSession(cwd: string, runId: string, patch: Partial<Pick<SubmarineSession, "waitingTaskId" | "lastTaskMessage" | "sessionKey">>) {
+  const sessions = loadCollection<SubmarineSession>(cwd, SUBMARINE_SESSIONS_FILE);
+  const match = sessions.find((s) => s.runId === runId);
+  if (!match) return undefined;
+  match.updatedAt = nowIso();
+  if (patch.waitingTaskId !== undefined) match.waitingTaskId = patch.waitingTaskId;
+  if (patch.lastTaskMessage !== undefined) match.lastTaskMessage = patch.lastTaskMessage;
+  if (patch.sessionKey !== undefined) match.sessionKey = patch.sessionKey;
+  saveCollection(cwd, SUBMARINE_SESSIONS_FILE, sessions);
+  return match;
+}
+
+export function clearSubmarineSession(cwd: string, runId: string) {
+  const sessions = loadCollection<SubmarineSession>(cwd, SUBMARINE_SESSIONS_FILE);
+  saveCollection(cwd, SUBMARINE_SESSIONS_FILE, sessions.filter((s) => s.runId !== runId));
 }

@@ -6,6 +6,7 @@ import { buildRuntimeConfigSignature } from "../../../apps/host/src/runtime-conf
 import { loadPinchyRuntimeConfig, type PinchyRuntimeConfig, type RuntimeModelOptions, type ThinkingLevel } from "../../../apps/host/src/runtime-config.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import { createRuntimeModelSettingsResourceLoader } from "./pi-model-runtime-settings.js";
+import { createSubmarineAdapter } from "./pi-submarine-adapter.js";
 import { normalizeRunOutcome, type PiRunExecutionResult } from "./run-outcomes.js";
 import { buildRunExecutionPrompt, shouldReuseConversationSessionForRun } from "./run-orchestration-prompt.js";
 
@@ -177,6 +178,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
     open: (sessionPath: string) => SessionManager.open(sessionPath),
   } satisfies PiSessionManagerFactory;
   const loadRuntimeConfig = dependencies.loadRuntimeConfig ?? loadPinchyRuntimeConfig;
+  const submarineAdapter = createSubmarineAdapter({ loadRuntimeConfig });
   const resolveModel = dependencies.resolveModel ?? defaultResolveModel;
   const loadConversationRuns = dependencies.loadConversationRuns ?? ((cwd: string, conversationId: string) => listRuns(cwd, conversationId));
   const loadConversationSessionBinding = dependencies.loadConversationSessionBinding ?? ((cwd: string, conversationId: string) => getConversationSessionBinding(cwd, conversationId));
@@ -242,6 +244,10 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
 
   return {
     async executeRun({ cwd, run }: { cwd: string; run: Run }): Promise<PiRunExecutionResult> {
+      const runtimeConfig = loadRuntimeConfig(cwd);
+      if (runtimeConfig.submarine?.enabled) {
+        return submarineAdapter.executeRun({ cwd, run });
+      }
       const defaults = buildSessionDefaults(cwd);
       const reusableSessionPath = shouldReuseConversationSessionForRun(run)
         ? findReusableConversationSessionPath(cwd, run, defaults.runtimeConfigSignature)
@@ -271,6 +277,10 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
       });
     },
     async resumeRun({ cwd, run, reply }: { cwd: string; run: Run; reply: string }): Promise<PiRunExecutionResult> {
+      const runtimeConfig = loadRuntimeConfig(cwd);
+      if (runtimeConfig.submarine?.enabled) {
+        return submarineAdapter.resumeRun({ cwd, run, reply });
+      }
       if (!run.piSessionPath) {
         throw new Error(`Cannot resume run without piSessionPath: ${run.id}`);
       }
