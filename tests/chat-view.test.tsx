@@ -118,6 +118,8 @@ test("ChatView empty conversation shows operator-console onboarding", () => {
   );
 
   assert.match(html, /Pinchy operator console/);
+  assert.match(html, /Current state/);
+  assert.match(html, /Ready for an objective/);
   assert.match(html, /Always-on home/);
   assert.match(html, /Control the autonomous Pinchy thread/);
   assert.doesNotMatch(html, /How can Pinchy help\?/);
@@ -151,6 +153,7 @@ test("ChatView renders pending question inline reply controls", () => {
   );
 
   assert.match(html, /Pinchy needs input/);
+  assert.match(html, /Pinchy is waiting for you/);
   assert.match(html, /Should Pinchy continue through the risky step\?/);
   assert.match(html, /pending-question-reply-input/);
   assert.match(html, /pending-question-reply-submit/);

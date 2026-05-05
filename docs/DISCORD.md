@@ -46,7 +46,31 @@ Pinchy creates a Discord thread, maps that thread to a Pinchy conversation, reco
 - If Pinchy is waiting on a pending question, the reply answers that question.
 - Otherwise, the reply becomes a new prompt in the same Pinchy conversation.
 
-Pinchy acknowledges successful queue/reply actions in the thread.
+Pinchy acknowledges successful queue/reply actions in the thread. Reply with:
+
+```text
+status
+```
+
+to see whether Pinchy is working, waiting for your answer, or ready for the next objective. Reply with:
+
+```text
+help
+```
+
+to see the available thread commands.
+
+## Demo path
+
+Use this path when validating a customer-facing setup:
+
+1. Run `pinchy init`, then `pinchy doctor`.
+2. Configure the Discord environment variables above.
+3. Run `pinchy up` and confirm `pinchy status` shows the Discord gateway running.
+4. Mention `@Pinchy` in an allowed channel with a small debugging or documentation task.
+5. Open the created Discord thread and reply `status`.
+6. If Pinchy asks a question, answer it in the Discord thread.
+7. Open the dashboard and confirm the same thread shows current state, remote communication, delegated execution, and latest result.
 
 ## Troubleshooting
 

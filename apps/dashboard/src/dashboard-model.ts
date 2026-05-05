@@ -326,6 +326,8 @@ export function buildDelegatedExecutionSummaryState(input: {
     return right.updatedAt.localeCompare(left.updatedAt);
   });
 
+  const tasksById = new Map(linkedTasks.map((task) => [task.id, task]));
+
   return {
     counts: {
       pending: linkedTasks.filter((task) => task.status === "pending").length,
@@ -342,7 +344,15 @@ export function buildDelegatedExecutionSummaryState(input: {
         title: task.title,
         status: task.status,
         statusLabel: buildTaskStatusPresentation(task).label,
+        dependencyLabel: task.dependsOnTaskIds
+          ?.map((dependencyId) => tasksById.get(dependencyId))
+          .find((dependency) => dependency?.status === "blocked")
+          ?.title,
         updatedAt: task.updatedAt,
+      }))
+      .map((task) => ({
+        ...task,
+        dependencyLabel: task.dependencyLabel ? `blocked by ${task.dependencyLabel}` : undefined,
       })),
   };
 }
@@ -408,13 +418,50 @@ export function buildOrchestrationHomeState(input: {
   const remoteChannels = buildRemoteChannelState({
     deliveries: conversationState?.deliveries ?? [],
   });
+  const blockedTask = delegatedExecution.topTasks.find((task) => task.status === "blocked");
+  const runningTask = delegatedExecution.topTasks.find((task) => task.status === "running");
+  const operatorStatus = pendingQuestion
+    ? {
+      headline: "Pinchy is waiting for you",
+      detail: pendingQuestion.prompt,
+      actionLabel: "Reply in the dashboard or the mapped Discord thread.",
+      tone: "needs-input" as const,
+    }
+    : activeRun
+      ? {
+        headline: "Pinchy is working",
+        detail: activeRun.goal,
+        actionLabel: "You can steer the thread from the composer or cancel the active run.",
+        tone: "working" as const,
+      }
+      : blockedTask
+        ? {
+          headline: "Pinchy is blocked",
+          detail: blockedTask.dependencyLabel ? `${blockedTask.title} is ${blockedTask.dependencyLabel}.` : `${blockedTask.title} needs attention before downstream work can continue.`,
+          actionLabel: "Open delegated execution to inspect the blocked subtask.",
+          tone: "needs-attention" as const,
+        }
+        : runningTask
+          ? {
+            headline: "A delegated agent is running",
+            detail: runningTask.title,
+            actionLabel: "Open delegated execution for the scoped agent transcript.",
+            tone: "working" as const,
+          }
+          : {
+            headline: "Ready for an objective",
+            detail: conversationState ? "Send Pinchy the next objective for this thread." : "Start a thread to give Pinchy an always-on local objective.",
+            actionLabel: "Use the composer below or mention Pinchy from Discord.",
+            tone: "idle" as const,
+          };
 
   return {
     title: "Pinchy operator console",
     subtitle: conversationState
       ? "Control the autonomous thread, answer blockers, and inspect delegated work from here."
       : "Start a thread to give Pinchy an always-on local objective.",
-    attentionLevel: pendingQuestion ? "needs-input" as const : activeRun ? "working" as const : "idle" as const,
+    attentionLevel: pendingQuestion ? "needs-input" as const : activeRun || runningTask ? "working" as const : blockedTask ? "needs-attention" as const : "idle" as const,
+    operatorStatus,
     activeRun: activeRun
       ? {
         id: activeRun.id,

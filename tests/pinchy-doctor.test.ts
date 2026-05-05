@@ -118,6 +118,7 @@ test("buildPinchyDoctorReport warns when Discord bot gateway is not configured",
   const discordCheck = report.checks.find((check) => check.name === "discord_bot");
   assert.equal(discordCheck?.status, "warn");
   assert.match(discordCheck?.hint ?? "", /PINCHY_DISCORD_BOT_TOKEN/);
+  assert.match(discordCheck?.hint ?? "", /docs\/DISCORD\.md/);
 });
 
 test("summarizePinchyDoctorReportJson returns machine-readable doctor output", () => {

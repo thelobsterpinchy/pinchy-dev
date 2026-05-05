@@ -137,7 +137,7 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
       name: "discord_bot",
       status: "warn",
       message: "Discord bot gateway is not configured.",
-      hint: "Set PINCHY_DISCORD_BOT_TOKEN, PINCHY_API_TOKEN, PINCHY_DISCORD_ALLOWED_GUILD_IDS, and PINCHY_DISCORD_ALLOWED_CHANNEL_IDS to enable Discord control.",
+      hint: "Follow docs/DISCORD.md, then set PINCHY_DISCORD_BOT_TOKEN, PINCHY_API_TOKEN, PINCHY_DISCORD_ALLOWED_GUILD_IDS, and PINCHY_DISCORD_ALLOWED_CHANNEL_IDS to enable Discord control.",
     });
   } else {
     const missing: string[] = [];
