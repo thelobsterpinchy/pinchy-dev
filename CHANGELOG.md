@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.5
+
+- make `pinchy setup` use guided selector prompts instead of an unstructured question list
+- persist non-secret LLM runtime choices to `.pinchy-runtime.json` while preserving existing workspace settings
+- keep Discord setup secret-safe by printing a clearer environment checklist and optional ID-filled template
+- prompt before installation work, skip Playwright Chromium when already installed, and prefer the package-local Playwright binary for global installs
+
 ## 0.3.3
 
 - add interactive `pinchy setup` templates for Discord remote control and LLM runtime routing without writing secrets

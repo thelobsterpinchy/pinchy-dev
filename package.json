@@ -1,7 +1,7 @@
 {
   "name": "pinchy-dev",
   "private": false,
-  "version": "0.3.3",
+  "version": "0.3.5",
   "description": "Local-first autonomous coding agent workspace built on Pi with dashboard, API, worker, and browser debugging workflows.",
   "keywords": [
     "pinchy",

@@ -83,10 +83,11 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       return;
     }
     case "setup": {
-      const plan = buildPinchySetupPlan({ env, runtimeConfig: loadPinchyRuntimeConfig(cwd) });
+      const runtimeConfig = loadPinchyRuntimeConfig(cwd);
+      const plan = buildPinchySetupPlan({ env, runtimeConfig });
       console.log(summarizePinchySetupPlan(plan));
+      await runInteractivePinchySetup({ cwd, runtimeConfig, env });
       runPinchySetup(plan);
-      await runInteractivePinchySetup();
       return;
     }
     case "version": {
