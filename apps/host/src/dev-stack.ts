@@ -6,13 +6,14 @@ import { buildTsxEntrypointCommand, resolvePinchyPackagePath } from "./package-r
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:4320";
 const DEFAULT_DASHBOARD_BASE_URL = "http://127.0.0.1:4310";
 
-export type ManagedServiceName = "api" | "worker" | "dashboard" | "daemon";
-export type ManagedServiceStatus = "started" | "already_running";
+export type ManagedServiceName = "api" | "worker" | "dashboard" | "daemon" | "discord";
+export type ManagedServiceStatus = "started" | "already_running" | "disabled";
 
 export type ManagedServiceDefinition = {
   name: ManagedServiceName;
   command: string;
   args: string[];
+  enabled?: boolean;
 };
 
 export type ManagedServiceStartResult = {
@@ -32,11 +33,13 @@ export function buildManagedServiceDefinitions(): ManagedServiceDefinition[] {
   const worker = buildTsxEntrypointCommand(resolvePinchyPackagePath("services/agent-worker/src/worker.ts"));
   const dashboard = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/dashboard.ts"));
   const daemon = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/pinchy-daemon.ts"));
+  const discord = buildTsxEntrypointCommand(resolvePinchyPackagePath("services/discord-gateway/gateway.ts"));
   return [
     { name: "api", command: api.command, args: api.args },
     { name: "worker", command: worker.command, args: worker.args },
     { name: "dashboard", command: dashboard.command, args: dashboard.args },
     { name: "daemon", command: daemon.command, args: daemon.args },
+    { name: "discord", command: discord.command, args: discord.args, enabled: Boolean(process.env.PINCHY_DISCORD_BOT_TOKEN) },
   ];
 }
 
@@ -74,6 +77,16 @@ export function startManagedServices(cwd: string, definitions = buildManagedServ
 export function startManagedService(cwd: string, service: ManagedServiceDefinition): ManagedServiceStartResult {
   const { pidPath, logPath } = getManagedServiceStatePaths(cwd, service.name);
   mkdirSync(dirname(pidPath), { recursive: true });
+
+  if (service.enabled === false) {
+    rmSync(pidPath, { force: true });
+    return {
+      name: service.name,
+      status: "disabled",
+      pid: -1,
+      logPath,
+    };
+  }
 
   const storedPid = readStoredPid(pidPath);
   if (storedPid && isManagedServicePidAlive(storedPid)) {
@@ -137,7 +150,7 @@ export type ManagedServiceObservedStatus = ManagedServiceName | "missing";
 
 export type ManagedServiceInspection = {
   name: ManagedServiceName;
-  status: "running" | "stopped";
+  status: "running" | "stopped" | "disabled";
   pid?: number;
   logPath: string;
 };
@@ -166,6 +179,14 @@ export function inspectManagedServices(cwd: string, definitions = buildManagedSe
   return definitions.map((service) => {
     const { pidPath, logPath } = getManagedServiceStatePaths(cwd, service.name);
     const pid = readStoredPid(pidPath);
+    if (service.enabled === false) {
+      return {
+        name: service.name,
+        status: "disabled",
+        pid,
+        logPath,
+      };
+    }
     return {
       name: service.name,
       status: pid && isManagedServicePidAlive(pid) ? "running" : "stopped",
@@ -178,7 +199,9 @@ export function inspectManagedServices(cwd: string, definitions = buildManagedSe
 export function summarizeManagedServices(results: ManagedServiceStartResult[]) {
   const lines = [
     "[pinchy] Started Pinchy local stack helpers:",
-    ...results.map((result) => `[pinchy] ${result.name}: ${result.status} (pid ${result.pid}) log=${result.logPath}`),
+    ...results.map((result) => result.status === "disabled"
+      ? `[pinchy] ${result.name}: disabled (set PINCHY_DISCORD_BOT_TOKEN to enable) log=${result.logPath}`
+      : `[pinchy] ${result.name}: ${result.status} (pid ${result.pid}) log=${result.logPath}`),
     "[pinchy] Use npm run agent in this terminal for the interactive shell.",
   ];
   return `${lines.join("\n")}\n`;

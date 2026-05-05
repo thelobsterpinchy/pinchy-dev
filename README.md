@@ -209,6 +209,17 @@ For the first async notification adapter, Discord webhook delivery is supported 
 Discord replies can also be ingested back into Pinchy through the local API webhook:
 - `POST /webhooks/discord/reply`
 
+For full Discord bot control, `pinchy up` conditionally starts a Discord gateway when these environment variables are configured:
+- `PINCHY_DISCORD_BOT_TOKEN`
+- `PINCHY_API_TOKEN`
+- `PINCHY_DISCORD_ALLOWED_GUILD_IDS`
+- `PINCHY_DISCORD_ALLOWED_CHANNEL_IDS`
+- `PINCHY_DISCORD_ALLOWED_USER_IDS` (optional)
+
+Mentioning the bot in an allowed channel creates a Discord thread mapped to a Pinchy conversation. Messages in that mapped thread either answer the latest pending Pinchy question or queue a new user prompt run.
+
+See `docs/DISCORD.md` for setup, permissions, and troubleshooting.
+
 For browser-debugging access, Pinchy’s Playwright-backed browser tools require a local browser install. The repo provides:
 - `npm run playwright:install`
 

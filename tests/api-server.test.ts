@@ -99,6 +99,31 @@ test("api server exposes health and conversation endpoints", async () => {
   });
 });
 
+test("api server requires bearer token for non-health routes when PINCHY_API_TOKEN is configured", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-api-auth-"));
+  const server = createApiServer({ cwd, apiToken: "local-token" });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const health = await fetch(`${baseUrl}/health`);
+    assert.equal(health.status, 200);
+
+    const unauthorized = await fetch(`${baseUrl}/conversations`);
+    assert.equal(unauthorized.status, 401);
+
+    const authorized = await fetch(`${baseUrl}/conversations`, {
+      headers: { authorization: "Bearer local-token" },
+    });
+    assert.equal(authorized.status, 200);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 
 test("api server deletes a conversation session, its linked records, and requests cancellation for active runs", async () => {
   await withServer(async ({ baseUrl, cwd }) => {

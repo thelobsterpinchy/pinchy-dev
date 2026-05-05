@@ -75,7 +75,6 @@ export async function processNextPendingTaskRun(cwd: string, dependencies: Pendi
   const task = getNextPendingTask(cwd);
   if (!task) return undefined;
 
-  updateTaskStatus(cwd, task.id, "running");
   createRunContext(cwd, `task:${task.title}`);
   appendRunHistory(cwd, { kind: "task", label: task.title, status: "started", details: task.prompt });
   updateDaemonHealth(cwd, { status: "running", currentActivity: `task:${task.title}` });

@@ -148,6 +148,39 @@ function markReadyOrchestrationDependents(cwd: string, completedTask: PinchyTask
   }
 }
 
+function markBlockedDependents(tasks: PinchyTask[]) {
+  const changed: PinchyTask[] = [];
+  const changedIds = new Set<string>();
+  let didChange = true;
+
+  while (didChange) {
+    didChange = false;
+    for (const task of tasks) {
+      if (task.status !== "pending" || !task.dependsOnTaskIds || task.dependsOnTaskIds.length === 0) {
+        continue;
+      }
+
+      const hasBlockedDependency = task.dependsOnTaskIds.some((dependencyId) => {
+        const dependency = tasks.find((entry) => entry.id === dependencyId);
+        return !dependency || dependency.status === "blocked";
+      });
+      if (!hasBlockedDependency) {
+        continue;
+      }
+
+      task.status = "blocked";
+      task.updatedAt = new Date().toISOString();
+      didChange = true;
+      if (!changedIds.has(task.id)) {
+        changedIds.add(task.id);
+        changed.push(task);
+      }
+    }
+  }
+
+  return changed;
+}
+
 export function enqueueTask(
   cwd: string,
   title: string,
@@ -225,8 +258,12 @@ export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["st
   match.conversationId = patch.conversationId ?? match.conversationId;
   match.runId = patch.runId ?? match.runId;
   match.executionRunId = patch.executionRunId ?? match.executionRunId;
+  const blockedDependents = status === "blocked" ? markBlockedDependents(tasks) : [];
   saveTasks(cwd, tasks);
   mirrorTaskToOrchestrationCore(cwd, match, tasks);
+  for (const dependent of blockedDependents) {
+    mirrorTaskToOrchestrationCore(cwd, dependent, tasks);
+  }
   markReadyOrchestrationDependents(cwd, match, tasks);
   return match;
 }
@@ -237,8 +274,12 @@ export function updateTaskStatusByExecutionRunId(cwd: string, runId: string, sta
   if (!match) return undefined;
   match.status = status;
   match.updatedAt = new Date().toISOString();
+  const blockedDependents = status === "blocked" ? markBlockedDependents(tasks) : [];
   saveTasks(cwd, tasks);
   mirrorTaskToOrchestrationCore(cwd, match, tasks);
+  for (const dependent of blockedDependents) {
+    mirrorTaskToOrchestrationCore(cwd, dependent, tasks);
+  }
   markReadyOrchestrationDependents(cwd, match, tasks);
   return match;
 }
@@ -281,7 +322,11 @@ export function deleteTask(cwd: string, id: string): PinchyTask | undefined {
   const index = tasks.findIndex((task) => task.id === id);
   if (index < 0) return undefined;
   const [deleted] = tasks.splice(index, 1);
+  const blockedDependents = markBlockedDependents(tasks);
   saveTasks(cwd, tasks);
+  for (const dependent of blockedDependents) {
+    mirrorTaskToOrchestrationCore(cwd, dependent, tasks);
+  }
   return deleted;
 }
 

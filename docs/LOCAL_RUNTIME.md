@@ -194,6 +194,18 @@ Expected JSON payload:
 }
 ```
 
+Pinchy also supports a first-class Discord bot gateway. `pinchy up` starts the gateway only when `PINCHY_DISCORD_BOT_TOKEN` is present. Configure:
+
+- `PINCHY_DISCORD_BOT_TOKEN`
+- `PINCHY_API_TOKEN`
+- `PINCHY_DISCORD_ALLOWED_GUILD_IDS`
+- `PINCHY_DISCORD_ALLOWED_CHANNEL_IDS`
+- `PINCHY_DISCORD_ALLOWED_USER_IDS` (optional)
+
+When `PINCHY_API_TOKEN` is set, every API route except `GET /health` requires `Authorization: Bearer <token>`. The dashboard proxy and Discord gateway forward this token from the local environment.
+
+The bot flow is thread-based: an allowed mention creates a Discord thread and a mapped Pinchy conversation; messages in that thread answer the latest pending question or become new Pinchy prompt runs.
+
 This route is intentionally local-first and auditable: it normalizes the Discord payload, persists the reply through the shared inbound reply path, and stores the Discord metadata as raw payload on the resulting human reply record.
 
 ## Browser tooling readiness

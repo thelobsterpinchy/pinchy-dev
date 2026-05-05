@@ -25,6 +25,7 @@ function getBlockedDependencies(task: PinchyTask, taskById: Map<string, PinchyTa
 
 function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskById: Map<string, PinchyTask>, worker: ReturnType<typeof inspectManagedServices>[number] | undefined, conversationSession?: ConversationSessionBinding) {
   const blocked = getBlockedDependencies(task, taskById);
+  const workerStatus = worker?.status === "running" ? "running" as const : "stopped" as const;
   if (task.status === "pending") {
     return {
       queueState: blocked.blockedByTaskIds.length > 0 ? "waiting_for_dependencies" as const : "ready" as const,
@@ -32,7 +33,7 @@ function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskBy
       blockedByTaskTitles: blocked.blockedByTaskTitles,
       conversationSessionPath: conversationSession?.sessionPath,
       workerPid: worker?.pid,
-      workerStatus: worker?.status ?? "stopped",
+      workerStatus,
     };
   }
 
@@ -47,7 +48,7 @@ function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskBy
       sessionPath: run.sessionPath,
       conversationSessionPath: conversationSession?.sessionPath,
       workerPid: worker?.pid,
-      workerStatus: worker?.status ?? "stopped",
+      workerStatus,
     };
   }
 
@@ -57,7 +58,7 @@ function buildTaskExecution(task: PinchyTask, runsById: Map<string, Run>, taskBy
     blockedByTaskTitles: blocked.blockedByTaskTitles,
     conversationSessionPath: conversationSession?.sessionPath,
     workerPid: worker?.pid,
-    workerStatus: worker?.status ?? "stopped",
+    workerStatus,
   };
 }
 

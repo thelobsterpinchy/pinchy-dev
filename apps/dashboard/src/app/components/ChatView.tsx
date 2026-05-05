@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, PanelLeftOpen, PanelRightOpen, Send } from "lucide-react";
+import type { ReactNode } from "react";
+import { ChevronDown, ChevronRight, MessageSquareReply, PanelLeftOpen, PanelRightOpen, Send, Square, Workflow } from "lucide-react";
 import { Button } from "./ui/button.js";
 import { Textarea } from "./ui/textarea.js";
 import { ScrollArea } from "./ui/scroll-area.js";
 import { Badge } from "./ui/badge.js";
 import { cn } from "./ui/utils.js";
-import { buildConversationRunActivityListState, buildConversationThinkingState, buildConversationTranscriptState, buildTranscriptMessagePresentation, decideTranscriptFollowUp } from "../../dashboard-model.js";
+import { buildConversationRunActivityListState, buildConversationThinkingState, buildConversationTranscriptState, buildOrchestrationHomeState, buildTranscriptMessagePresentation, decideTranscriptFollowUp } from "../../dashboard-model.js";
 import type { RootLayoutContext } from "../types.js";
 import type { Message, Run } from "../../../../../packages/shared/src/contracts.js";
 
@@ -23,12 +24,18 @@ export function ChatView({
   selectedConversation,
   onSendMessage,
   isLoading,
+  state,
+  tasks,
+  onReplyToQuestion,
+  onCancelRun,
+  onSelectAgentTask,
   onToggleLeftSidebar,
   onToggleRightSidebar,
   isLeftSidebarOpen,
   isRightSidebarOpen,
-}: Pick<RootLayoutContext, "conversationState" | "selectedConversation" | "onSendMessage" | "isLoading" | "onToggleLeftSidebar" | "onToggleRightSidebar" | "isLeftSidebarOpen" | "isRightSidebarOpen">) {
+}: Pick<RootLayoutContext, "conversationState" | "selectedConversation" | "onSendMessage" | "isLoading" | "onToggleLeftSidebar" | "onToggleRightSidebar" | "isLeftSidebarOpen" | "isRightSidebarOpen"> & Partial<Pick<RootLayoutContext, "state" | "tasks" | "onReplyToQuestion" | "onCancelRun" | "onSelectAgentTask">>) {
   const [input, setInput] = useState("");
+  const [questionReply, setQuestionReply] = useState("");
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [thinkingNow, setThinkingNow] = useState(() => Date.now());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -53,6 +60,12 @@ export function ChatView({
   });
   const runActivityState = buildConversationRunActivityListState({
     runActivities: conversationState?.runActivities ?? [],
+  });
+  const orchestrationHomeState = buildOrchestrationHomeState({
+    conversationState,
+    dashboardState: state,
+    tasks,
+    now: thinkingNow,
   });
 
   useEffect(() => {
@@ -122,6 +135,16 @@ export function ChatView({
       setInput("");
     }
   };
+  const handleQuestionReply = () => {
+    if (!orchestrationHomeState.pendingQuestion || !questionReply.trim() || !onReplyToQuestion) {
+      return;
+    }
+    void onReplyToQuestion({
+      questionId: orchestrationHomeState.pendingQuestion.id,
+      content: questionReply.trim(),
+    });
+    setQuestionReply("");
+  };
 
   const title = selectedConversation?.title || "New Session";
   const statusLabel = selectedConversation?.status || "idle";
@@ -152,15 +175,16 @@ export function ChatView({
       <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
         <div className="w-full flex flex-col pb-6 pt-4">
           <div className="max-w-3xl mx-auto w-full px-4 space-y-6">
-            {showEmptyOnboarding ? (
-              <div className="h-[50vh] flex flex-col items-center justify-center text-center opacity-80">
-                <div className="w-16 h-16 rounded-3xl bg-[#1e293b] flex items-center justify-center border border-[#334155] shadow-sm mb-6">
-                  <span className="text-3xl leading-none">🦞</span>
-                </div>
-                <h2 className="text-2xl font-semibold text-gray-100 mb-2">How can Pinchy help?</h2>
-                <p className="text-[15px] text-gray-400">Send a message to start the conversation.</p>
-              </div>
-            ) : (
+            <OrchestrationHome
+              state={orchestrationHomeState}
+              questionReply={questionReply}
+              onQuestionReplyChange={setQuestionReply}
+              onSubmitQuestionReply={handleQuestionReply}
+              onCancelRun={onCancelRun}
+              onSelectAgentTask={onSelectAgentTask}
+            />
+
+            {!showEmptyOnboarding && (
               visibleMessages.map((message) => <MessageBubble key={message.id} message={message} />)
             )}
 
@@ -217,7 +241,7 @@ export function ChatView({
               data-testid="conversation-composer-input"
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="Message Pinchy..."
+              placeholder="Control the autonomous Pinchy thread..."
               className="min-h-[52px] max-h-[200px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-4 py-4 w-full text-gray-200 resize-none shadow-none text-[15px]"
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -227,7 +251,7 @@ export function ChatView({
               }}
             />
             <div className="flex justify-between items-center px-4 pb-3">
-              <div className="text-xs text-gray-500 pl-1 hidden sm:inline-block">Shift + Enter for new line</div>
+              <div className="text-xs text-gray-500 pl-1 hidden sm:inline-block">Guide the running thread or queue the next objective</div>
               <Button data-testid="conversation-composer-submit" onClick={handleSubmit} disabled={!input.trim() || isLoading} size="icon" className={cn("h-8 w-8 rounded-full transition-all", input.trim() && !isLoading ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm" : "bg-[#1e293b] text-gray-500 hover:bg-[#1e293b]")}>
                 <Send className="h-4 w-4 ml-0.5" />
               </Button>
@@ -238,6 +262,160 @@ export function ChatView({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function OrchestrationHome({
+  state,
+  questionReply,
+  onQuestionReplyChange,
+  onSubmitQuestionReply,
+  onCancelRun,
+  onSelectAgentTask,
+}: {
+  state: ReturnType<typeof buildOrchestrationHomeState>;
+  questionReply: string;
+  onQuestionReplyChange: (value: string) => void;
+  onSubmitQuestionReply: () => void;
+  onCancelRun?: (runId: string) => Promise<void>;
+  onSelectAgentTask?: (taskId?: string) => void;
+}) {
+  return (
+    <section className="space-y-3" aria-label="Pinchy operator console">
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold text-gray-100">{state.title}</h2>
+          <Badge className={cn(
+            "border px-2 py-0.5 text-[10px] uppercase",
+            state.attentionLevel === "needs-input" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : state.attentionLevel === "working" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-600 bg-slate-900 text-slate-300",
+          )}>{state.attentionLevel === "needs-input" ? "needs input" : state.attentionLevel}</Badge>
+        </div>
+        <p className="text-sm text-gray-400">{state.subtitle}</p>
+      </div>
+
+      {state.showOperatorOnboarding && (
+        <ConsolePanel title="Always-on home" eyebrow="operator console">
+          <p className="text-sm text-gray-300">Start by giving Pinchy an objective. This view will track active work, blockers, remote delivery, delegated execution, and the latest useful result.</p>
+        </ConsolePanel>
+      )}
+
+      {state.pendingQuestion && (
+        <ConsolePanel title="Pinchy needs input" eyebrow={state.pendingQuestion.priorityLabel}>
+          <div className="space-y-3">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-100">{state.pendingQuestion.prompt}</p>
+            <div className="flex flex-wrap gap-2">
+              {state.pendingQuestion.deliveryChannels.map((channel) => (
+                <Badge key={channel.id} className="border border-amber-500/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/10">{channel.label}</Badge>
+              ))}
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Textarea
+                data-testid="pending-question-reply-input"
+                value={questionReply}
+                onChange={(event) => onQuestionReplyChange(event.target.value)}
+                placeholder="Reply so Pinchy can continue..."
+                className="min-h-[72px] flex-1 resize-none border-[#334155] bg-[#0b1220] text-gray-100 focus-visible:ring-blue-500"
+              />
+              <Button data-testid="pending-question-reply-submit" onClick={onSubmitQuestionReply} disabled={!questionReply.trim()} className="sm:self-end">
+                <MessageSquareReply className="mr-2 h-4 w-4" />
+                Reply
+              </Button>
+            </div>
+          </div>
+        </ConsolePanel>
+      )}
+
+      {state.activeRun && (
+        <ConsolePanel title="Active run" eyebrow={state.activeRun.statusLabel}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-gray-100">{state.activeRun.goal}</p>
+              <p className="text-xs text-gray-500">{state.activeRun.elapsedLabel} • updated {state.activeRun.updatedAt}</p>
+            </div>
+            {state.activeRun.canCancel && onCancelRun && (
+              <Button data-testid="active-run-cancel" variant="outline" size="sm" onClick={() => {
+                if (state.activeRun) {
+                  void onCancelRun(state.activeRun.id);
+                }
+              }} className="border-red-500/30 bg-red-500/10 text-red-100 hover:bg-red-500/20 hover:text-red-50">
+                <Square className="mr-2 h-3.5 w-3.5" />
+                Cancel
+              </Button>
+            )}
+          </div>
+        </ConsolePanel>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+        <ConsolePanel title="Latest result" eyebrow={state.latestResult?.label ?? "waiting"}>
+          {state.latestResult ? (
+            <p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed text-gray-200">{state.latestResult.content}</p>
+          ) : (
+            <p className="text-sm text-gray-500">No result has been produced for this thread yet.</p>
+          )}
+        </ConsolePanel>
+
+        <ConsolePanel title="Remote communication" eyebrow={state.daemonStatus ? `daemon ${state.daemonStatus}` : "delivery"}>
+          <div className="space-y-2">
+            {state.remoteChannels.map((channel) => (
+              <div key={channel.id} className="flex items-start justify-between gap-3 rounded-md border border-[#1e293b] bg-[#0b1220] px-3 py-2">
+                <div>
+                  <div className="text-sm font-medium text-gray-200">{channel.label}</div>
+                  {channel.detail && <div className="text-xs text-gray-500">{channel.detail}</div>}
+                </div>
+                <Badge className={cn(
+                  "border text-[10px]",
+                  channel.status === "failed" || channel.status === "unconfigured" ? "border-red-500/30 bg-red-500/10 text-red-100" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+                )}>{channel.statusLabel}</Badge>
+              </div>
+            ))}
+          </div>
+        </ConsolePanel>
+      </div>
+
+      <ConsolePanel title="Delegated execution" eyebrow={`${state.delegatedExecution.total} linked`}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {(["running", "pending", "blocked", "done"] as const).map((status) => (
+              <div key={status} className="rounded-md border border-[#1e293b] bg-[#0b1220] px-2 py-2">
+                <div className="text-base font-semibold text-gray-100">{state.delegatedExecution.counts[status]}</div>
+                <div className="text-[10px] uppercase text-gray-500">{status}</div>
+              </div>
+            ))}
+          </div>
+          {state.delegatedExecution.topTasks.length > 0 ? (
+            <div className="space-y-2">
+              {state.delegatedExecution.topTasks.map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  data-testid={`inspect-agent-task-${task.id}`}
+                  onClick={() => onSelectAgentTask?.(task.id)}
+                  className="flex w-full items-center justify-between gap-3 rounded-md border border-[#273244] bg-[#0b1220] px-3 py-2 text-left text-sm transition-colors hover:border-[#3b475b]"
+                >
+                  <span className="min-w-0 truncate text-gray-200"><Workflow className="mr-2 inline h-4 w-4 text-blue-300" />{task.title}</span>
+                  <span className="shrink-0 text-xs text-gray-500">inspect execution</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No active delegated execution for this thread.</p>
+          )}
+        </div>
+      </ConsolePanel>
+    </section>
+  );
+}
+
+function ConsolePanel({ title, eyebrow, children }: { title: string; eyebrow: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-[#1e293b] bg-[#07111f] p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-gray-100">{title}</h3>
+        <span className="shrink-0 rounded-full border border-[#334155] bg-[#0f172a] px-2 py-0.5 text-[10px] uppercase text-gray-400">{eyebrow}</span>
+      </div>
+      {children}
     </div>
   );
 }

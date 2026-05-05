@@ -97,6 +97,36 @@ test("control plane proxy preserves query strings for GET requests", async () =>
   assert.equal(response.bodyText, JSON.stringify([{ id: "delivery-1" }]));
 });
 
+test("control plane proxy forwards local API bearer token when configured", async () => {
+  const previousToken = process.env.PINCHY_API_TOKEN;
+  process.env.PINCHY_API_TOKEN = "local-token";
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await requestControlPlaneApi({
+      apiBaseUrl: "http://127.0.0.1:4320",
+      path: "/conversations",
+      method: "GET",
+      fetchImpl: fetchMock,
+    });
+
+    assert.equal((calls[0]?.init?.headers as Record<string, string>)?.authorization, "Bearer local-token");
+  } finally {
+    if (previousToken === undefined) {
+      delete process.env.PINCHY_API_TOKEN;
+    } else {
+      process.env.PINCHY_API_TOKEN = previousToken;
+    }
+  }
+});
+
 test("control plane proxy falls back to JSON content type when the upstream omits one", async () => {
   const fetchMock: typeof fetch = async () => new Response(new Uint8Array(Buffer.from("{\"ok\":true}")), {
     status: 200,

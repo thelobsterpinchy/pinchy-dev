@@ -24,6 +24,7 @@ import { shouldRunAsCliEntry } from "../../host/src/module-entry.js";
 
 type ApiServerOptions = {
   cwd: string;
+  apiToken?: string;
 };
 
 class InvalidJsonBodyError extends Error {}
@@ -47,6 +48,11 @@ function resolveRequestCwd(defaultCwd: string, req: http.IncomingMessage) {
 function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
+}
+
+function isAuthorized(req: http.IncomingMessage, apiToken?: string) {
+  if (!apiToken) return true;
+  return req.headers.authorization === `Bearer ${apiToken}`;
 }
 
 function sendJsonBodyError(res: http.ServerResponse, error: unknown) {
@@ -99,7 +105,7 @@ function parseRunKind(value: unknown) {
   return typeof value === "string" && isRunKind(value) ? value : undefined;
 }
 
-export function createApiServer({ cwd }: ApiServerOptions) {
+export function createApiServer({ cwd, apiToken = process.env.PINCHY_API_TOKEN }: ApiServerOptions) {
   return http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const { pathname, searchParams } = url;
@@ -107,6 +113,11 @@ export function createApiServer({ cwd }: ApiServerOptions) {
 
     if (req.method === "GET" && pathname === "/health") {
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (!isAuthorized(req, apiToken)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
       return;
     }
 
@@ -362,6 +373,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
               conversationId: payload.conversationId,
               channel,
               content: payload.content,
+              rawPayload: payload.rawPayload,
             });
             sendJson(res, 201, reply);
           } catch (error) {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2
+
+- harden queued task execution so tasks stay recoverable until their delegated child run is created
+- propagate blocked delegated-task dependencies instead of leaving downstream work pending forever
+- keep failed human-question deliveries retryable and fail answered runs that cannot resume because their Pi session path is missing
+- make parallel worker batches resilient to individual run failures
+- add Discord bot REST and webhook timeouts so notification delivery cannot hang worker progress indefinitely
+- improve dashboard server test cleanup for local HTTP bind errors and lingering sockets
+
 ## 0.3.0
 
 - make Pinchy's autonomous orchestration layer the documented primary product/runtime boundary, with Pi treated as an internal execution backend

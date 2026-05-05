@@ -11,16 +11,39 @@ import {
 } from "../apps/host/src/dev-stack.js";
 
 test("buildManagedServiceDefinitions returns installable direct-entry service commands", () => {
+  const previousToken = process.env.PINCHY_DISCORD_BOT_TOKEN;
+  delete process.env.PINCHY_DISCORD_BOT_TOKEN;
   const services = buildManagedServiceDefinitions();
+  if (previousToken !== undefined) {
+    process.env.PINCHY_DISCORD_BOT_TOKEN = previousToken;
+  }
 
-  assert.deepEqual(services.map((service) => service.name), ["api", "worker", "dashboard", "daemon"]);
+  assert.deepEqual(services.map((service) => service.name), ["api", "worker", "dashboard", "daemon", "discord"]);
   assert.equal(typeof services[0]?.command, "string");
   assert.ok((services[0]?.command ?? "").length > 0);
   assert.ok((services[0]?.args ?? []).some((entry) => /apps\/api\/src\/server\.ts$/.test(entry)));
   assert.ok((services[1]?.args ?? []).some((entry) => /services\/agent-worker\/src\/worker\.ts$/.test(entry)));
   assert.ok((services[2]?.args ?? []).some((entry) => /apps\/host\/src\/dashboard\.ts$/.test(entry)));
   assert.ok((services[3]?.args ?? []).some((entry) => /apps\/host\/src\/pinchy-daemon\.ts$/.test(entry)));
+  assert.ok((services[4]?.args ?? []).some((entry) => /services\/discord-gateway\/gateway\.ts$/.test(entry)));
+  assert.equal(services[4]?.enabled, false);
   assert.ok((services[0]?.args ?? []).every((entry) => !/^run$/.test(entry)));
+});
+
+test("buildManagedServiceDefinitions enables Discord only when the bot token is configured", () => {
+  const previousToken = process.env.PINCHY_DISCORD_BOT_TOKEN;
+  process.env.PINCHY_DISCORD_BOT_TOKEN = "bot-token";
+
+  try {
+    const discord = buildManagedServiceDefinitions().find((service) => service.name === "discord");
+    assert.equal(discord?.enabled, true);
+  } finally {
+    if (previousToken === undefined) {
+      delete process.env.PINCHY_DISCORD_BOT_TOKEN;
+    } else {
+      process.env.PINCHY_DISCORD_BOT_TOKEN = previousToken;
+    }
+  }
 });
 
 test("getManagedServiceStatePaths keeps pid and log files under .pinchy/run", () => {
@@ -38,6 +61,7 @@ test("summarizeManagedServices renders a human-readable startup summary", () => 
     { name: "worker", status: "already_running", logPath: "/repo/.pinchy/run/worker.log", pid: 1002 },
     { name: "dashboard", status: "started", logPath: "/repo/.pinchy/run/dashboard.log", pid: 1003 },
     { name: "daemon", status: "started", logPath: "/repo/.pinchy/run/daemon.log", pid: 1004 },
+    { name: "discord", status: "disabled", logPath: "/repo/.pinchy/run/discord.log", pid: -1 },
   ]);
 
   assert.match(summary, /Started Pinchy local stack helpers/);
@@ -45,6 +69,7 @@ test("summarizeManagedServices renders a human-readable startup summary", () => 
   assert.match(summary, /worker: already_running/);
   assert.match(summary, /dashboard: started/);
   assert.match(summary, /daemon: started/);
+  assert.match(summary, /discord: disabled/);
   assert.match(summary, /Use npm run agent in this terminal/);
 });
 

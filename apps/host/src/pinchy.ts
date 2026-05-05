@@ -128,7 +128,7 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       return;
     }
     case "logs": {
-      const requested = (["api", "worker", "dashboard", "daemon"].includes(parsed.args[0] ?? "") ? parsed.args[0] : undefined) as ManagedServiceName | undefined;
+      const requested = (["api", "worker", "dashboard", "daemon", "discord"].includes(parsed.args[0] ?? "") ? parsed.args[0] : undefined) as ManagedServiceName | undefined;
       const tailIndex = parsed.args.indexOf("--tail");
       const tailChars = tailIndex >= 0 ? Number(parsed.args[tailIndex + 1] ?? "4000") : 4000;
       console.log(summarizeLogs(cwd, requested, { json: parsed.args.includes("--json"), tailChars: Number.isFinite(tailChars) ? tailChars : 4000 }));

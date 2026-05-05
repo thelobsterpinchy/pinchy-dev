@@ -8,16 +8,19 @@ import { recordAgentFinished, type AgentFinishOutcome } from "../../../apps/host
 import { updateTaskStatusByExecutionRunId } from "../../../apps/host/src/task-queue.js";
 import type { NotificationDelivery, Question, Run } from "../../../packages/shared/src/contracts.js";
 import { createQuestionDeliveryDispatcher } from "../../../services/notifiers/dispatcher.js";
+import { createDiscordNotifier } from "../../../services/notifiers/discord.js";
 import { createPiRunExecutor } from "./pi-run-executor.js";
 import { normalizeRunOutcome, type LegacyRunExecutionResult, type PiRunExecutionResult } from "./run-outcomes.js";
 import { applyRunOutcome } from "./run-transition-manager.js";
 
 type WorkerDependencies = {
   executeRun: (run: Run) => Promise<PiRunExecutionResult | LegacyRunExecutionResult>;
+  sendRunSummary?: (cwd: string, input: { conversationId: string; runId: string; summary: string; mappedOnly: boolean }) => Promise<NotificationDelivery | undefined>;
 };
 
 type ResumeDependencies = {
   resumeRun: (run: Run, reply: string) => Promise<PiRunExecutionResult | LegacyRunExecutionResult>;
+  sendRunSummary?: (cwd: string, input: { conversationId: string; runId: string; summary: string; mappedOnly: boolean }) => Promise<NotificationDelivery | undefined>;
 };
 
 type DeliveryDependencies = {
@@ -114,6 +117,23 @@ async function recordCoreCompletion(cwd: string, runId: string, outcome: ReturnT
   });
 }
 
+async function notifyMappedRunSummary(input: {
+  cwd: string;
+  conversationId: string;
+  runId: string;
+  summary?: string;
+  sendRunSummary?: WorkerDependencies["sendRunSummary"];
+}) {
+  const summary = input.summary?.trim();
+  if (!summary) return undefined;
+  return input.sendRunSummary?.(input.cwd, {
+    conversationId: input.conversationId,
+    runId: input.runId,
+    summary,
+    mappedOnly: true,
+  });
+}
+
 function consumePendingGuidanceForRun(cwd: string, run: Run) {
   const pendingGuidance = listAgentGuidances(cwd, { runId: run.id, status: "pending" });
   if (pendingGuidance.length === 0) {
@@ -196,9 +216,16 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
           runId: updatedTask.runId,
           intro: buildOrchestrationRelayIntro({ task: updatedTask, outcome }),
         });
-        await appendFinalThreadSynthesisIfReady(cwd, {
+        const finalSynthesis = await appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: updatedTask.conversationId,
           runId: updatedTask.runId,
+        });
+        await notifyMappedRunSummary({
+          cwd,
+          conversationId: updatedTask.conversationId,
+          runId: updatedTask.runId ?? persistedRun.id,
+          summary: finalSynthesis?.content,
+          sendRunSummary: dependencies.sendRunSummary,
         });
       } else if (coreCompletion?.agentRun.conversationId) {
         appendOrchestrationUpdate(cwd, {
@@ -212,9 +239,24 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
             outcome,
           }),
         });
-        await appendFinalThreadSynthesisIfReady(cwd, {
+        const finalSynthesis = await appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: coreCompletion.agentRun.conversationId,
           runId: coreCompletion.agentRun.parentRunId,
+        });
+        await notifyMappedRunSummary({
+          cwd,
+          conversationId: coreCompletion.agentRun.conversationId,
+          runId: coreCompletion.agentRun.parentRunId,
+          summary: finalSynthesis?.content,
+          sendRunSummary: dependencies.sendRunSummary,
+        });
+      } else if (persistedRun.status === "completed" || persistedRun.status === "failed") {
+        await notifyMappedRunSummary({
+          cwd,
+          conversationId: persistedRun.conversationId,
+          runId: persistedRun.id,
+          summary: outcome.summary,
+          sendRunSummary: dependencies.sendRunSummary,
         });
       }
     }
@@ -296,8 +338,11 @@ export async function processAvailableQueuedRuns(cwd: string, dependencies: Work
       return processed;
     }
 
-    const results = await Promise.all(claimedRuns.map((run) => executeClaimedRun(cwd, run, dependencies)));
-    processed.push(...results.filter((run): run is Run => Boolean(run)));
+    const results = await Promise.allSettled(claimedRuns.map((run) => executeClaimedRun(cwd, run, dependencies)));
+    processed.push(...results
+      .filter((result): result is PromiseFulfilledResult<Run | undefined> => result.status === "fulfilled")
+      .map((result) => result.value)
+      .filter((run): run is Run => Boolean(run)));
 
     if (claimedRuns.length < concurrency) {
       return processed;
@@ -306,7 +351,7 @@ export async function processAvailableQueuedRuns(cwd: string, dependencies: Work
 }
 
 function getNextResumableRun(cwd: string) {
-  const waitingRuns = listRuns(cwd).filter((run) => run.status === "waiting_for_human" && !!run.sessionPath);
+  const waitingRuns = listRuns(cwd).filter((run) => run.status === "waiting_for_human");
   if (waitingRuns.length === 0) return undefined;
 
   const questions = listQuestions(cwd);
@@ -341,7 +386,9 @@ export async function processNextPendingQuestionDelivery(cwd: string, dependenci
   if (!question) return undefined;
 
   const delivery = await dependencies.dispatchQuestion(cwd, question);
-  updateQuestionStatus(cwd, question.id, "waiting_for_human");
+  if (delivery.status !== "failed") {
+    updateQuestionStatus(cwd, question.id, "waiting_for_human");
+  }
   appendAuditEntry(cwd, {
     type: "worker_question_delivery_finished",
     runId: question.runId,
@@ -360,6 +407,35 @@ export async function processNextPendingQuestionDelivery(cwd: string, dependenci
 export async function processNextResumableRun(cwd: string, dependencies: ResumeDependencies) {
   const resumable = getNextResumableRun(cwd);
   if (!resumable) return undefined;
+
+  if (!resumable.run.sessionPath) {
+    const errorMessage = `Cannot resume waiting run without sessionPath: ${resumable.run.id}`;
+    const failedRun = await applyRunOutcome({
+      cwd,
+      run: resumable.run,
+      outcome: {
+        kind: "failed",
+        summary: `Run resume failed before outcome persistence: ${resumable.run.goal}`,
+        message: `Pinchy could not continue this run because its Pi session path is missing: ${resumable.run.id}`,
+        error: errorMessage,
+      },
+    });
+    appendAuditEntry(cwd, {
+      type: "worker_run_finished",
+      runId: resumable.run.id,
+      conversationId: resumable.run.conversationId,
+      summary: `Run resume failed before outcome persistence: ${resumable.run.goal}`,
+      error: errorMessage,
+      details: {
+        executionMode: "resumed",
+        runKind: resumable.run.kind,
+        outcomeKind: "missing_session_path",
+        runStatus: "failed",
+        durationMs: 0,
+      },
+    });
+    return failedRun;
+  }
 
   const startedAt = Date.now();
   const runningRun = updateRunStatus(cwd, resumable.run.id, "running") ?? { ...resumable.run, status: "running" as const };
@@ -402,9 +478,16 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
           runId: updatedTask.runId,
           intro: buildOrchestrationRelayIntro({ task: updatedTask, outcome }),
         });
-        await appendFinalThreadSynthesisIfReady(cwd, {
+        const finalSynthesis = await appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: updatedTask.conversationId,
           runId: updatedTask.runId,
+        });
+        await notifyMappedRunSummary({
+          cwd,
+          conversationId: updatedTask.conversationId,
+          runId: updatedTask.runId ?? persistedRun.id,
+          summary: finalSynthesis?.content,
+          sendRunSummary: dependencies.sendRunSummary,
         });
       } else if (coreCompletion?.agentRun.conversationId) {
         appendOrchestrationUpdate(cwd, {
@@ -418,9 +501,24 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
             outcome,
           }),
         });
-        await appendFinalThreadSynthesisIfReady(cwd, {
+        const finalSynthesis = await appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: coreCompletion.agentRun.conversationId,
           runId: coreCompletion.agentRun.parentRunId,
+        });
+        await notifyMappedRunSummary({
+          cwd,
+          conversationId: coreCompletion.agentRun.conversationId,
+          runId: coreCompletion.agentRun.parentRunId,
+          summary: finalSynthesis?.content,
+          sendRunSummary: dependencies.sendRunSummary,
+        });
+      } else if (persistedRun.status === "completed" || persistedRun.status === "failed") {
+        await notifyMappedRunSummary({
+          cwd,
+          conversationId: persistedRun.conversationId,
+          runId: persistedRun.id,
+          summary: outcome.summary,
+          sendRunSummary: dependencies.sendRunSummary,
         });
       }
     }
@@ -503,6 +601,7 @@ export function parseWorkerLoopConfig(env: NodeJS.ProcessEnv, cwd = process.cwd(
 
 const defaultPiRunExecutor = createPiRunExecutor();
 const defaultQuestionDeliveryDispatcher = createQuestionDeliveryDispatcher();
+const defaultDiscordNotifier = createDiscordNotifier();
 
 async function defaultExecuteRun(run: Run): Promise<PiRunExecutionResult> {
   return defaultPiRunExecutor.executeRun({ cwd: process.env.PINCHY_CWD ?? process.cwd(), run });
@@ -516,12 +615,16 @@ async function defaultDispatchQuestion(cwd: string, question: Question): Promise
   return defaultQuestionDeliveryDispatcher.dispatchQuestion(cwd, question);
 }
 
+async function defaultSendRunSummary(cwd: string, input: { conversationId: string; runId: string; summary: string; mappedOnly: boolean }) {
+  return defaultDiscordNotifier.sendRunSummary(cwd, input);
+}
+
 async function runInteractiveLane(cwd: string, intervalMs: number, concurrency: number, once: boolean) {
   do {
-    const resumed = await processNextResumableRun(cwd, { resumeRun: defaultResumeRun });
+    const resumed = await processNextResumableRun(cwd, { resumeRun: defaultResumeRun, sendRunSummary: defaultSendRunSummary });
     const delivered = resumed ? undefined : await processNextPendingQuestionDelivery(cwd, { dispatchQuestion: defaultDispatchQuestion });
-    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun }, { concurrency, lane: "interactive" });
-    const processed = resumed ?? delivered ?? processedRuns[0];
+    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun, sendRunSummary: defaultSendRunSummary }, { concurrency, lane: "interactive" });
+    const processed = resumed ?? (delivered?.delivery.status === "failed" ? undefined : delivered) ?? processedRuns[0];
     if (once) return;
     if (!processed) await sleep(intervalMs);
   } while (true);
@@ -529,7 +632,7 @@ async function runInteractiveLane(cwd: string, intervalMs: number, concurrency: 
 
 async function runBackgroundLane(cwd: string, intervalMs: number, concurrency: number, once: boolean) {
   do {
-    const processedRuns = await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun }, { concurrency, lane: "background" });
+    const processedRuns = await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun, sendRunSummary: defaultSendRunSummary }, { concurrency, lane: "background" });
     const processed = processedRuns[0];
     if (once) return;
     if (!processed) await sleep(intervalMs);

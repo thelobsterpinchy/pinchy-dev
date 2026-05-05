@@ -14,7 +14,7 @@ export type StopResult = {
 
 export type RestartSummaryInput = {
   stopped: StopResult[];
-  started: Array<{ name: string; status: "started" | "already_running"; pid: number; logPath: string }>;
+  started: Array<{ name: string; status: "started" | "already_running" | "disabled"; pid: number; logPath: string }>;
 };
 
 export function formatPinchyVersion(version: string) {
@@ -27,10 +27,11 @@ export function summarizeStatusJson(inspections: ManagedServiceInspection[]) {
 
 export function summarizeStatus(inspections: ManagedServiceInspection[]) {
   const runningCount = inspections.filter((inspection) => inspection.status === "running").length;
-  const stoppedCount = inspections.length - runningCount;
+  const disabledCount = inspections.filter((inspection) => inspection.status === "disabled").length;
+  const stoppedCount = inspections.length - runningCount - disabledCount;
   const lines = [
     "[pinchy] Managed service status:",
-    `[pinchy] running=${runningCount} stopped=${stoppedCount}`,
+    `[pinchy] running=${runningCount} stopped=${stoppedCount} disabled=${disabledCount}`,
     ...inspections.map((inspection) => `[pinchy] ${inspection.name}: ${inspection.status}${inspection.pid ? ` (pid ${inspection.pid})` : ""} log=${inspection.logPath}`),
     "[pinchy] Next steps: pinchy up | pinchy logs dashboard | pinchy agent",
   ];
@@ -49,6 +50,9 @@ export function summarizeRestartResults(result: RestartSummaryInput) {
   const lines = [
     "[pinchy] Restarted managed services:",
     ...result.started.map((entry) => {
+      if (entry.status === "disabled") {
+        return `[pinchy] ${entry.name}: disabled log=${entry.logPath}`;
+      }
       const stopped = result.stopped.find((candidate) => candidate.name === entry.name);
       const previous = stopped?.pid ? `replaced pid ${stopped.pid}` : "was not running";
       return `[pinchy] ${entry.name}: restarted (pid ${entry.pid}) ${previous} log=${entry.logPath}`;

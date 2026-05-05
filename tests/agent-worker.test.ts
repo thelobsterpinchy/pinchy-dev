@@ -54,6 +54,35 @@ test("processNextQueuedRun completes the next queued run, writes an agent messag
   });
 });
 
+test("processNextQueuedRun notifies mapped Discord summaries after parent run completion", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Discord mapped run" });
+    const run = createRun(cwd, { conversationId: conversation.id, goal: "Summarize this run" });
+    const summaries: Array<{ conversationId: string; runId: string; summary: string; mappedOnly: boolean }> = [];
+
+    await processNextQueuedRun(cwd, {
+      executeRun: async () => ({
+        kind: "completed",
+        summary: "Completed for Discord.",
+        message: "Done.",
+      }),
+      sendRunSummary: async (_cwd, input) => {
+        summaries.push(input);
+        return undefined;
+      },
+    });
+
+    assert.deepEqual(summaries, [
+      {
+        conversationId: conversation.id,
+        runId: run.id,
+        summary: "Completed for Discord.",
+        mappedOnly: true,
+      },
+    ]);
+  });
+});
+
 test("processNextQueuedRun applies pending scoped agent guidance before execution", async () => {
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Queued agent guidance" });
@@ -228,6 +257,33 @@ test("processAvailableQueuedRuns keeps background work progressing on the backgr
     assert.equal(processed.length, 1);
     assert.equal(processed[0]?.id, backgroundRun.id);
     assert.equal(processed[0]?.kind, "qa_cycle");
+  });
+});
+
+test("processAvailableQueuedRuns keeps successful runs when one parallel run fails", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Parallel failure demo" });
+    const runA = createRun(cwd, { conversationId: conversation.id, goal: "Task A" });
+    const runB = createRun(cwd, { conversationId: conversation.id, goal: "Task B" });
+    const runC = createRun(cwd, { conversationId: conversation.id, goal: "Task C" });
+
+    const processed = await processAvailableQueuedRuns(cwd, {
+      executeRun: async (run) => {
+        if (run.id === runB.id) {
+          throw new Error("provider failed");
+        }
+        return {
+          summary: `Completed: ${run.goal}`,
+          message: `Finished run ${run.id}`,
+        };
+      },
+    }, { concurrency: 2 });
+
+    const runs = listRuns(cwd, conversation.id);
+    assert.deepEqual(processed.map((run) => run.id).sort(), [runA.id, runC.id].sort());
+    assert.equal(runs.find((run) => run.id === runA.id)?.status, "completed");
+    assert.equal(runs.find((run) => run.id === runB.id)?.status, "failed");
+    assert.equal(runs.find((run) => run.id === runC.id)?.status, "completed");
   });
 });
 
@@ -627,6 +683,39 @@ test("processNextResumableRun returns undefined when no answered waiting run exi
   });
 });
 
+test("processNextResumableRun fails answered waiting runs that cannot be resumed without a session path", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Broken resume demo" });
+    const run = createRun(cwd, { conversationId: conversation.id, goal: "Continue after clarification" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer" });
+    const question = createQuestion(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      prompt: "Should I continue?",
+      priority: "normal",
+      channelHints: ["dashboard"],
+    });
+    createHumanReply(cwd, {
+      conversationId: conversation.id,
+      questionId: question.id,
+      channel: "dashboard",
+      content: "Yes",
+    });
+    markQuestionAnswered(cwd, question.id);
+
+    const processed = await processNextResumableRun(cwd, {
+      resumeRun: async () => {
+        throw new Error("should not resume");
+      },
+    });
+
+    const persistedRun = listRuns(cwd, conversation.id).find((entry) => entry.id === run.id);
+    assert.equal(processed?.id, run.id);
+    assert.equal(persistedRun?.status, "failed");
+    assert.match(persistedRun?.blockedReason ?? "", /sessionPath/i);
+  });
+});
+
 test("processNextPendingQuestionDelivery dispatches the next blocked question and persists a delivery", async () => {
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Blocked run" });
@@ -655,6 +744,35 @@ test("processNextPendingQuestionDelivery dispatches the next blocked question an
     assert.equal(sent?.question.id, question.id);
     assert.equal(listNotificationDeliveries(cwd).length, 1);
     assert.equal(listNotificationDeliveries(cwd)[0]?.questionId, question.id);
+  });
+});
+
+test("processNextPendingQuestionDelivery leaves failed deliveries pending for retry", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Blocked run" });
+    const run = createRun(cwd, { conversationId: conversation.id, goal: "Need clarification" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need provider decision" });
+    const question = createQuestion(cwd, {
+      conversationId: conversation.id,
+      runId: run.id,
+      prompt: "Should I use local JSON or SQLite?",
+      priority: "normal",
+      channelHints: ["discord"],
+    });
+
+    const failed = await processNextPendingQuestionDelivery(cwd, {
+      dispatchQuestion: async (dispatchCwd, scheduledQuestion) => createNotificationDelivery(dispatchCwd, {
+        channel: "discord",
+        status: "failed",
+        questionId: scheduledQuestion.id,
+        runId: scheduledQuestion.runId,
+        error: "PINCHY_DISCORD_WEBHOOK_URL is not configured",
+      }),
+    });
+
+    assert.equal(failed?.question.id, question.id);
+    assert.equal(listQuestions(cwd, conversation.id)[0]?.status, "pending_delivery");
+    assert.equal(listNotificationDeliveries(cwd)[0]?.status, "failed");
   });
 });
 

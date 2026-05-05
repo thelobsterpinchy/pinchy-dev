@@ -95,6 +95,130 @@ test("ChatView labels the thinking stage with Pinchy's name", () => {
   assert.match(html, /Pinchy is thinking/);
 });
 
+test("ChatView empty conversation shows operator-console onboarding", () => {
+  const html = renderToStaticMarkup(
+    <ChatView
+      conversationState={{
+        conversation: { id: "conversation-1", title: "New", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" },
+        messages: [],
+        runs: [],
+        questions: [],
+        replies: [],
+        deliveries: [],
+        runActivities: [],
+      }}
+      selectedConversation={{ id: "conversation-1", title: "New", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" }}
+      onSendMessage={async () => {}}
+      isLoading={false}
+      onToggleLeftSidebar={() => {}}
+      onToggleRightSidebar={() => {}}
+      isLeftSidebarOpen={true}
+      isRightSidebarOpen={true}
+    />,
+  );
+
+  assert.match(html, /Pinchy operator console/);
+  assert.match(html, /Always-on home/);
+  assert.match(html, /Control the autonomous Pinchy thread/);
+  assert.doesNotMatch(html, /How can Pinchy help\?/);
+});
+
+test("ChatView renders pending question inline reply controls", () => {
+  const html = renderToStaticMarkup(
+    <ChatView
+      conversationState={{
+        conversation: { id: "conversation-1", title: "Question", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" },
+        messages: [],
+        runs: [],
+        questions: [
+          { id: "question-1", conversationId: "conversation-1", runId: "run-1", prompt: "Should Pinchy continue through the risky step?", status: "waiting_for_human", priority: "high", createdAt: "2026-04-25T00:00:00.000Z", channelHints: ["dashboard", "discord"] },
+        ],
+        replies: [],
+        deliveries: [
+          { id: "delivery-1", channel: "discord", status: "failed", questionId: "question-1", runId: "run-1", failedAt: "2026-04-25T00:00:01.000Z", error: "PINCHY_DISCORD_WEBHOOK_URL is not configured" },
+        ],
+        runActivities: [],
+      }}
+      selectedConversation={{ id: "conversation-1", title: "Question", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" }}
+      onSendMessage={async () => {}}
+      onReplyToQuestion={async () => {}}
+      isLoading={false}
+      onToggleLeftSidebar={() => {}}
+      onToggleRightSidebar={() => {}}
+      isLeftSidebarOpen={true}
+      isRightSidebarOpen={true}
+    />,
+  );
+
+  assert.match(html, /Pinchy needs input/);
+  assert.match(html, /Should Pinchy continue through the risky step\?/);
+  assert.match(html, /pending-question-reply-input/);
+  assert.match(html, /pending-question-reply-submit/);
+  assert.match(html, /unconfigured/);
+});
+
+test("ChatView exposes active run cancel action", () => {
+  const html = renderToStaticMarkup(
+    <ChatView
+      conversationState={{
+        conversation: { id: "conversation-1", title: "Active", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" },
+        messages: [],
+        runs: [
+          { id: "run-1", conversationId: "conversation-1", goal: "Keep working autonomously", kind: "autonomous_goal", status: "running", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:01.000Z" },
+        ],
+        questions: [],
+        replies: [],
+        deliveries: [],
+        runActivities: [],
+      }}
+      selectedConversation={{ id: "conversation-1", title: "Active", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" }}
+      onSendMessage={async () => {}}
+      onCancelRun={async () => {}}
+      isLoading={false}
+      onToggleLeftSidebar={() => {}}
+      onToggleRightSidebar={() => {}}
+      isLeftSidebarOpen={true}
+      isRightSidebarOpen={true}
+    />,
+  );
+
+  assert.match(html, /Active run/);
+  assert.match(html, /Keep working autonomously/);
+  assert.match(html, /active-run-cancel/);
+});
+
+test("ChatView delegated task summary exposes inspect action", () => {
+  const html = renderToStaticMarkup(
+    <ChatView
+      conversationState={{
+        conversation: { id: "conversation-1", title: "Delegation", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" },
+        messages: [],
+        runs: [],
+        questions: [],
+        replies: [],
+        deliveries: [],
+        runActivities: [],
+      }}
+      selectedConversation={{ id: "conversation-1", title: "Delegation", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z", status: "active" }}
+      tasks={[
+        { id: "task-1", title: "Inspect worker", prompt: "Inspect worker", status: "running", conversationId: "conversation-1", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:01.000Z" },
+      ]}
+      onSendMessage={async () => {}}
+      onSelectAgentTask={() => {}}
+      isLoading={false}
+      onToggleLeftSidebar={() => {}}
+      onToggleRightSidebar={() => {}}
+      isLeftSidebarOpen={true}
+      isRightSidebarOpen={true}
+    />,
+  );
+
+  assert.match(html, /Delegated execution/);
+  assert.match(html, /Inspect worker/);
+  assert.match(html, /inspect-agent-task-task-1/);
+  assert.match(html, /inspect execution/);
+});
+
 test("ChatView only shows the final completed agent reply in the chat transcript", () => {
   const html = renderToStaticMarkup(
     <ChatView
@@ -216,7 +340,8 @@ test("ChatView hides standalone orchestration artifacts from the main chat trans
 
   assert.match(html, /What happened\?/);
   assert.doesNotMatch(html, /The delegated agent finished a bounded task\./);
-  assert.doesNotMatch(html, /Final synthesis summary: delegated work for this thread is complete\./);
+  assert.match(html, /Latest synthesis/);
+  assert.match(html, /Final synthesis summary: delegated work for this thread is complete\./);
   assert.doesNotMatch(html, /Pinchy plan/);
   assert.doesNotMatch(html, /Pinchy synthesis/);
 });
@@ -279,7 +404,8 @@ test("ChatView prefers the plain human-facing reply over later synthesis artifac
   );
 
   assert.match(html, /I fixed it — the scroll now lands at the bottom\./);
-  assert.doesNotMatch(html, /Final synthesis summary: delegated work for this thread is complete\./);
+  assert.match(html, /Latest synthesis/);
+  assert.match(html, /Final synthesis summary: delegated work for this thread is complete\./);
 });
 
 test("ChatView keeps completed run chatter in the thinking path and only shows the later plain parent-thread answer", () => {
