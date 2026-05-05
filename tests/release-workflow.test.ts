@@ -30,6 +30,18 @@ test("release workflow uses the shared release verification script before npm pu
   assert.match(script, /packaged install smoke/);
 });
 
+test("main push workflow auto-tags package versions with release guardrails", () => {
+  const workflow = readFileSync(".github/workflows/tag-release.yml", "utf8");
+
+  assert.match(workflow, /branches:\n\s+- main/);
+  assert.match(workflow, /permissions:\n\s+contents: write/);
+  assert.match(workflow, /require\('\.\/package\.json'\)\.version/);
+  assert.match(workflow, /grep -Eq "\^##\[\[:space:\]\]\+\$version\(\[\[:space:\]\]\|\$\)"/);
+  assert.match(workflow, /git rev-parse "\$tag"/);
+  assert.match(workflow, /git tag -a "\$tag" -m "Release \$tag"/);
+  assert.match(workflow, /git push origin "\$tag"/);
+});
+
 test("architecture docs make Pinchy orchestration the autonomous user-facing layer", () => {
   const architecture = readFileSync("docs/ARCHITECTURE.md", "utf8");
 

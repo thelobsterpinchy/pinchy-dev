@@ -1,0 +1,44 @@
+name: tag-release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read package version
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require changelog entry
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if ! grep -Eq "^##[[:space:]]+$version([[:space:]]|$)" CHANGELOG.md; then
+            echo "CHANGELOG.md must include a '## $version' entry before this release can be tagged."
+            exit 1
+          fi
+
+      - name: Create version tag if missing
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "$tag already exists; skipping release tag creation."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
