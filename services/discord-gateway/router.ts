@@ -27,7 +27,9 @@ export type DiscordGatewayRouteResult =
   | { action: "ignored"; reason: string }
   | { action: "created_conversation"; conversationId: string; runId: string; threadId: string }
   | { action: "queued_run"; conversationId: string; runId: string; threadId: string }
-  | { action: "answered_question"; conversationId: string; questionId: string; threadId: string };
+  | { action: "answered_question"; conversationId: string; questionId: string; threadId: string }
+  | { action: "reported_status"; conversationId: string; threadId: string }
+  | { action: "reported_help"; conversationId: string; threadId: string };
 
 const PENDING_QUESTION_STATUSES = new Set<Question["status"]>(["pending_delivery", "waiting_for_human"]);
 
@@ -80,6 +82,68 @@ function findLatestPendingQuestion(questions: Question[]) {
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
 }
 
+function isStatusCommand(prompt: string) {
+  return /^(status|what'?s happening|where are we)\??$/i.test(prompt.trim());
+}
+
+function isHelpCommand(prompt: string) {
+  return /^(help|\?|commands)\??$/i.test(prompt.trim());
+}
+
+function buildDiscordHelpMessage() {
+  return [
+    "Pinchy remote control",
+    "",
+    "- Reply with `status` to see what Pinchy is doing.",
+    "- If Pinchy asks a question, your next normal reply will answer that question.",
+    "- Otherwise, any normal reply queues a new objective in this same Pinchy thread.",
+    "- Open the dashboard for the full transcript, delegated agents, and cancel controls.",
+  ].join("\n");
+}
+
+function buildDiscordStatusMessage(conversationState: Awaited<ReturnType<DiscordGatewayApiClient["fetchConversationState"]>>) {
+  const pendingQuestion = findLatestPendingQuestion(conversationState.questions);
+  const activeRun = [...conversationState.runs]
+    .filter((run) => run.status === "queued" || run.status === "planning" || run.status === "running" || run.status === "waiting_for_human" || run.status === "waiting_for_approval")
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  const latestCompletedRun = [...conversationState.runs]
+    .filter((run) => run.status === "completed" || run.status === "failed" || run.status === "cancelled")
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+
+  if (pendingQuestion) {
+    return [
+      "Pinchy status",
+      "",
+      `Pinchy is waiting for your answer: ${pendingQuestion.prompt}`,
+      activeRun ? `Run: ${activeRun.goal}` : undefined,
+    ].filter(Boolean).join("\n");
+  }
+
+  if (activeRun) {
+    return [
+      "Pinchy status",
+      "",
+      `Pinchy is ${activeRun.status.replaceAll("_", " ")}: ${activeRun.goal}`,
+      "Reply with a new instruction to steer or queue follow-up work.",
+    ].join("\n");
+  }
+
+  if (latestCompletedRun) {
+    return [
+      "Pinchy status",
+      "",
+      `Latest run is ${latestCompletedRun.status}: ${latestCompletedRun.summary ?? latestCompletedRun.goal}`,
+      "Reply with the next objective when you are ready.",
+    ].join("\n");
+  }
+
+  return [
+    "Pinchy status",
+    "",
+    "Pinchy is ready for the next objective in this thread.",
+  ].join("\n");
+}
+
 async function acknowledge(runtime: DiscordGatewayRuntime, channelId: string, content: string) {
   try {
     await runtime.sendMessage?.({ channelId, content });
@@ -112,7 +176,25 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
       return { action: "ignored", reason: "thread is not mapped to a Pinchy conversation" };
     }
 
+    if (isHelpCommand(prompt)) {
+      await acknowledge(runtime, message.threadId, buildDiscordHelpMessage());
+      return {
+        action: "reported_help",
+        conversationId: mapping.conversationId,
+        threadId: message.threadId,
+      };
+    }
+
     const conversationState = await runtime.apiClient.fetchConversationState(mapping.conversationId);
+    if (isStatusCommand(prompt)) {
+      await acknowledge(runtime, message.threadId, buildDiscordStatusMessage(conversationState));
+      return {
+        action: "reported_status",
+        conversationId: mapping.conversationId,
+        threadId: message.threadId,
+      };
+    }
+
     const pendingQuestion = findLatestPendingQuestion(conversationState.questions);
     if (pendingQuestion) {
       await runtime.apiClient.replyToQuestion({
@@ -121,7 +203,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
         content: prompt,
         rawPayload: buildRawPayload(message),
       });
-      await acknowledge(runtime, message.threadId, `Answered Pinchy question ${pendingQuestion.id}.`);
+      await acknowledge(runtime, message.threadId, `Answer received. Pinchy can continue run ${pendingQuestion.runId}.`);
       return {
         action: "answered_question",
         conversationId: mapping.conversationId,
@@ -140,7 +222,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
       goal: prompt,
       kind: "user_prompt",
     });
-    await acknowledge(runtime, message.threadId, `Queued Pinchy run ${run.id}.`);
+    await acknowledge(runtime, message.threadId, `Queued the next Pinchy objective.\n\nRun: ${run.id}\nGoal: ${run.goal}`);
     return {
       action: "queued_run",
       conversationId: mapping.conversationId,
@@ -181,7 +263,14 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
     goal: prompt,
     kind: "user_prompt",
   });
-  await acknowledge(runtime, thread.threadId, `Queued Pinchy run ${run.id}.`);
+  await acknowledge(runtime, thread.threadId, [
+    "Pinchy is on it.",
+    "",
+    `Run: ${run.id}`,
+    `Goal: ${run.goal}`,
+    "",
+    "Reply in this thread to steer the work, answer questions, or queue the next objective. Reply with `status` any time.",
+  ].join("\n"));
 
   return {
     action: "created_conversation",

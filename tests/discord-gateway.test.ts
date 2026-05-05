@@ -154,7 +154,8 @@ test("discord router creates a thread, conversation, message, and run from an al
       "createRun:conversation-1:Fix the failing dashboard test:user_prompt",
     ]);
     assert.equal(acknowledgements[0]?.channelId, "thread-1");
-    assert.match(acknowledgements[0]?.content ?? "", /Queued Pinchy run run-1/);
+    assert.match(acknowledgements[0]?.content ?? "", /Pinchy is on it/);
+    assert.match(acknowledgements[0]?.content ?? "", /Reply with `status`/);
   });
 });
 
@@ -196,7 +197,7 @@ test("discord router answers the latest pending question in a mapped thread", as
       "fetchConversationState:conversation-1",
       "replyToQuestion:question-1:Use the smallest fix.",
     ]);
-    assert.match(acknowledgements[0]?.content ?? "", /Answered Pinchy question question-1/);
+    assert.match(acknowledgements[0]?.content ?? "", /Answer received/);
   });
 });
 
@@ -230,6 +231,86 @@ test("discord router queues a new run in a mapped thread when no question is pen
       "appendMessage:conversation-1:Continue with tests.",
       "createRun:conversation-1:Continue with tests.:user_prompt",
     ]);
+  });
+});
+
+test("discord router reports mapped thread status without queueing a new run", async () => {
+  await withTempDir(async (cwd) => {
+    upsertDiscordThreadMapping(cwd, {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      threadId: "thread-1",
+      conversationId: "conversation-1",
+    });
+    const { apiClient, calls } = createMockApiClient({
+      runs: [
+        { id: "run-1", conversationId: "conversation-1", goal: "Fix login", kind: "user_prompt", status: "running", createdAt: "", updatedAt: "" },
+      ],
+      questions: [
+        { id: "question-1", conversationId: "conversation-1", runId: "run-1", prompt: "Which auth provider?", status: "waiting_for_human", priority: "high", createdAt: "2026-05-05T00:00:00.000Z" },
+      ],
+    });
+    const acknowledgements: Array<{ channelId: string; content: string }> = [];
+
+    const result = await routeDiscordGatewayMessage({
+      id: "message-2",
+      guildId: "guild-1",
+      channelId: "thread-1",
+      threadId: "thread-1",
+      authorId: "user-1",
+      content: "status",
+    }, {
+      cwd,
+      config,
+      apiClient,
+      createThread: async () => ({ threadId: "unused" }),
+      sendMessage: async (input) => {
+        acknowledgements.push(input);
+        return { id: "ack-1" };
+      },
+    });
+
+    assert.equal(result.action, "reported_status");
+    assert.deepEqual(calls, ["fetchConversationState:conversation-1"]);
+    assert.match(acknowledgements[0]?.content ?? "", /Pinchy status/);
+    assert.match(acknowledgements[0]?.content ?? "", /waiting for your answer/i);
+    assert.match(acknowledgements[0]?.content ?? "", /Fix login/);
+  });
+});
+
+test("discord router shows help in mapped threads without queueing a new run", async () => {
+  await withTempDir(async (cwd) => {
+    upsertDiscordThreadMapping(cwd, {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      threadId: "thread-1",
+      conversationId: "conversation-1",
+    });
+    const { apiClient, calls } = createMockApiClient();
+    const acknowledgements: Array<{ channelId: string; content: string }> = [];
+
+    const result = await routeDiscordGatewayMessage({
+      id: "message-2",
+      guildId: "guild-1",
+      channelId: "thread-1",
+      threadId: "thread-1",
+      authorId: "user-1",
+      content: "help",
+    }, {
+      cwd,
+      config,
+      apiClient,
+      createThread: async () => ({ threadId: "unused" }),
+      sendMessage: async (input) => {
+        acknowledgements.push(input);
+        return { id: "ack-1" };
+      },
+    });
+
+    assert.equal(result.action, "reported_help");
+    assert.deepEqual(calls, []);
+    assert.match(acknowledgements[0]?.content ?? "", /Reply with `status`/);
+    assert.match(acknowledgements[0]?.content ?? "", /answer that question/);
   });
 });
 

@@ -288,11 +288,19 @@ function OrchestrationHome({
           <h2 className="text-lg font-semibold text-gray-100">{state.title}</h2>
           <Badge className={cn(
             "border px-2 py-0.5 text-[10px] uppercase",
-            state.attentionLevel === "needs-input" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : state.attentionLevel === "working" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-600 bg-slate-900 text-slate-300",
-          )}>{state.attentionLevel === "needs-input" ? "needs input" : state.attentionLevel}</Badge>
+            state.attentionLevel === "needs-input" || state.attentionLevel === "needs-attention" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : state.attentionLevel === "working" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-600 bg-slate-900 text-slate-300",
+          )}>{state.attentionLevel === "needs-input" ? "needs input" : state.attentionLevel === "needs-attention" ? "needs attention" : state.attentionLevel}</Badge>
         </div>
         <p className="text-sm text-gray-400">{state.subtitle}</p>
       </div>
+
+      <ConsolePanel title="Current state" eyebrow={state.operatorStatus.tone.replace("-", " ")}>
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-gray-100">{state.operatorStatus.headline}</p>
+          <p className="text-sm leading-relaxed text-gray-300">{state.operatorStatus.detail}</p>
+          <p className="text-xs text-gray-500">{state.operatorStatus.actionLabel}</p>
+        </div>
+      </ConsolePanel>
 
       {state.showOperatorOnboarding && (
         <ConsolePanel title="Always-on home" eyebrow="operator console">
@@ -395,7 +403,7 @@ function OrchestrationHome({
                   className="flex w-full items-center justify-between gap-3 rounded-md border border-[#273244] bg-[#0b1220] px-3 py-2 text-left text-sm transition-colors hover:border-[#3b475b]"
                 >
                   <span className="min-w-0 truncate text-gray-200"><Workflow className="mr-2 inline h-4 w-4 text-blue-300" />{task.title}</span>
-                  <span className="shrink-0 text-xs text-gray-500">inspect execution</span>
+                  <span className="shrink-0 text-xs text-gray-500">{task.dependencyLabel ?? "inspect execution"}</span>
                 </button>
               ))}
             </div>

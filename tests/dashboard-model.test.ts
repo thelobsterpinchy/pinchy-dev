@@ -178,6 +178,8 @@ test("buildOrchestrationHomeState exposes active autonomous run details", () => 
   assert.equal(state.activeRun?.statusLabel, "running");
   assert.equal(state.activeRun?.elapsedLabel, "12 sec active");
   assert.equal(state.activeRun?.canCancel, true);
+  assert.equal(state.operatorStatus.headline, "Pinchy is working");
+  assert.match(state.operatorStatus.detail, /Keep improving the dashboard/);
 });
 
 test("buildOrchestrationHomeState prioritizes pending questions above normal chat status", () => {
@@ -203,6 +205,32 @@ test("buildOrchestrationHomeState prioritizes pending questions above normal cha
   assert.equal(state.pendingQuestion?.id, "question-2");
   assert.equal(state.pendingQuestion?.priorityLabel, "urgent");
   assert.equal(state.pendingQuestion?.deliveryChannels[0]?.label, "dashboard delivered");
+  assert.equal(state.operatorStatus.headline, "Pinchy is waiting for you");
+  assert.match(state.operatorStatus.detail, /Urgent decision/);
+});
+
+test("buildOrchestrationHomeState explains blocked delegated work in customer-facing language", () => {
+  const state = buildOrchestrationHomeState({
+    conversationState: {
+      conversation: { id: "conversation-1", title: "Blocked work", status: "active", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z" },
+      messages: [],
+      runs: [],
+      questions: [],
+      replies: [],
+      deliveries: [],
+      runActivities: [],
+    },
+    tasks: [
+      { id: "task-1", title: "Fix login", prompt: "Fix login", status: "blocked", conversationId: "conversation-1", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:03.000Z" },
+      { id: "task-2", title: "Verify login", prompt: "Verify login", status: "pending", conversationId: "conversation-1", dependsOnTaskIds: ["task-1"], createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:02.000Z" },
+    ],
+  });
+
+  assert.equal(state.attentionLevel, "needs-attention");
+  assert.equal(state.operatorStatus.headline, "Pinchy is blocked");
+  assert.match(state.operatorStatus.detail, /Fix login/);
+  assert.equal(state.delegatedExecution.topTasks[0]?.dependencyLabel, undefined);
+  assert.equal(state.delegatedExecution.topTasks[1]?.dependencyLabel, "blocked by Fix login");
 });
 
 test("buildLatestResultState prefers orchestration final, then run summary, then final agent reply", () => {
