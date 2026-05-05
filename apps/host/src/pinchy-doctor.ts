@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { chromium } from "playwright";
+import { loadDiscordGatewayConfig } from "../../../services/discord-gateway/config.js";
 
 export type PinchyDoctorCheckStatus = "ok" | "warn" | "fail";
 
@@ -27,6 +28,7 @@ export type PinchyDoctorDependencies = {
   pathExists?: (path: string) => boolean;
   commandExists?: (command: string) => boolean;
   resolvePlaywrightBrowserPath?: () => string | undefined;
+  env?: NodeJS.ProcessEnv;
 };
 
 function hasLocalModelSupport(hasCommand: (command: string) => boolean) {
@@ -64,6 +66,7 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
   const pathExists = dependencies.pathExists ?? existsSync;
   const hasCommand = dependencies.commandExists ?? commandExists;
   const getPlaywrightBrowserPath = dependencies.resolvePlaywrightBrowserPath ?? resolvePlaywrightBrowserPath;
+  const env = dependencies.env ?? process.env;
 
   const checks: PinchyDoctorCheck[] = [];
 
@@ -127,6 +130,31 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
     message: hasCommand("tesseract") ? "tesseract is available for OCR-driven tooling." : "tesseract is not installed; OCR/text-driven flows stay limited.",
     hint: hasCommand("tesseract") ? undefined : "Install with `brew install tesseract`.",
   });
+
+  const discordConfig = loadDiscordGatewayConfig(env);
+  if (!discordConfig.enabled) {
+    checks.push({
+      name: "discord_bot",
+      status: "warn",
+      message: "Discord bot gateway is not configured.",
+      hint: "Set PINCHY_DISCORD_BOT_TOKEN, PINCHY_API_TOKEN, PINCHY_DISCORD_ALLOWED_GUILD_IDS, and PINCHY_DISCORD_ALLOWED_CHANNEL_IDS to enable Discord control.",
+    });
+  } else {
+    const missing: string[] = [];
+    if (!discordConfig.apiToken) missing.push("PINCHY_API_TOKEN");
+    if (discordConfig.allowedGuildIds.length === 0) missing.push("PINCHY_DISCORD_ALLOWED_GUILD_IDS");
+    if (discordConfig.allowedChannelIds.length === 0) missing.push("PINCHY_DISCORD_ALLOWED_CHANNEL_IDS");
+    checks.push({
+      name: "discord_bot",
+      status: missing.length === 0 ? "ok" : "fail",
+      message: missing.length === 0
+        ? "Discord bot gateway environment is configured."
+        : `Discord bot gateway is missing required settings: ${missing.join(", ")}.`,
+      hint: missing.length === 0
+        ? "Ensure the Discord app has Message Content Intent and channel permissions: view/send messages, create public threads, send in threads, and read message history."
+        : "Set the missing environment variables before running `pinchy up`.",
+    });
+  }
 
   return {
     cwd,

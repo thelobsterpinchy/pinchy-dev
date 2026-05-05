@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { DashboardState, PinchyTask, SavedMemory } from "../packages/shared/src/contracts.js";
-import { buildAgentChatChromeState, buildAgentSessionState, buildChatWorkbenchState, buildChatWorkspacePanelState, buildConversationAgentListState, buildConversationComposerState, buildConversationDetailsProgressState, buildConversationListEntryPresentation, buildConversationOnboardingPresets, buildConversationOrchestrationState, buildConversationShellHeaderState, buildConversationThinkingState, buildConversationTranscriptState, buildDashboardSidebarState, buildDashboardUtilityRailState, buildGlobalPromptState, buildMemoryDraftFromMessage, buildMemoryDraftFromQuestion, buildRunHeadline, buildSettingsConfigurationState, buildTranscriptMessagePresentation, decideTranscriptFollowUp, filterDashboardArtifacts, filterSavedMemories, mergeSettingsDraftWithFetchedSettings, parseDelegationPlanDraft, resolveConversationRouteAfterRefresh, resolveConversationShellInitialState, resolveDashboardLandingPage, resolveWorkspaceConversationSelection, summarizeConversationWorkspace, summarizeConversationWorkspacePresence, summarizeDashboardState, workspaceConversationSelectionStorageKey } from "../apps/dashboard/src/dashboard-model.js";
+import { buildAgentChatChromeState, buildAgentSessionState, buildChatWorkbenchState, buildChatWorkspacePanelState, buildConversationAgentListState, buildConversationComposerState, buildConversationDetailsProgressState, buildConversationListEntryPresentation, buildConversationOnboardingPresets, buildConversationOrchestrationState, buildConversationShellHeaderState, buildConversationThinkingState, buildConversationTranscriptState, buildDashboardSidebarState, buildDashboardUtilityRailState, buildGlobalPromptState, buildLatestResultState, buildMemoryDraftFromMessage, buildMemoryDraftFromQuestion, buildOrchestrationHomeState, buildRemoteChannelState, buildRunHeadline, buildSettingsConfigurationState, buildTranscriptMessagePresentation, decideTranscriptFollowUp, filterDashboardArtifacts, filterSavedMemories, mergeSettingsDraftWithFetchedSettings, parseDelegationPlanDraft, resolveConversationRouteAfterRefresh, resolveConversationShellInitialState, resolveDashboardLandingPage, resolveWorkspaceConversationSelection, summarizeConversationWorkspace, summarizeConversationWorkspacePresence, summarizeDashboardState, workspaceConversationSelectionStorageKey } from "../apps/dashboard/src/dashboard-model.js";
 
 test("filterSavedMemories matches title, content, and tags", () => {
   const memories: SavedMemory[] = [
@@ -154,6 +154,129 @@ test("buildConversationThinkingState excludes orchestration-only artifacts from 
     elapsedSeconds: 6,
     details: ["Goal: Fix the chat UI"],
   });
+});
+
+test("buildOrchestrationHomeState exposes active autonomous run details", () => {
+  const state = buildOrchestrationHomeState({
+    conversationState: {
+      conversation: { id: "conversation-1", title: "Autonomy", status: "active", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z" },
+      messages: [],
+      runs: [
+        { id: "run-1", conversationId: "conversation-1", goal: "Keep improving the dashboard", kind: "autonomous_goal", status: "running", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:05.000Z" },
+      ],
+      questions: [],
+      replies: [],
+      deliveries: [],
+      runActivities: [],
+    },
+    tasks: [],
+    now: "2026-04-25T00:00:12.000Z",
+  });
+
+  assert.equal(state.activeRun?.id, "run-1");
+  assert.equal(state.activeRun?.goal, "Keep improving the dashboard");
+  assert.equal(state.activeRun?.statusLabel, "running");
+  assert.equal(state.activeRun?.elapsedLabel, "12 sec active");
+  assert.equal(state.activeRun?.canCancel, true);
+});
+
+test("buildOrchestrationHomeState prioritizes pending questions above normal chat status", () => {
+  const state = buildOrchestrationHomeState({
+    conversationState: {
+      conversation: { id: "conversation-1", title: "Question", status: "active", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z" },
+      messages: [],
+      runs: [],
+      questions: [
+        { id: "question-1", conversationId: "conversation-1", runId: "run-1", prompt: "Normal decision?", status: "waiting_for_human", priority: "normal", createdAt: "2026-04-25T00:00:00.000Z" },
+        { id: "question-2", conversationId: "conversation-1", runId: "run-1", prompt: "Urgent decision?", status: "waiting_for_human", priority: "urgent", createdAt: "2026-04-25T00:00:01.000Z", channelHints: ["dashboard", "discord"] },
+      ],
+      replies: [],
+      deliveries: [
+        { id: "delivery-1", questionId: "question-2", runId: "run-1", channel: "dashboard", status: "delivered", deliveredAt: "2026-04-25T00:00:02.000Z" },
+      ],
+      runActivities: [],
+    },
+    tasks: [],
+  });
+
+  assert.equal(state.attentionLevel, "needs-input");
+  assert.equal(state.pendingQuestion?.id, "question-2");
+  assert.equal(state.pendingQuestion?.priorityLabel, "urgent");
+  assert.equal(state.pendingQuestion?.deliveryChannels[0]?.label, "dashboard delivered");
+});
+
+test("buildLatestResultState prefers orchestration final, then run summary, then final agent reply", () => {
+  const baseRun = { id: "run-1", conversationId: "conversation-1", goal: "Ship", kind: "user_prompt" as const, status: "completed" as const, createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:04.000Z" };
+
+  assert.equal(buildLatestResultState({
+    messages: [
+      { id: "message-1", conversationId: "conversation-1", role: "agent", runId: "run-1", kind: "default", content: "Plain answer", createdAt: "2026-04-25T00:00:02.000Z" },
+      { id: "message-2", conversationId: "conversation-1", role: "agent", runId: "run-1", kind: "orchestration_final", content: "Synthesis wins", createdAt: "2026-04-25T00:00:03.000Z" },
+    ],
+    runs: [{ ...baseRun, summary: "Run summary" }],
+  })?.content, "Synthesis wins");
+
+  assert.equal(buildLatestResultState({
+    messages: [
+      { id: "message-1", conversationId: "conversation-1", role: "agent", runId: "run-1", kind: "default", content: "Plain answer", createdAt: "2026-04-25T00:00:02.000Z" },
+    ],
+    runs: [{ ...baseRun, summary: "Run summary" }],
+  })?.content, "Run summary");
+
+  assert.equal(buildLatestResultState({
+    messages: [
+      { id: "message-1", conversationId: "conversation-1", role: "agent", runId: "run-1", kind: "default", content: "Plain answer", createdAt: "2026-04-25T00:00:02.000Z" },
+    ],
+    runs: [baseRun],
+  })?.content, "Plain answer");
+});
+
+test("buildOrchestrationHomeState counts linked delegated execution by status", () => {
+  const tasks: PinchyTask[] = [
+    { id: "task-1", title: "Run", prompt: "Run", status: "running", conversationId: "conversation-1", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:04.000Z" },
+    { id: "task-2", title: "Block", prompt: "Block", status: "blocked", conversationId: "conversation-1", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:03.000Z" },
+    { id: "task-3", title: "Done", prompt: "Done", status: "done", conversationId: "conversation-1", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:02.000Z" },
+    { id: "task-4", title: "Other", prompt: "Other", status: "pending", conversationId: "conversation-2", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:01.000Z" },
+  ];
+
+  const state = buildOrchestrationHomeState({
+    conversationState: {
+      conversation: { id: "conversation-1", title: "Delegation", status: "active", createdAt: "2026-04-25T00:00:00.000Z", updatedAt: "2026-04-25T00:00:00.000Z" },
+      messages: [],
+      runs: [],
+      questions: [],
+      replies: [],
+      deliveries: [],
+      runActivities: [],
+    },
+    tasks,
+  });
+
+  assert.deepEqual(state.delegatedExecution.counts, { pending: 0, running: 1, blocked: 1, done: 1 });
+  assert.deepEqual(state.delegatedExecution.topTasks.map((task) => task.id), ["task-1", "task-2"]);
+});
+
+test("buildRemoteChannelState maps Discord delivery states from existing records", () => {
+  assert.equal(buildRemoteChannelState({
+    deliveries: [
+      { id: "delivery-1", channel: "discord", status: "sent", sentAt: "2026-04-25T00:00:00.000Z" },
+    ],
+  }).find((channel) => channel.id === "discord")?.status, "sent");
+
+  const failed = buildRemoteChannelState({
+    deliveries: [
+      { id: "delivery-2", channel: "discord", status: "failed", failedAt: "2026-04-25T00:00:00.000Z", error: "Discord webhook failed: 500" },
+    ],
+  }).find((channel) => channel.id === "discord");
+  assert.equal(failed?.status, "failed");
+  assert.equal(failed?.detail, "Discord webhook failed: 500");
+
+  const unconfigured = buildRemoteChannelState({
+    deliveries: [
+      { id: "delivery-3", channel: "discord", status: "failed", failedAt: "2026-04-25T00:00:00.000Z", error: "PINCHY_DISCORD_WEBHOOK_URL is not configured" },
+    ],
+  }).find((channel) => channel.id === "discord");
+  assert.equal(unconfigured?.status, "unconfigured");
 });
 
 test("summarizeConversationWorkspacePresence explains the active workspace and empty thread state", () => {

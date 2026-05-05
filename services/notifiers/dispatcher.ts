@@ -23,6 +23,7 @@ export function createQuestionDeliveryDispatcher(dependencies: QuestionDispatche
         return sendDiscordQuestion(cwd, {
           questionId: question.id,
           runId: question.runId,
+          conversationId: question.conversationId,
           prompt: question.prompt,
           conversationTitle,
         });

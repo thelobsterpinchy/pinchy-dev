@@ -7,6 +7,31 @@ import { join } from "node:path";
 import { createConversation, createRun, listAgentGuidances, listMessages, listRunCancellationRequests, updateRunStatus } from "../apps/host/src/agent-state-store.js";
 import { createDashboardServer } from "../apps/host/src/dashboard.js";
 
+async function closeHttpServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+  });
+}
+
+async function listenHttpServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      server.off("error", onError);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      cleanup();
+      resolve();
+    });
+  });
+}
+
 async function withServer(
   run: (args: { cwd: string; baseUrl: string; agentDir: string }) => Promise<void>,
   options: {
@@ -22,7 +47,7 @@ async function withServer(
   const agentDir = options.agentDir ?? join(cwd, ".pi-agent");
   mkdirSync(agentDir, { recursive: true });
   const server = createDashboardServer({ cwd, port: 0, controlPlaneApiBaseUrl: options.controlPlaneApiBaseUrl, agentDir, agentSessionController: options.agentSessionController });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  await listenHttpServer(server);
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected TCP address");
   const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -30,14 +55,14 @@ async function withServer(
   try {
     await run({ cwd, baseUrl, agentDir });
   } finally {
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeHttpServer(server);
     rmSync(cwd, { recursive: true, force: true });
   }
 }
 
 async function withHttpServer(run: (baseUrl: string) => Promise<void>, handler: http.RequestListener) {
   const server = http.createServer(handler);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  await listenHttpServer(server);
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected TCP address");
   const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -45,7 +70,7 @@ async function withHttpServer(run: (baseUrl: string) => Promise<void>, handler: 
   try {
     await run(baseUrl);
   } finally {
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeHttpServer(server);
   }
 }
 

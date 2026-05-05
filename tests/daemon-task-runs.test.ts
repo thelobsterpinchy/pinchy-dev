@@ -43,6 +43,28 @@ test("processNextPendingTaskRun enqueues the next pending task as a persistent r
   });
 });
 
+test("processNextPendingTaskRun leaves the task pending until the child run is created", async () => {
+  await withTempDir(async (cwd) => {
+    const task = enqueueTask(cwd, "Investigate flaky test", "Check the flaky worker test and fix it safely.");
+    let statusDuringEnqueue: string | undefined;
+
+    await processNextPendingTaskRun(cwd, {
+      enqueueTaskRun: async () => {
+        statusDuringEnqueue = loadTasks(cwd).find((entry) => entry.id === task.id)?.status;
+        const conversation = createConversation(cwd, { title: "Pinchy queued tasks" });
+        const run = createRun(cwd, {
+          conversationId: conversation.id,
+          goal: "Queued task: Investigate flaky test",
+          kind: "user_prompt",
+        });
+        return { conversation, run };
+      },
+    });
+
+    assert.equal(statusDuringEnqueue, "pending");
+  });
+});
+
 test("processNextPendingTaskRun preserves the parent orchestration run and stores a distinct child execution run", async () => {
   await withTempDir(async (cwd) => {
     const parentConversation = createConversation(cwd, { title: "Main orchestration thread" });
@@ -72,6 +94,23 @@ test("processNextPendingTaskRun preserves the parent orchestration run and store
     assert.equal(persistedTask?.conversationId, parentConversation.id);
     assert.equal(persistedTask?.runId, parentRun.id);
     assert.equal(persistedTask?.executionRunId, scheduled?.run.id);
+  });
+});
+
+test("blocked task dependencies block pending dependents instead of leaving them queued forever", async () => {
+  await withTempDir(async (cwd) => {
+    const [inspectTask, fixTask, verifyTask] = enqueueDelegationPlan(cwd, [
+      { id: "inspect", title: "Inspect logs", prompt: "Inspect logs." },
+      { id: "fix", title: "Apply fix", prompt: "Apply fix.", dependsOn: ["inspect"] },
+      { id: "verify", title: "Verify fix", prompt: "Verify fix.", dependsOn: ["fix"] },
+    ]);
+
+    updateTaskStatus(cwd, inspectTask!.id, "blocked");
+
+    const tasks = loadTasks(cwd);
+    assert.equal(tasks.find((task) => task.id === inspectTask!.id)?.status, "blocked");
+    assert.equal(tasks.find((task) => task.id === fixTask!.id)?.status, "blocked");
+    assert.equal(tasks.find((task) => task.id === verifyTask!.id)?.status, "blocked");
   });
 });
 

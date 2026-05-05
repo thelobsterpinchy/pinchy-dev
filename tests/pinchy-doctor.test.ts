@@ -78,12 +78,46 @@ test("buildPinchyDoctorReport reports a healthy initialized workspace when core 
     pathExists: (path) => existingPaths.has(path),
     commandExists: (command) => ["git", "cliclick", "tesseract", "ollama"].includes(command),
     resolvePlaywrightBrowserPath: () => "/Users/example/Library/Caches/ms-playwright/chromium/chrome",
+    env: {
+      PINCHY_DISCORD_BOT_TOKEN: "bot-token",
+      PINCHY_API_TOKEN: "api-token",
+      PINCHY_DISCORD_ALLOWED_GUILD_IDS: "guild-1",
+      PINCHY_DISCORD_ALLOWED_CHANNEL_IDS: "channel-1",
+    },
   });
 
   assert.equal(report.summary.status, "ok");
   assert.equal(report.summary.failCount, 0);
   assert.equal(report.summary.warnCount, 0);
   assert.ok(report.checks.every((check) => check.status === "ok"));
+});
+
+test("buildPinchyDoctorReport fails Discord bot checks when required gateway settings are incomplete", () => {
+  const report = buildPinchyDoctorReport("/tmp/project", {
+    pathExists: () => true,
+    commandExists: () => true,
+    env: {
+      PINCHY_DISCORD_BOT_TOKEN: "bot-token",
+    },
+  });
+
+  const discordCheck = report.checks.find((check) => check.name === "discord_bot");
+  assert.equal(discordCheck?.status, "fail");
+  assert.match(discordCheck?.message ?? "", /PINCHY_API_TOKEN/);
+  assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_GUILD_IDS/);
+  assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_CHANNEL_IDS/);
+});
+
+test("buildPinchyDoctorReport warns when Discord bot gateway is not configured", () => {
+  const report = buildPinchyDoctorReport("/tmp/project", {
+    pathExists: () => true,
+    commandExists: () => true,
+    env: {},
+  });
+
+  const discordCheck = report.checks.find((check) => check.name === "discord_bot");
+  assert.equal(discordCheck?.status, "warn");
+  assert.match(discordCheck?.hint ?? "", /PINCHY_DISCORD_BOT_TOKEN/);
 });
 
 test("summarizePinchyDoctorReportJson returns machine-readable doctor output", () => {
@@ -95,7 +129,7 @@ test("summarizePinchyDoctorReportJson returns machine-readable doctor output", (
   const json = summarizePinchyDoctorReportJson(report);
   const parsed = JSON.parse(json) as { cwd: string; summary: { status: string } };
   assert.equal(parsed.cwd, "/tmp/project");
-  assert.equal(parsed.summary.status, "ok");
+  assert.equal(parsed.summary.status, "warn");
 });
 
 test("summarizePinchyDoctorReport renders actionable doctor output", () => {

@@ -1,6 +1,41 @@
-import type { DashboardArtifact, DashboardState, Message, PinchyTask, Question, Run, SavedMemory } from "../../../packages/shared/src/contracts.js";
+import type { ConversationState, DashboardArtifact, DashboardState, Message, NotificationDelivery, NotificationDeliveryStatus, PinchyTask, Question, Run, SavedMemory } from "../../../packages/shared/src/contracts.js";
 import { PINCHY_PROVIDER_CATALOG } from "../../../packages/shared/src/pi-provider-catalog.js";
 import type { DashboardSettings } from "./control-plane-client.js";
+
+const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["queued", "planning", "running", "waiting_for_human", "waiting_for_approval", "cancelling"]);
+const CANCELLABLE_RUN_STATUSES = new Set<Run["status"]>(["queued", "planning", "running", "waiting_for_human", "waiting_for_approval"]);
+const PENDING_QUESTION_STATUSES = new Set<Question["status"]>(["pending_delivery", "waiting_for_human"]);
+const QUESTION_PRIORITY_WEIGHT: Record<Question["priority"], number> = {
+  urgent: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+};
+
+function compareNewestUpdatedAt<T extends { updatedAt?: string; createdAt?: string }>(left: T, right: T) {
+  return (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? "");
+}
+
+function formatElapsedLabel(input: { startedAt: string; now?: string | number | Date }) {
+  const nowMs = input.now instanceof Date
+    ? input.now.getTime()
+    : typeof input.now === "number"
+      ? input.now
+      : typeof input.now === "string"
+        ? Date.parse(input.now)
+        : Date.now();
+  const startedAtMs = Date.parse(input.startedAt);
+  const elapsedSeconds = Number.isFinite(startedAtMs) && Number.isFinite(nowMs)
+    ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000))
+    : 0;
+
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds} sec active`;
+  }
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  return `${elapsedMinutes} min active`;
+}
 
 export function buildAgentChatChromeState(input: {
   selectedConversationTitle?: string;
@@ -185,6 +220,223 @@ export function buildConversationThinkingState<
         ]
         : []),
     ],
+  };
+}
+
+export function buildPendingQuestionPanelState(input: {
+  questions: Question[];
+  deliveries: NotificationDelivery[];
+}) {
+  const pendingQuestion = [...input.questions]
+    .filter((question) => PENDING_QUESTION_STATUSES.has(question.status))
+    .sort((left, right) => {
+      const priorityDifference = QUESTION_PRIORITY_WEIGHT[left.priority] - QUESTION_PRIORITY_WEIGHT[right.priority];
+      if (priorityDifference !== 0) return priorityDifference;
+      return right.createdAt.localeCompare(left.createdAt);
+    })[0];
+
+  if (!pendingQuestion) {
+    return undefined;
+  }
+
+  const deliveries = input.deliveries.filter((delivery) => delivery.questionId === pendingQuestion.id);
+  const hintedChannels = pendingQuestion.channelHints ?? [];
+  const channels = Array.from(new Set([...hintedChannels, ...deliveries.map((delivery) => delivery.channel), "dashboard"]));
+
+  return {
+    id: pendingQuestion.id,
+    prompt: pendingQuestion.prompt,
+    priority: pendingQuestion.priority,
+    priorityLabel: pendingQuestion.priority,
+    status: pendingQuestion.status,
+    runId: pendingQuestion.runId,
+    deliveryChannels: channels.map((channel) => {
+      const latestDelivery = deliveries
+        .filter((delivery) => delivery.channel === channel)
+        .sort((left, right) => (right.deliveredAt ?? right.sentAt ?? right.failedAt ?? "").localeCompare(left.deliveredAt ?? left.sentAt ?? left.failedAt ?? ""))[0];
+      const status = latestDelivery?.status ?? "pending";
+      return {
+        id: channel,
+        channel,
+        status,
+        label: `${channel} ${status}`,
+        error: latestDelivery?.error,
+      };
+    }),
+  };
+}
+
+export function buildLatestResultState(input: {
+  messages: Message[];
+  runs: Run[];
+}) {
+  const latestSynthesis = [...input.messages]
+    .filter((message) => message.kind === "orchestration_final" && message.content.trim())
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  if (latestSynthesis) {
+    return {
+      source: "orchestration_final" as const,
+      label: "Latest synthesis",
+      content: latestSynthesis.content,
+      createdAt: latestSynthesis.createdAt,
+      runId: latestSynthesis.runId,
+    };
+  }
+
+  const latestRunSummary = [...input.runs]
+    .filter((run) => Boolean(run.summary?.trim()))
+    .sort(compareNewestUpdatedAt)[0];
+  if (latestRunSummary?.summary) {
+    return {
+      source: "run_summary" as const,
+      label: "Latest run summary",
+      content: latestRunSummary.summary,
+      createdAt: latestRunSummary.updatedAt,
+      runId: latestRunSummary.id,
+    };
+  }
+
+  const latestAgentReply = [...input.messages]
+    .filter((message) => message.role === "agent" && (message.kind === undefined || message.kind === "default") && message.content.trim())
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  if (!latestAgentReply) {
+    return undefined;
+  }
+
+  return {
+    source: "agent_reply" as const,
+    label: "Latest result",
+    content: latestAgentReply.content,
+    createdAt: latestAgentReply.createdAt,
+    runId: latestAgentReply.runId,
+  };
+}
+
+export function buildDelegatedExecutionSummaryState(input: {
+  conversationId?: string;
+  tasks: PinchyTask[];
+}) {
+  const linkedTasks = input.conversationId
+    ? input.tasks.filter((task) => task.conversationId === input.conversationId)
+    : [];
+  const sortedTasks = [...linkedTasks].sort((left, right) => {
+    const leftRank = left.status === "running" ? 0 : left.status === "blocked" ? 1 : left.status === "pending" ? 2 : 3;
+    const rightRank = right.status === "running" ? 0 : right.status === "blocked" ? 1 : right.status === "pending" ? 2 : 3;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+
+  return {
+    counts: {
+      pending: linkedTasks.filter((task) => task.status === "pending").length,
+      running: linkedTasks.filter((task) => task.status === "running").length,
+      blocked: linkedTasks.filter((task) => task.status === "blocked").length,
+      done: linkedTasks.filter((task) => task.status === "done").length,
+    },
+    total: linkedTasks.length,
+    topTasks: sortedTasks
+      .filter((task) => task.status === "running" || task.status === "blocked" || task.status === "pending")
+      .slice(0, 3)
+      .map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        statusLabel: buildTaskStatusPresentation(task).label,
+        updatedAt: task.updatedAt,
+      })),
+  };
+}
+
+function mapRemoteDeliveryStatus(delivery?: NotificationDelivery): "sent" | "failed" | "unconfigured" | NotificationDeliveryStatus {
+  if (!delivery) {
+    return "unconfigured";
+  }
+  if (delivery.channel === "discord" && delivery.status === "failed" && /not configured|webhook.*missing|missing.*webhook/i.test(delivery.error ?? "")) {
+    return "unconfigured";
+  }
+  return delivery.status === "delivered" ? "sent" : delivery.status;
+}
+
+export function buildRemoteChannelState(input: {
+  deliveries: NotificationDelivery[];
+}) {
+  return (["dashboard", "discord"] as const).map((channel) => {
+    const latestDelivery = [...input.deliveries]
+      .filter((delivery) => delivery.channel === channel)
+      .sort((left, right) => (right.deliveredAt ?? right.sentAt ?? right.failedAt ?? "").localeCompare(left.deliveredAt ?? left.sentAt ?? left.failedAt ?? ""))[0];
+    const status = channel === "dashboard" && !latestDelivery ? "sent" : mapRemoteDeliveryStatus(latestDelivery);
+    const detail = latestDelivery?.error
+      ?? (status === "unconfigured" ? "No successful delivery has been recorded for this channel." : undefined);
+    return {
+      id: channel,
+      label: channel === "dashboard" ? "Dashboard" : "Discord",
+      status,
+      statusLabel: status,
+      detail,
+    };
+  });
+}
+
+export function buildOrchestrationHomeState(input: {
+  conversationState?: ConversationState;
+  dashboardState?: Pick<DashboardState, "daemonHealth"> | null;
+  tasks?: PinchyTask[];
+  now?: string | number | Date;
+}) {
+  const conversationState = input.conversationState;
+  const activeRun = conversationState
+    ? [...conversationState.runs]
+      .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
+      .sort(compareNewestUpdatedAt)[0]
+    : undefined;
+  const pendingQuestion = conversationState
+    ? buildPendingQuestionPanelState({
+      questions: conversationState.questions,
+      deliveries: conversationState.deliveries,
+    })
+    : undefined;
+  const latestResult = conversationState
+    ? buildLatestResultState({
+      messages: conversationState.messages,
+      runs: conversationState.runs,
+    })
+    : undefined;
+  const delegatedExecution = buildDelegatedExecutionSummaryState({
+    conversationId: conversationState?.conversation.id,
+    tasks: input.tasks ?? [],
+  });
+  const remoteChannels = buildRemoteChannelState({
+    deliveries: conversationState?.deliveries ?? [],
+  });
+
+  return {
+    title: "Pinchy operator console",
+    subtitle: conversationState
+      ? "Control the autonomous thread, answer blockers, and inspect delegated work from here."
+      : "Start a thread to give Pinchy an always-on local objective.",
+    attentionLevel: pendingQuestion ? "needs-input" as const : activeRun ? "working" as const : "idle" as const,
+    activeRun: activeRun
+      ? {
+        id: activeRun.id,
+        goal: activeRun.goal,
+        status: activeRun.status,
+        statusLabel: activeRun.status.replaceAll("_", " "),
+        updatedAt: activeRun.updatedAt,
+        elapsedLabel: formatElapsedLabel({ startedAt: activeRun.startedAt ?? activeRun.createdAt, now: input.now }),
+        canCancel: CANCELLABLE_RUN_STATUSES.has(activeRun.status),
+      }
+      : undefined,
+    pendingQuestion,
+    latestResult,
+    delegatedExecution,
+    remoteChannels,
+    daemonStatus: input.dashboardState?.daemonHealth?.status,
+    showOperatorOnboarding: !conversationState || (
+      conversationState.messages.length === 0 &&
+      conversationState.runs.length === 0 &&
+      conversationState.questions.length === 0 &&
+      delegatedExecution.total === 0
+    ),
   };
 }
 

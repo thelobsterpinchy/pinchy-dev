@@ -33,6 +33,9 @@ export async function requestControlPlaneApi(input: ControlPlaneRequest): Promis
   if (input.contentType) {
     headers["content-type"] = input.contentType;
   }
+  if (process.env.PINCHY_API_TOKEN && !headers.authorization) {
+    headers.authorization = `Bearer ${process.env.PINCHY_API_TOKEN}`;
+  }
 
   const response = await fetchImpl(`${input.apiBaseUrl}${input.path}`, {
     method: input.method,
