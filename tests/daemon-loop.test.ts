@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sleepUntilDueOrWorkAvailable } from "../apps/host/src/daemon.js";
+import { sleepUntilDueOrWorkAvailable } from "../apps/host/src/pinchy-daemon.js";
 
 test("sleepUntilDueOrWorkAvailable waits until due when no higher-priority work appears", async () => {
   let now = 0;

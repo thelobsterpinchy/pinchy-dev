@@ -19,7 +19,7 @@ test("ingestInboundReply persists a normalized reply and marks the question answ
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Normalize inbound reply" });
     const run = createRun(cwd, { conversationId: conversation.id, goal: "Wait for inbound reply" });
-    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", piSessionPath: "/tmp/pi-session.json" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", sessionPath: "/tmp/pi-session.json" });
     const question = createQuestion(cwd, {
       conversationId: conversation.id,
       runId: run.id,
@@ -28,7 +28,7 @@ test("ingestInboundReply persists a normalized reply and marks the question answ
       channelHints: ["dashboard"],
     });
 
-    const reply = ingestInboundReply(cwd, {
+    const reply = await ingestInboundReply(cwd, {
       questionId: question.id,
       conversationId: conversation.id,
       channel: "dashboard",
@@ -49,7 +49,7 @@ test("ingestInboundReply rejects replies for unknown, mismatched, or already ans
     const conversation = createConversation(cwd, { title: "Reply validation" });
     const otherConversation = createConversation(cwd, { title: "Other conversation" });
     const run = createRun(cwd, { conversationId: conversation.id, goal: "Wait for one reply" });
-    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", piSessionPath: "/tmp/pi-session.json" });
+    updateRunStatus(cwd, run.id, "waiting_for_human", { blockedReason: "Need answer", sessionPath: "/tmp/pi-session.json" });
     const question = createQuestion(cwd, {
       conversationId: conversation.id,
       runId: run.id,
@@ -57,38 +57,32 @@ test("ingestInboundReply rejects replies for unknown, mismatched, or already ans
       priority: "normal",
     });
 
-    assert.throws(() => {
-      ingestInboundReply(cwd, {
+    await assert.rejects(() => ingestInboundReply(cwd, {
         questionId: "question-missing",
         conversationId: conversation.id,
         channel: "dashboard",
         content: "Unknown",
-      });
-    }, /Question not found/);
+      }), /Question not found/);
 
-    assert.throws(() => {
-      ingestInboundReply(cwd, {
+    await assert.rejects(() => ingestInboundReply(cwd, {
         questionId: question.id,
         conversationId: otherConversation.id,
         channel: "dashboard",
         content: "Wrong conversation",
-      });
-    }, /conversation/);
+      }), /conversation/);
 
-    ingestInboundReply(cwd, {
+    await ingestInboundReply(cwd, {
       questionId: question.id,
       conversationId: conversation.id,
       channel: "dashboard",
       content: "First reply",
     });
 
-    assert.throws(() => {
-      ingestInboundReply(cwd, {
+    await assert.rejects(() => ingestInboundReply(cwd, {
         questionId: question.id,
         conversationId: conversation.id,
         channel: "dashboard",
         content: "Second reply",
-      });
-    }, /already answered/);
+      }), /already answered/);
   });
 });

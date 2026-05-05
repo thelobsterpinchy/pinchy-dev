@@ -4,7 +4,7 @@ export type CompletedRunOutcome = {
   kind: "completed";
   summary: string;
   message: string;
-  piSessionPath?: string;
+  sessionPath?: string;
 };
 
 export type WaitingForHumanRunOutcome = {
@@ -17,7 +17,7 @@ export type WaitingForHumanRunOutcome = {
     priority?: QuestionPriority;
     channelHints?: NotificationChannel[];
   };
-  piSessionPath?: string;
+  sessionPath?: string;
 };
 
 export type WaitingForApprovalRunOutcome = {
@@ -25,7 +25,7 @@ export type WaitingForApprovalRunOutcome = {
   summary: string;
   message: string;
   blockedReason: string;
-  piSessionPath?: string;
+  sessionPath?: string;
 };
 
 export type FailedRunOutcome = {
@@ -33,7 +33,7 @@ export type FailedRunOutcome = {
   summary: string;
   message: string;
   error?: string;
-  piSessionPath?: string;
+  sessionPath?: string;
 };
 
 export type RunOutcome = CompletedRunOutcome | WaitingForHumanRunOutcome | WaitingForApprovalRunOutcome | FailedRunOutcome;
@@ -42,7 +42,7 @@ export type PiRunExecutionResult = RunOutcome;
 export type LegacyRunExecutionResult = {
   summary: string;
   message: string;
-  piSessionPath?: string;
+  sessionPath?: string;
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -122,27 +122,27 @@ export function normalizeRunOutcome(value: unknown, fallback: LegacyRunExecution
       kind: "completed",
       summary: fallback.summary,
       message: readCompletedMessage(value, fallback.message),
-      piSessionPath: fallback.piSessionPath,
+      sessionPath: fallback.sessionPath,
     };
   }
 
   const kind = value.kind;
   const summary = readString(value.summary) ?? fallback.summary;
   const message = readString(value.message) ?? fallback.message;
-  const piSessionPath = readString(value.piSessionPath) ?? fallback.piSessionPath;
+  const sessionPath = readString(value.sessionPath) ?? fallback.sessionPath;
 
   if (kind === "waiting_for_human") {
     const blockedReason = readString(value.blockedReason);
     const question = readQuestion(value.question);
     if (blockedReason && question) {
-      return { kind, summary, message, blockedReason, question, piSessionPath };
+      return { kind, summary, message, blockedReason, question, sessionPath };
     }
   }
 
   if (kind === "waiting_for_approval") {
     const blockedReason = readString(value.blockedReason);
     if (blockedReason) {
-      return { kind, summary, message, blockedReason, piSessionPath };
+      return { kind, summary, message, blockedReason, sessionPath };
     }
   }
 
@@ -152,7 +152,7 @@ export function normalizeRunOutcome(value: unknown, fallback: LegacyRunExecution
       summary,
       message,
       error: readString(value.error),
-      piSessionPath,
+      sessionPath,
     };
   }
 
@@ -160,6 +160,6 @@ export function normalizeRunOutcome(value: unknown, fallback: LegacyRunExecution
     kind: "completed",
     summary,
     message,
-    piSessionPath,
+    sessionPath,
   };
 }

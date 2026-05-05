@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearCompletedTasks, deleteTask, enqueueDelegationPlan, enqueueTask, getNextPendingTask, loadTasks, reprioritizeTask, updateTaskStatus, updateTaskStatusByExecutionRunId } from "../apps/host/src/task-queue.js";
+import { loadOrchestrationEvents, loadOrchestrationTasks } from "../apps/host/src/orchestration-core/adapters/file-repositories.js";
 
 function withTempDir(run: (cwd: string) => void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-task-"));
@@ -38,6 +39,20 @@ test("enqueueTask can persist orchestration links when a task is spawned from ch
     assert.equal(task.executionRunId, "run-child-1");
     assert.equal(loadTasks(cwd)[0]?.conversationId, "conversation-1");
     assert.equal(loadTasks(cwd)[0]?.executionRunId, "run-child-1");
+    assert.deepEqual(loadOrchestrationTasks(cwd).map((entry) => ({
+      id: entry.id,
+      parentRunId: entry.parentRunId,
+      title: entry.title,
+      status: entry.status,
+    })), [
+      {
+        id: task.id,
+        parentRunId: "run-1",
+        title: "Audit worker logs",
+        status: "ready",
+      },
+    ]);
+    assert.deepEqual(loadOrchestrationEvents(cwd).map((event) => event.type), ["TaskReady"]);
   });
 });
 
@@ -65,6 +80,8 @@ test("updateTaskStatus can persist linked conversation and run ids", () => {
     assert.equal(loadTasks(cwd)[0]?.conversationId, "conversation-1");
     assert.equal(loadTasks(cwd)[0]?.runId, "run-1");
     assert.equal(loadTasks(cwd)[0]?.executionRunId, "run-child-1");
+    assert.equal(loadOrchestrationTasks(cwd)[0]?.status, "done");
+    assert.deepEqual(loadOrchestrationEvents(cwd).map((event) => event.type), ["TaskCompleted"]);
   });
 });
 
@@ -107,10 +124,30 @@ test("enqueueDelegationPlan persists dependent subtasks and only exposes ready w
     assert.equal(tasks.length, 2);
     assert.equal(getNextPendingTask(cwd)?.title, "Inspect logs");
     assert.deepEqual(loadTasks(cwd).find((task) => task.title === "Apply fix")?.dependsOnTaskIds, [tasks[0]?.id]);
+    const initialOrchestrationTasks = loadOrchestrationTasks(cwd);
+    assert.deepEqual(initialOrchestrationTasks.find((task) => task.title === "Inspect logs") && {
+      status: initialOrchestrationTasks.find((task) => task.title === "Inspect logs")?.status,
+      dependsOnTaskIds: initialOrchestrationTasks.find((task) => task.title === "Inspect logs")?.dependsOnTaskIds,
+    }, {
+      status: "ready",
+      dependsOnTaskIds: [],
+    });
+    assert.deepEqual(initialOrchestrationTasks.find((task) => task.title === "Apply fix") && {
+      status: initialOrchestrationTasks.find((task) => task.title === "Apply fix")?.status,
+      dependsOnTaskIds: initialOrchestrationTasks.find((task) => task.title === "Apply fix")?.dependsOnTaskIds,
+    }, {
+      status: "pending",
+      dependsOnTaskIds: [tasks[0]?.id],
+    });
+    assert.deepEqual(loadOrchestrationEvents(cwd).map((event) => event.type), ["RunPlanned", "TaskReady"]);
 
     updateTaskStatus(cwd, tasks[0]!.id, "done");
 
     assert.equal(getNextPendingTask(cwd)?.title, "Apply fix");
+    const updatedOrchestrationTasks = loadOrchestrationTasks(cwd);
+    assert.equal(updatedOrchestrationTasks.find((task) => task.title === "Inspect logs")?.status, "done");
+    assert.equal(updatedOrchestrationTasks.find((task) => task.title === "Apply fix")?.status, "ready");
+    assert.deepEqual(loadOrchestrationEvents(cwd).map((event) => event.type), ["RunPlanned", "TaskReady", "TaskCompleted", "TaskReady"]);
   });
 });
 

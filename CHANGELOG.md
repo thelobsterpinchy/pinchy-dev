@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.11
+
+- separate orchestration-core state from Pi execution with file-backed task, agent-run, and event repositories
+- add a Pi executor adapter so Pi is called through an explicit orchestration-core port
+- route blocked questions, replies, guidance, completion, progress, and final synthesis through orchestration-core services
+- fix ARM Node validation by avoiding the `tsx --test` IPC path and running test files sequentially through Node's native runner
+- complete the orchestration-core migration roadmap and refresh related regression coverage
+
 ## 0.2.6
 
 - add local design-pattern, anti-pattern, diagnosis, repository-scan, and remediation planning tools for more structured code review workflows

@@ -192,7 +192,7 @@ export function createSubmarineAdapter(dependencies: CreateSubmarineAdapterDepen
           message: event.message ?? "Subagent needs input",
           blockedReason: event.message ?? "Subagent needs input",
           question: { prompt: event.message ?? "Subagent needs input" },
-          piSessionPath: sessionKey,
+          sessionPath: sessionKey,
         };
       }
       if (event.type === "agent_completed") {
@@ -202,7 +202,7 @@ export function createSubmarineAdapter(dependencies: CreateSubmarineAdapterDepen
           kind: "completed",
           summary: event.message ?? "Subagent completed",
           message: event.result ?? event.message ?? "Subagent completed",
-          piSessionPath: sessionKey,
+          sessionPath: sessionKey,
         };
       }
       if (event.type === "agent_failed") {
@@ -213,7 +213,7 @@ export function createSubmarineAdapter(dependencies: CreateSubmarineAdapterDepen
           summary: event.message ?? "Subagent failed",
           message: event.message ?? "Subagent failed",
           error: event.error,
-          piSessionPath: sessionKey,
+          sessionPath: sessionKey,
         };
       }
     }

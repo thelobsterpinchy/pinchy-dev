@@ -351,7 +351,7 @@ test("agent state store persists canonical conversation Pi sessions and seeds de
     });
 
     updateRunStatus(cwd, firstRun.id, "completed", {
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
       runtimeConfigSignature: firstRun.runtimeConfigSignature,
     });
 
@@ -361,11 +361,11 @@ test("agent state store persists canonical conversation Pi sessions and seeds de
       goal: "Investigate the dashboard bug and implement the smallest safe fix.",
     });
 
-    assert.equal(storedBinding?.piSessionPath, "/tmp/pi-thread-session.json");
+    assert.equal(storedBinding?.sessionPath, "/tmp/pi-thread-session.json");
     assert.equal(storedBinding?.sourceRunId, firstRun.id);
     assert.equal(storedBinding?.runtimeConfigSignature, firstRun.runtimeConfigSignature);
     assert.equal(listConversationSessions(cwd)[0]?.conversationId, conversation.id);
-    assert.equal(followUpRun.piSessionPath, "/tmp/pi-thread-session.json");
+    assert.equal(followUpRun.sessionPath, "/tmp/pi-thread-session.json");
   });
 });
 
@@ -378,7 +378,7 @@ test("agent state store does not seed a strictly conversational follow-up user p
     });
 
     updateRunStatus(cwd, firstRun.id, "completed", {
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
       runtimeConfigSignature: firstRun.runtimeConfigSignature,
     });
 
@@ -387,7 +387,7 @@ test("agent state store does not seed a strictly conversational follow-up user p
       goal: "great! how was your day?",
     });
 
-    assert.equal(followUpRun.piSessionPath, undefined);
+    assert.equal(followUpRun.sessionPath, undefined);
   });
 });
 
@@ -400,7 +400,7 @@ test("agent state store does not seed a new run from a stale conversation sessio
     });
 
     updateRunStatus(cwd, firstRun.id, "completed", {
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
       runtimeConfigSignature: "old-signature",
     });
 
@@ -410,7 +410,7 @@ test("agent state store does not seed a new run from a stale conversation sessio
       runtimeConfigSignature: "new-signature",
     });
 
-    assert.equal(followUpRun.piSessionPath, undefined);
+    assert.equal(followUpRun.sessionPath, undefined);
   });
 });
 
@@ -577,7 +577,7 @@ test("agent state store deletes a conversation session and its linked records", 
       details: ["path: docs/ARCHITECTURE.md"],
     });
     updateRunStatus(cwd, run.id, "completed", {
-      piSessionPath: "/tmp/delete-me-session.json",
+      sessionPath: "/tmp/delete-me-session.json",
       runtimeConfigSignature: run.runtimeConfigSignature,
     });
 

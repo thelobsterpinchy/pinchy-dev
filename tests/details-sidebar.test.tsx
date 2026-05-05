@@ -66,7 +66,7 @@ test("DetailsSidebar omits the runs section while keeping agent and question det
             linkedRunStatus: "running",
             workerStatus: "running",
             workerPid: 58919,
-            piSessionPath: "/tmp/pi-session-1.json",
+            sessionPath: "/tmp/pi-session-1.json",
           },
         },
       ]}

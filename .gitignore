@@ -37,3 +37,4 @@ playwright-report/
 artifacts/
 logs/*.log
 logs/*.jsonl
+/.opencode

@@ -51,7 +51,7 @@ test("enqueueWatcherFollowUpRun reuses its conversation and persists changed-fil
   withTempDir((cwd) => {
     const first = enqueueWatcherFollowUpRun(cwd, {
       prompt: "A watched Pinchy file changed. Run a bounded maintenance review for the changed area.",
-      changedFiles: ["apps/host/src/daemon.ts", "docs/ROADMAP_STATUS.md"],
+      changedFiles: ["apps/host/src/pinchy-daemon.ts", "docs/ROADMAP_STATUS.md"],
     });
     const second = enqueueWatcherFollowUpRun(cwd, {
       prompt: "A watched Pinchy file changed. Run a bounded maintenance review for the changed area.",
@@ -69,7 +69,7 @@ test("enqueueWatcherFollowUpRun reuses its conversation and persists changed-fil
     assert.equal(runs[0]?.kind, "watch_followup");
     assert.equal(runs[1]?.kind, "watch_followup");
     assert.match(messages[0]?.content ?? "", /Changed files:/);
-    assert.match(messages[0]?.content ?? "", /apps\/host\/src\/daemon.ts/);
+    assert.match(messages[0]?.content ?? "", /apps\/host\/src\/pinchy-daemon.ts/);
     assert.match(messages[0]?.content ?? "", /If no safe improvement is warranted, explain why and stop/i);
     assert.match(messages[1]?.content ?? "", /apps\/api\/src\/server.ts/);
   });

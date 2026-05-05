@@ -186,7 +186,7 @@ Make the daemon produce Pinchy runs instead of directly running long-lived Pi pr
 - worker becomes the single executor
 
 ### File targets
-- `apps/host/src/daemon.ts`
+- `apps/host/src/pinchy-daemon.ts`
 - `apps/host/src/task-queue.ts` or new run-enqueue helpers
 - `apps/host/src/agent-state-store.ts`
 - maybe add:
@@ -222,7 +222,7 @@ Represent autonomous QA and bugfix work explicitly inside the new run model.
 ### File targets
 - `packages/shared/src/contracts.ts`
 - `apps/host/src/agent-state-store.ts`
-- `apps/host/src/daemon.ts`
+- `apps/host/src/pinchy-daemon.ts`
 - `services/agent-worker/src/pi-run-executor.ts`
 
 ### Success criteria

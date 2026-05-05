@@ -156,7 +156,7 @@ function AgentExecutionSummary({ agent }: { agent: ReturnType<typeof buildConver
   } else if (agent.execution?.workerStatus) {
     lines.push(`Worker: ${agent.execution.workerStatus}`);
   }
-  if (agent.execution?.piSessionPath) {
+  if (agent.execution?.sessionPath) {
     lines.push("Pi session attached");
   }
   if (lines.length === 0) {

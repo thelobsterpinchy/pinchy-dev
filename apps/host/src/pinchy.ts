@@ -152,7 +152,7 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       return;
     }
     case "daemon": {
-      await runForegroundEntrypoint(resolvePinchyPackagePath("apps/host/src/daemon.ts"), parsed.args);
+      await runForegroundEntrypoint(resolvePinchyPackagePath("apps/host/src/pinchy-daemon.ts"), parsed.args);
       return;
     }
     case "agent": {

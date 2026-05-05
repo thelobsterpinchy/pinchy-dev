@@ -49,7 +49,7 @@ type PiRunExecutorDependencies = {
   loadRuntimeConfig?: (cwd: string) => PinchyRuntimeConfig;
   resolveModel?: (provider: string, modelId: string, agentDir: string) => unknown;
   loadConversationRuns?: (cwd: string, conversationId: string) => Run[];
-  loadConversationSessionBinding?: (cwd: string, conversationId: string) => { piSessionPath: string; runtimeConfigSignature?: string } | undefined;
+  loadConversationSessionBinding?: (cwd: string, conversationId: string) => { sessionPath: string; runtimeConfigSignature?: string } | undefined;
 };
 function defaultResolveModel(provider: string, modelId: string, agentDir: string) {
   const builtInModel = getModel(
@@ -208,23 +208,23 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
 
   function findReusableConversationSessionPath(cwd: string, run: Run, runtimeConfigSignature: string | undefined) {
     const canonicalBinding = loadConversationSessionBinding(cwd, run.conversationId);
-    if (canonicalBinding?.piSessionPath?.trim() && canonicalBinding.runtimeConfigSignature === runtimeConfigSignature) {
-      return canonicalBinding.piSessionPath;
+    if (canonicalBinding?.sessionPath?.trim() && canonicalBinding.runtimeConfigSignature === runtimeConfigSignature) {
+      return canonicalBinding.sessionPath;
     }
-    if (typeof run.piSessionPath === "string" && run.piSessionPath.trim() && hasCompatibleRuntimeConfigSignature(runtimeConfigSignature, run)) {
-      return run.piSessionPath;
+    if (typeof run.sessionPath === "string" && run.sessionPath.trim() && hasCompatibleRuntimeConfigSignature(runtimeConfigSignature, run)) {
+      return run.sessionPath;
     }
     const priorRuns = loadConversationRuns(cwd, run.conversationId)
-      .filter((entry) => entry.id !== run.id && typeof entry.piSessionPath === "string" && entry.piSessionPath.trim().length > 0)
+      .filter((entry) => entry.id !== run.id && typeof entry.sessionPath === "string" && entry.sessionPath.trim().length > 0)
       .filter((entry) => hasCompatibleRuntimeConfigSignature(runtimeConfigSignature, entry))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    return priorRuns[0]?.piSessionPath;
+    return priorRuns[0]?.sessionPath;
   }
 
   async function openExistingConversationSession(cwd: string, run: Run) {
     const defaults = buildSessionDefaults(cwd);
-    const canonicalSessionPath = loadConversationSessionBinding(cwd, run.conversationId)?.piSessionPath?.trim();
-    const activeRunSessionPath = typeof run.piSessionPath === "string" ? run.piSessionPath.trim() : undefined;
+    const canonicalSessionPath = loadConversationSessionBinding(cwd, run.conversationId)?.sessionPath?.trim();
+    const activeRunSessionPath = typeof run.sessionPath === "string" ? run.sessionPath.trim() : undefined;
     const sessionPath = canonicalSessionPath
       || activeRunSessionPath
       || findReusableConversationSessionPath(cwd, run, defaults.runtimeConfigSignature);
@@ -273,7 +273,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
       return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run completed for goal: ${run.goal}`,
         message: assistantText ?? `Pi completed run: ${run.goal}`,
-        piSessionPath: session.sessionFile ?? reusableSessionPath,
+        sessionPath: session.sessionFile ?? reusableSessionPath,
       });
     },
     async resumeRun({ cwd, run, reply }: { cwd: string; run: Run; reply: string }): Promise<PiRunExecutionResult> {
@@ -281,14 +281,14 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
       if (runtimeConfig.submarine?.enabled) {
         return submarineAdapter.resumeRun({ cwd, run, reply });
       }
-      if (!run.piSessionPath) {
-        throw new Error(`Cannot resume run without piSessionPath: ${run.id}`);
+      if (!run.sessionPath) {
+        throw new Error(`Cannot resume run without correct SessionPath: ${run.id}`);
       }
       const defaults = buildSessionDefaults(cwd);
       const { session } = await createSession({
         cwd,
         agentDir,
-        sessionManager: sessionManagerFactory.open(run.piSessionPath),
+        sessionManager: sessionManagerFactory.open(run.sessionPath),
         model: defaults.model,
         thinkingLevel: defaults.thinkingLevel,
         modelOptions: defaults.modelOptions,
@@ -302,7 +302,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
       return normalizeRunOutcome(rawResult, {
         summary: `Pi-backed run resumed for goal: ${run.goal}`,
         message: assistantText ?? `Pi resumed run: ${run.goal}`,
-        piSessionPath: session.sessionFile ?? run.piSessionPath,
+        sessionPath: session.sessionFile ?? run.sessionPath,
       });
     },
     async steerRun({ cwd, run, content }: { cwd: string; run: Run; content: string }) {

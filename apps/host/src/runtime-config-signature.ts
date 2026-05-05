@@ -18,5 +18,7 @@ export function buildRuntimeConfigSignature(config: Partial<PinchyRuntimeConfig>
     defaultThinkingLevel: config.defaultThinkingLevel,
     defaultBaseUrl: config.defaultBaseUrl,
     modelOptions: config.modelOptions,
+    orchestrationModel: config.orchestrationModel,
+    subagentModel: config.subagentModel,
   });
 }

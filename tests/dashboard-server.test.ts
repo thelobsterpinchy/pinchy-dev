@@ -74,7 +74,7 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       toolRetryHardStopThreshold?: number;
       dangerModeEnabled?: boolean;
       workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
-      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
+      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationModel?: string; subagentModel?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
     };
     assert.equal(initial.defaultProvider, "openai-codex");
     assert.equal(initial.defaultModel, "gpt-5.4");
@@ -96,6 +96,8 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "env",
       defaultThinkingLevel: "env",
       defaultBaseUrl: "unset",
+      orchestrationModel: "unset",
+      subagentModel: "unset",
       autoDeleteEnabled: "unset",
       autoDeleteDays: "unset",
       toolRetryWarningThreshold: "unset",
@@ -240,6 +242,8 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "workspace",
       defaultThinkingLevel: "workspace",
       defaultBaseUrl: "workspace",
+      orchestrationModel: "unset",
+      subagentModel: "unset",
       autoDeleteEnabled: "workspace",
       autoDeleteDays: "workspace",
       toolRetryWarningThreshold: "workspace",
@@ -482,15 +486,15 @@ test("dashboard server exposes canonical conversation session diagnostics in das
     });
 
     updateRunStatus(cwd, run.id, "completed", {
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
     });
 
     const dashboardState = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{
-      conversationSessions: Array<{ conversationId: string; piSessionPath: string; sourceRunId?: string; updatedAt?: string }>;
+      conversationSessions: Array<{ conversationId: string; sessionPath: string; sourceRunId?: string; updatedAt?: string }>;
     }>);
     assert.equal(dashboardState.conversationSessions.length, 1);
     assert.equal(dashboardState.conversationSessions[0]?.conversationId, conversation.id);
-    assert.equal(dashboardState.conversationSessions[0]?.piSessionPath, "/tmp/pi-thread-session.json");
+    assert.equal(dashboardState.conversationSessions[0]?.sessionPath, "/tmp/pi-thread-session.json");
     assert.equal(dashboardState.conversationSessions[0]?.sourceRunId, run.id);
     assert.match(dashboardState.conversationSessions[0]?.updatedAt ?? "", /^20/);
   });
@@ -821,7 +825,7 @@ test("dashboard server exposes task execution diagnostics including dependencies
     });
 
     updateRunStatus(cwd, run.id, "running", {
-      piSessionPath: "/tmp/pi-subagent-session.json",
+      sessionPath: "/tmp/pi-subagent-session.json",
     });
 
     await fetch(`${baseUrl}/api/actions/delegate-plan`, {
@@ -845,7 +849,7 @@ test("dashboard server exposes task execution diagnostics including dependencies
         queueState: string;
         blockedByTaskTitles?: string[];
         linkedRunStatus?: string;
-        piSessionPath?: string;
+        sessionPath?: string;
         conversationSessionPath?: string;
         workerStatus?: string;
         workerPid?: number;

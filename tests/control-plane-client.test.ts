@@ -61,7 +61,7 @@ test("control plane client fetches aggregate conversation state", async () => {
       deliveries: [],
       sessionBinding: {
         conversationId: "conversation-1",
-        piSessionPath: "/tmp/pi-thread-session.json",
+        sessionPath: "/tmp/pi-thread-session.json",
         sourceRunId: "run-1",
         updatedAt: "2026-04-20T00:00:05.000Z",
       },
@@ -74,7 +74,7 @@ test("control plane client fetches aggregate conversation state", async () => {
   const state = await fetchConversationState("conversation-1", fetchMock);
 
   assert.equal(state.conversation.id, "conversation-1");
-  assert.equal(state.sessionBinding?.piSessionPath, "/tmp/pi-thread-session.json");
+  assert.equal(state.sessionBinding?.sessionPath, "/tmp/pi-thread-session.json");
   assert.equal(String(calls[0]?.input), "/api/control-plane/conversations/conversation-1/state");
 });
 

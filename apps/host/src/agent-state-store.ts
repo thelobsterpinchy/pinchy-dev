@@ -235,8 +235,8 @@ export function createRun(cwd: string, input: { conversationId: string; goal: st
     status: input.status ?? "queued",
     createdAt: now,
     updatedAt: now,
-    piSessionPath: canSeedConversationSession && sessionBinding?.runtimeConfigSignature === runtimeConfigSignature
-      ? sessionBinding.piSessionPath
+    sessionPath: canSeedConversationSession && sessionBinding?.runtimeConfigSignature === runtimeConfigSignature
+      ? sessionBinding.sessionPath
       : undefined,
     runtimeConfigSignature,
   };
@@ -285,7 +285,7 @@ export function claimNextQueuedRun(cwd: string, options: { lane?: WorkerLane } =
   });
 }
 
-export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "piSessionPath" | "runtimeConfigSignature">> = {}) {
+export function updateRunStatus(cwd: string, runId: string, status: RunStatus, patch: Partial<Pick<Run, "blockedReason" | "summary" | "startedAt" | "completedAt" | "sessionPath" | "runtimeConfigSignature">> = {}) {
   const runs = loadCollection<Run>(cwd, RUNS_FILE);
   const match = runs.find((run) => run.id === runId);
   if (!match) return undefined;
@@ -300,13 +300,13 @@ export function updateRunStatus(cwd: string, runId: string, status: RunStatus, p
   }
   match.blockedReason = patch.blockedReason ?? match.blockedReason;
   match.summary = patch.summary ?? match.summary;
-  match.piSessionPath = patch.piSessionPath ?? match.piSessionPath;
+  match.sessionPath = patch.sessionPath ?? match.sessionPath;
   match.runtimeConfigSignature = patch.runtimeConfigSignature ?? match.runtimeConfigSignature;
   saveCollection(cwd, RUNS_FILE, runs);
-  if (match.piSessionPath) {
+  if (match.sessionPath) {
     setConversationSessionBinding(cwd, {
       conversationId: match.conversationId,
-      piSessionPath: match.piSessionPath,
+      sessionPath: match.sessionPath,
       sourceRunId: match.id,
       runtimeConfigSignature: match.runtimeConfigSignature,
     });
@@ -318,6 +318,8 @@ export function updateRunStatus(cwd: string, runId: string, status: RunStatus, p
 export function createQuestion(cwd: string, input: {
   conversationId: string;
   runId: string;
+  agentRunId?: string;
+  taskId?: string;
   prompt: string;
   priority: QuestionPriority;
   channelHints?: NotificationChannel[];
@@ -330,6 +332,8 @@ export function createQuestion(cwd: string, input: {
     prompt: input.prompt,
     priority: input.priority,
     channelHints: input.channelHints,
+    agentRunId: input.agentRunId,
+    taskId: input.taskId,
     createdAt: nowIso(),
     status: "pending_delivery",
   };
@@ -435,19 +439,19 @@ export function getConversationSessionBinding(cwd: string, conversationId: strin
   return listConversationSessions(cwd).find((entry) => entry.conversationId === conversationId);
 }
 
-export function setConversationSessionBinding(cwd: string, input: { conversationId: string; piSessionPath: string; sourceRunId?: string; runtimeConfigSignature?: string }) {
+export function setConversationSessionBinding(cwd: string, input: { conversationId: string; sessionPath: string; sourceRunId?: string; runtimeConfigSignature?: string }) {
   const sessions = loadCollection<ConversationSessionBinding>(cwd, CONVERSATION_SESSIONS_FILE);
   const now = nowIso();
   const existing = sessions.find((entry) => entry.conversationId === input.conversationId);
   if (existing) {
-    existing.piSessionPath = input.piSessionPath;
+    existing.sessionPath = input.sessionPath;
     existing.sourceRunId = input.sourceRunId;
     existing.runtimeConfigSignature = input.runtimeConfigSignature;
     existing.updatedAt = now;
   } else {
     sessions.push({
       conversationId: input.conversationId,
-      piSessionPath: input.piSessionPath,
+      sessionPath: input.sessionPath,
       sourceRunId: input.sourceRunId,
       runtimeConfigSignature: input.runtimeConfigSignature,
       updatedAt: now,
@@ -457,13 +461,14 @@ export function setConversationSessionBinding(cwd: string, input: { conversation
   return getConversationSessionBinding(cwd, input.conversationId);
 }
 
-export function createAgentGuidance(cwd: string, input: { conversationId: string; taskId: string; runId?: string; content: string }) {
+export function createAgentGuidance(cwd: string, input: { conversationId: string; taskId: string; runId?: string; agentRunId?: string; content: string }) {
   const guidances = loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE);
   const guidance: AgentGuidance = {
     id: createId("guidance"),
     conversationId: input.conversationId,
     taskId: input.taskId,
     runId: input.runId,
+    agentRunId: input.agentRunId,
     content: input.content,
     status: "pending",
     createdAt: nowIso(),
@@ -473,11 +478,12 @@ export function createAgentGuidance(cwd: string, input: { conversationId: string
   return guidance;
 }
 
-export function listAgentGuidances(cwd: string, filter: { conversationId?: string; taskId?: string; runId?: string; status?: AgentGuidance["status"] } = {}) {
+export function listAgentGuidances(cwd: string, filter: { conversationId?: string; taskId?: string; runId?: string; agentRunId?: string; status?: AgentGuidance["status"] } = {}) {
   return loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE)
     .filter((guidance) => !filter.conversationId || guidance.conversationId === filter.conversationId)
     .filter((guidance) => !filter.taskId || guidance.taskId === filter.taskId)
     .filter((guidance) => !filter.runId || guidance.runId === filter.runId)
+    .filter((guidance) => !filter.agentRunId || guidance.agentRunId === filter.agentRunId)
     .filter((guidance) => !filter.status || guidance.status === filter.status)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }

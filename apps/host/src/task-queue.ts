@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { PinchyTask } from "../../../packages/shared/src/contracts.js";
+import type { OrchestrationTask, PinchyTask } from "../../../packages/shared/src/contracts.js";
+import {
+  appendOrchestrationEvent,
+  loadOrchestrationTasks,
+  saveOrchestrationTask,
+  saveOrchestrationTasks,
+} from "./orchestration-core/adapters/file-repositories.js";
 
 const TASKS_FILE = ".pinchy-tasks.json";
 
@@ -64,6 +70,84 @@ function isTaskReady(task: PinchyTask, tasks: PinchyTask[]) {
   return task.dependsOnTaskIds.every((dependencyId) => tasks.some((entry) => entry.id === dependencyId && entry.status === "done"));
 }
 
+function mapTaskStatusToOrchestrationStatus(task: PinchyTask, allTasks: PinchyTask[]): OrchestrationTask["status"] {
+  if (task.status === "pending") {
+    return isTaskReady(task, allTasks) ? "ready" : "pending";
+  }
+  if (task.status === "done") return "done";
+  if (task.status === "blocked") return "blocked";
+  return "running";
+}
+
+function toOrchestrationTask(task: PinchyTask, allTasks: PinchyTask[]): OrchestrationTask | undefined {
+  if (!task.runId) return undefined;
+  return {
+    id: task.id,
+    parentRunId: task.runId,
+    title: task.title,
+    prompt: task.prompt,
+    status: mapTaskStatusToOrchestrationStatus(task, allTasks),
+    dependsOnTaskIds: task.dependsOnTaskIds ?? [],
+    assignedAgentRunId: task.executionRunId,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
+}
+
+function recordTaskReadyIfNeeded(cwd: string, task: OrchestrationTask, previousStatus?: OrchestrationTask["status"]) {
+  if (task.status !== "ready" || previousStatus === "ready") return;
+  appendOrchestrationEvent(cwd, {
+    type: "TaskReady",
+    runId: task.parentRunId,
+    taskId: task.id,
+    at: task.updatedAt,
+  });
+}
+
+function recordTaskCompletedIfNeeded(cwd: string, task: OrchestrationTask, previousStatus?: OrchestrationTask["status"]) {
+  if (task.status !== "done" || previousStatus === "done") return;
+  appendOrchestrationEvent(cwd, {
+    type: "TaskCompleted",
+    runId: task.parentRunId,
+    taskId: task.id,
+    at: task.updatedAt,
+  });
+}
+
+function mirrorTaskToOrchestrationCore(cwd: string, task: PinchyTask, allTasks: PinchyTask[]) {
+  const orchestrationTask = toOrchestrationTask(task, allTasks);
+  if (!orchestrationTask) return undefined;
+  const previousStatus = loadOrchestrationTasks(cwd).find((entry) => entry.id === orchestrationTask.id)?.status;
+  saveOrchestrationTask(cwd, orchestrationTask);
+  recordTaskReadyIfNeeded(cwd, orchestrationTask, previousStatus);
+  recordTaskCompletedIfNeeded(cwd, orchestrationTask, previousStatus);
+  return orchestrationTask;
+}
+
+function markReadyOrchestrationDependents(cwd: string, completedTask: PinchyTask, allTasks: PinchyTask[]) {
+  if (!completedTask.runId || completedTask.status !== "done") return;
+
+  const readyDependents = allTasks
+    .filter((task) => task.runId === completedTask.runId && task.status === "pending" && isTaskReady(task, allTasks))
+    .map((task) => {
+      const previous = loadOrchestrationTasks(cwd).find((entry) => entry.id === task.id);
+      const mirrored = toOrchestrationTask(task, allTasks);
+      return mirrored && previous?.status !== "ready" ? mirrored : undefined;
+    })
+    .filter((task): task is OrchestrationTask => Boolean(task));
+
+  if (readyDependents.length === 0) return;
+  saveOrchestrationTasks(cwd, readyDependents);
+  for (const task of readyDependents) {
+    appendOrchestrationEvent(cwd, {
+      type: "TaskReady",
+      runId: task.parentRunId,
+      taskId: task.id,
+      at: task.updatedAt,
+    });
+  }
+}
+
 export function enqueueTask(
   cwd: string,
   title: string,
@@ -80,6 +164,7 @@ export function enqueueTask(
   });
   tasks.push(task);
   saveTasks(cwd, tasks);
+  mirrorTaskToOrchestrationCore(cwd, task, tasks);
   return task;
 }
 
@@ -111,6 +196,23 @@ export function enqueueDelegationPlan(
   } satisfies PinchyTask));
 
   saveTasks(cwd, [...existingTasks, ...createdTasks]);
+  if (options.runId && createdTasks.length > 0) {
+    saveOrchestrationTasks(cwd, createdTasks
+      .map((task) => toOrchestrationTask(task, [...existingTasks, ...createdTasks]))
+      .filter((task): task is OrchestrationTask => Boolean(task)));
+    appendOrchestrationEvent(cwd, {
+      type: "RunPlanned",
+      runId: options.runId,
+      taskIds: createdTasks.map((task) => task.id),
+      at: now,
+    });
+    for (const task of createdTasks) {
+      const mirrored = toOrchestrationTask(task, [...existingTasks, ...createdTasks]);
+      if (mirrored) {
+        recordTaskReadyIfNeeded(cwd, mirrored);
+      }
+    }
+  }
   return createdTasks;
 }
 
@@ -124,6 +226,8 @@ export function updateTaskStatus(cwd: string, id: string, status: PinchyTask["st
   match.runId = patch.runId ?? match.runId;
   match.executionRunId = patch.executionRunId ?? match.executionRunId;
   saveTasks(cwd, tasks);
+  mirrorTaskToOrchestrationCore(cwd, match, tasks);
+  markReadyOrchestrationDependents(cwd, match, tasks);
   return match;
 }
 
@@ -134,6 +238,8 @@ export function updateTaskStatusByExecutionRunId(cwd: string, runId: string, sta
   match.status = status;
   match.updatedAt = new Date().toISOString();
   saveTasks(cwd, tasks);
+  mirrorTaskToOrchestrationCore(cwd, match, tasks);
+  markReadyOrchestrationDependents(cwd, match, tasks);
   return match;
 }
 

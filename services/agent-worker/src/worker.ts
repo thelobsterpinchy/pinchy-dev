@@ -3,6 +3,8 @@ import { appendAuditEntry } from "../../../apps/host/src/audit-log.js";
 import { shouldRunAsCliEntry } from "../../../apps/host/src/module-entry.js";
 import { clearRunContext, setRunContext } from "../../../apps/host/src/run-context.js";
 import { appendDelegatedOutcomeRelay, appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate } from "../../../apps/host/src/orchestration-thread.js";
+import { FileBackedAgentRunRepository, FileBackedEventRecorder, FileBackedTaskRepository } from "../../../apps/host/src/orchestration-core/adapters/file-repositories.js";
+import { recordAgentFinished, type AgentFinishOutcome } from "../../../apps/host/src/orchestration-core/application/completion-synthesis.js";
 import { updateTaskStatusByExecutionRunId } from "../../../apps/host/src/task-queue.js";
 import type { NotificationDelivery, Question, Run } from "../../../packages/shared/src/contracts.js";
 import { createQuestionDeliveryDispatcher } from "../../../services/notifiers/dispatcher.js";
@@ -83,6 +85,35 @@ function buildOrchestrationRelayIntro(input: {
   return summarizeTaskStatus(input.task);
 }
 
+const systemClock = {
+  nowIso() {
+    return new Date().toISOString();
+  },
+};
+
+function toAgentFinishOutcome(outcome: ReturnType<typeof normalizeRunOutcome>): AgentFinishOutcome | undefined {
+  if (outcome.kind === "completed") {
+    return { kind: "completed", summary: outcome.summary };
+  }
+  if (outcome.kind === "failed") {
+    return { kind: "failed", error: outcome.error ?? outcome.summary ?? "Agent execution failed." };
+  }
+  return undefined;
+}
+
+async function recordCoreCompletion(cwd: string, runId: string, outcome: ReturnType<typeof normalizeRunOutcome>) {
+  const finishOutcome = toAgentFinishOutcome(outcome);
+  if (!finishOutcome) return undefined;
+  return recordAgentFinished({
+    taskRepository: new FileBackedTaskRepository(cwd),
+    agentRunRepository: new FileBackedAgentRunRepository(cwd),
+    eventRecorder: new FileBackedEventRecorder(cwd),
+    clock: systemClock,
+    backendRunRef: runId,
+    outcome: finishOutcome,
+  });
+}
+
 function consumePendingGuidanceForRun(cwd: string, run: Run) {
   const pendingGuidance = listAgentGuidances(cwd, { runId: run.id, status: "pending" });
   if (pendingGuidance.length === 0) {
@@ -143,13 +174,14 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
     const { guidanceText } = consumePendingGuidanceForRun(cwd, runningRun);
     const result = await dependencies.executeRun(applyGuidanceToRun(runningRun, guidanceText));
     const outcome = normalizeRunOutcome(result, result);
-    const persistedRun = applyRunOutcome({
+    const persistedRun = await applyRunOutcome({
       cwd,
       run: runningRun,
       outcome,
     });
     if (persistedRun?.id) {
       const updatedTask = updateTaskStatusByExecutionRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
+      const coreCompletion = await recordCoreCompletion(cwd, persistedRun.id, outcome);
       if (updatedTask?.conversationId) {
         const relayContent = buildMainThreadRelayContent({ task: updatedTask, outcome });
         if (relayContent) {
@@ -164,9 +196,25 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
           runId: updatedTask.runId,
           intro: buildOrchestrationRelayIntro({ task: updatedTask, outcome }),
         });
-        appendFinalThreadSynthesisIfReady(cwd, {
+        await appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: updatedTask.conversationId,
           runId: updatedTask.runId,
+        });
+      } else if (coreCompletion?.agentRun.conversationId) {
+        appendOrchestrationUpdate(cwd, {
+          conversationId: coreCompletion.agentRun.conversationId,
+          runId: coreCompletion.agentRun.parentRunId,
+          intro: buildOrchestrationRelayIntro({
+            task: {
+              title: coreCompletion.task?.title ?? coreCompletion.agentRun.goal,
+              status: coreCompletion.task?.status === "done" ? "done" : coreCompletion.task?.status === "failed" ? "blocked" : "running",
+            },
+            outcome,
+          }),
+        });
+        await appendFinalThreadSynthesisIfReady(cwd, {
+          conversationId: coreCompletion.agentRun.conversationId,
+          runId: coreCompletion.agentRun.parentRunId,
         });
       }
     }
@@ -187,7 +235,7 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
     return persistedRun;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    applyRunOutcome({
+    await applyRunOutcome({
       cwd,
       run: runningRun,
       outcome: {
@@ -195,7 +243,7 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
         summary: `Run execution failed before outcome persistence: ${runningRun.goal}`,
         message: `Pinchy could not finish this run because execution failed: ${errorMessage}`,
         error: errorMessage,
-        piSessionPath: runningRun.piSessionPath,
+        sessionPath: runningRun.sessionPath,
       },
     });
     appendAuditEntry(cwd, {
@@ -258,7 +306,7 @@ export async function processAvailableQueuedRuns(cwd: string, dependencies: Work
 }
 
 function getNextResumableRun(cwd: string) {
-  const waitingRuns = listRuns(cwd).filter((run) => run.status === "waiting_for_human" && !!run.piSessionPath);
+  const waitingRuns = listRuns(cwd).filter((run) => run.status === "waiting_for_human" && !!run.sessionPath);
   if (waitingRuns.length === 0) return undefined;
 
   const questions = listQuestions(cwd);
@@ -332,13 +380,14 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
     const { guidanceText } = consumePendingGuidanceForRun(cwd, runningRun);
     const result = await dependencies.resumeRun(runningRun, applyGuidanceToReply(resumable.reply, guidanceText));
     const outcome = normalizeRunOutcome(result, result);
-    const persistedRun = applyRunOutcome({
+    const persistedRun = await applyRunOutcome({
       cwd,
       run: runningRun,
       outcome,
     });
     if (persistedRun?.id) {
       const updatedTask = updateTaskStatusByExecutionRunId(cwd, persistedRun.id, mapRunStatusToTaskStatus(persistedRun.status));
+      const coreCompletion = await recordCoreCompletion(cwd, persistedRun.id, outcome);
       if (updatedTask?.conversationId) {
         const relayContent = buildMainThreadRelayContent({ task: updatedTask, outcome });
         if (relayContent) {
@@ -353,9 +402,25 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
           runId: updatedTask.runId,
           intro: buildOrchestrationRelayIntro({ task: updatedTask, outcome }),
         });
-        appendFinalThreadSynthesisIfReady(cwd, {
+        await appendFinalThreadSynthesisIfReady(cwd, {
           conversationId: updatedTask.conversationId,
           runId: updatedTask.runId,
+        });
+      } else if (coreCompletion?.agentRun.conversationId) {
+        appendOrchestrationUpdate(cwd, {
+          conversationId: coreCompletion.agentRun.conversationId,
+          runId: coreCompletion.agentRun.parentRunId,
+          intro: buildOrchestrationRelayIntro({
+            task: {
+              title: coreCompletion.task?.title ?? coreCompletion.agentRun.goal,
+              status: coreCompletion.task?.status === "done" ? "done" : coreCompletion.task?.status === "failed" ? "blocked" : "running",
+            },
+            outcome,
+          }),
+        });
+        await appendFinalThreadSynthesisIfReady(cwd, {
+          conversationId: coreCompletion.agentRun.conversationId,
+          runId: coreCompletion.agentRun.parentRunId,
         });
       }
     }
@@ -376,7 +441,7 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
     return persistedRun;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    applyRunOutcome({
+    await applyRunOutcome({
       cwd,
       run: runningRun,
       outcome: {
@@ -384,7 +449,7 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
         summary: `Run resume failed before outcome persistence: ${runningRun.goal}`,
         message: `Pinchy could not finish this run because execution failed: ${errorMessage}`,
         error: errorMessage,
-        piSessionPath: runningRun.piSessionPath,
+        sessionPath: runningRun.sessionPath,
       },
     });
     appendAuditEntry(cwd, {

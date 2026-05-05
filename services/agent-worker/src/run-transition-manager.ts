@@ -1,4 +1,6 @@
 import { appendMessage, createQuestion, getRunById, hasConversation, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
+import { FileBackedAgentRunRepository, FileBackedEventRecorder, FileBackedTaskRepository } from "../../../apps/host/src/orchestration-core/adapters/file-repositories.js";
+import { recordAgentBlockedQuestion } from "../../../apps/host/src/orchestration-core/application/human-interactions.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import type { RunOutcome } from "./run-outcomes.js";
 
@@ -8,16 +10,26 @@ type ApplyRunOutcomeArgs = {
   outcome: RunOutcome;
 };
 
-export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
+const systemClock = {
+  nowIso() {
+    return new Date().toISOString();
+  },
+};
+
+export async function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
   if (!hasConversation(cwd, run.conversationId) || !getRunById(cwd, run.id)) {
     return undefined;
   }
+
+  const taskRepository = new FileBackedTaskRepository(cwd);
+  const agentRunRepository = new FileBackedAgentRunRepository(cwd);
+  const eventRecorder = new FileBackedEventRecorder(cwd);
 
   switch (outcome.kind) {
     case "completed": {
       const completed = updateRunStatus(cwd, run.id, "completed", {
         summary: outcome.summary,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return completed;
@@ -26,14 +38,25 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
       const waiting = updateRunStatus(cwd, run.id, "waiting_for_human", {
         summary: outcome.summary,
         blockedReason: outcome.blockedReason,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
-      createQuestion(cwd, {
+      const agentRun = await agentRunRepository.findByBackendRunRef(run.id);
+      const question = createQuestion(cwd, {
         conversationId: run.conversationId,
         runId: run.id,
+        agentRunId: agentRun?.id,
+        taskId: agentRun?.taskId,
         prompt: outcome.question.prompt,
         priority: outcome.question.priority ?? "normal",
         channelHints: outcome.question.channelHints,
+      });
+      await recordAgentBlockedQuestion({
+        taskRepository,
+        agentRunRepository,
+        eventRecorder,
+        clock: systemClock,
+        backendRunRef: run.id,
+        question,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return waiting;
@@ -42,7 +65,7 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
       const waiting = updateRunStatus(cwd, run.id, "waiting_for_approval", {
         summary: outcome.summary,
         blockedReason: outcome.blockedReason,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return waiting;
@@ -51,7 +74,7 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
       const failed = updateRunStatus(cwd, run.id, "failed", {
         summary: outcome.summary,
         blockedReason: outcome.error,
-        piSessionPath: outcome.piSessionPath,
+        sessionPath: outcome.sessionPath,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return failed;

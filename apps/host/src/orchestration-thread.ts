@@ -1,7 +1,12 @@
 import { appendMessage, listMessages } from "./agent-state-store.js";
+import {
+  loadOrchestrationTasks,
+  createFileBackedOrchestrationRepositories,
+} from "./orchestration-core/adapters/file-repositories.js";
+import { markRunReadyForSynthesis, recordRunSummarized } from "./orchestration-core/application/completion-synthesis.js";
 import { buildOrchestrationSummary } from "./orchestration-policy.js";
 import { loadTasks } from "./task-queue.js";
-import type { Message, PinchyTask } from "../../../packages/shared/src/contracts.js";
+import type { Message, OrchestrationTask, PinchyTask } from "../../../packages/shared/src/contracts.js";
 
 function listThreadTasks(cwd: string, input: Pick<PinchyTask, "conversationId" | "runId">) {
   if (!input.conversationId) {
@@ -11,13 +16,37 @@ function listThreadTasks(cwd: string, input: Pick<PinchyTask, "conversationId" |
   return loadTasks(cwd).filter((entry) => entry.conversationId === input.conversationId && (!input.runId || entry.runId === input.runId));
 }
 
+function mapCoreTaskStatus(status: OrchestrationTask["status"]): PinchyTask["status"] {
+  if (status === "done") return "done";
+  if (status === "running") return "running";
+  if (status === "blocked" || status === "failed" || status === "cancelled") return "blocked";
+  return "pending";
+}
+
+function listThreadCoreTasks(cwd: string, input: Pick<PinchyTask, "runId">): Array<Pick<PinchyTask, "id" | "title" | "status" | "dependsOnTaskIds">> {
+  if (!input.runId) return [];
+  return loadOrchestrationTasks(cwd)
+    .filter((task) => task.parentRunId === input.runId)
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      status: mapCoreTaskStatus(task.status),
+      dependsOnTaskIds: task.dependsOnTaskIds,
+    }));
+}
+
+function listThreadSynthesisTasks(cwd: string, input: Pick<PinchyTask, "conversationId" | "runId">) {
+  const legacyTasks = listThreadTasks(cwd, input);
+  return legacyTasks.length > 0 ? legacyTasks : listThreadCoreTasks(cwd, input);
+}
+
 function buildThreadOrchestrationContent(cwd: string, input: {
   conversationId?: string;
   runId?: string;
   intro: string;
   tasks?: Array<Pick<PinchyTask, "id" | "title" | "status" | "dependsOnTaskIds">>;
 }) {
-  const threadTasks = input.tasks ?? listThreadTasks(cwd, input);
+  const threadTasks = input.tasks ?? listThreadSynthesisTasks(cwd, input);
   const taskTitleById = new Map(threadTasks.map((task) => [task.id, task.title]));
   return buildOrchestrationSummary({
     intro: input.intro,
@@ -39,6 +68,12 @@ function hasEquivalentPlainAgentMessage(messages: Message[], input: { runId?: st
     && message.content === input.content
     && (!input.requireSameRunId || !input.runId || message.runId === input.runId));
 }
+
+const systemClock = {
+  nowIso() {
+    return new Date().toISOString();
+  },
+};
 
 export function appendPlainAgentRelay(cwd: string, input: {
   conversationId?: string;
@@ -91,13 +126,13 @@ export function appendOrchestrationUpdate(cwd: string, input: {
   });
 }
 
-export function appendFinalThreadSynthesisIfReady(cwd: string, input: {
+export async function appendFinalThreadSynthesisIfReady(cwd: string, input: {
   conversationId?: string;
   runId?: string;
 }) {
   if (!input.conversationId) return undefined;
 
-  const threadTasks = listThreadTasks(cwd, input);
+  const threadTasks = listThreadSynthesisTasks(cwd, input);
   if (threadTasks.length === 0) return undefined;
   if (threadTasks.some((task) => task.status === "pending" || task.status === "running" || task.status === "blocked")) {
     return undefined;
@@ -108,7 +143,15 @@ export function appendFinalThreadSynthesisIfReady(cwd: string, input: {
     return undefined;
   }
 
-  return appendMessage(cwd, {
+  if (input.runId) {
+    await markRunReadyForSynthesis({
+      ...createFileBackedOrchestrationRepositories(cwd),
+      clock: systemClock,
+      parentRunId: input.runId,
+    });
+  }
+
+  const message = appendMessage(cwd, {
     conversationId: input.conversationId,
     role: "agent",
     content: buildThreadOrchestrationContent(cwd, {
@@ -120,4 +163,14 @@ export function appendFinalThreadSynthesisIfReady(cwd: string, input: {
     runId: input.runId,
     kind: "orchestration_final",
   });
+
+  if (message && input.runId) {
+    await recordRunSummarized({
+      ...createFileBackedOrchestrationRepositories(cwd),
+      clock: systemClock,
+      parentRunId: input.runId,
+    });
+  }
+
+  return message;
 }

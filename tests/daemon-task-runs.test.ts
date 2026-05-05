@@ -7,7 +7,7 @@ import { createConversation, createRun } from "../apps/host/src/agent-state-stor
 import { loadDaemonHealth } from "../apps/host/src/daemon-health.js";
 import { loadRunHistory } from "../apps/host/src/run-history.js";
 import { loadTasks, enqueueDelegationPlan, enqueueTask, updateTaskStatus } from "../apps/host/src/task-queue.js";
-import { processNextPendingTaskRun, processPendingTaskRuns, resolveGoals } from "../apps/host/src/daemon.js";
+import { processNextPendingTaskRun, processPendingTaskRuns, resolveGoals } from "../apps/host/src/pinchy-daemon.js";
 
 function withTempDir(run: (cwd: string) => Promise<void> | void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-daemon-task-runs-"));

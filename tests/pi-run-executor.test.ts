@@ -62,7 +62,7 @@ test("Pi run executor starts a new Pi session for a fresh run", async () => {
 
   const result = await executor.executeRun({ cwd: "/repo", run });
 
-  assert.equal(result.piSessionPath, "/tmp/pi-session-1.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-1.json");
   assert.match(result.summary, /Pi-backed run completed/);
   assert.equal(calls[0], "resolveModel:openai/gpt-5.4");
   assert.equal(calls[1], "create:/repo");
@@ -190,7 +190,7 @@ test("Pi run executor starts a fresh session for strictly conversational follow-
         status: "completed",
         createdAt: "2026-04-20T00:00:00.000Z",
         updatedAt: "2026-04-20T00:00:05.000Z",
-        piSessionPath: "/tmp/existing-thread-session.json",
+        sessionPath: "/tmp/existing-thread-session.json",
         runtimeConfigSignature,
       },
     ]),
@@ -225,7 +225,7 @@ test("Pi run executor starts a fresh session for strictly conversational follow-
 
   const result = await executor.executeRun({ cwd: "/repo", run });
 
-  assert.equal(result.piSessionPath, "/tmp/new-thread-session.json");
+  assert.equal(result.sessionPath, "/tmp/new-thread-session.json");
   assert.deepEqual(calls, [
     "create:/repo",
     'session:/repo:/agent-dir:{"kind":"create","cwd":"/repo"}',
@@ -264,7 +264,7 @@ test("Pi run executor reuses the latest Pi session for delegation-eligible follo
         status: "completed",
         createdAt: "2026-04-20T00:00:00.000Z",
         updatedAt: "2026-04-20T00:00:05.000Z",
-        piSessionPath: "/tmp/existing-thread-session.json",
+        sessionPath: "/tmp/existing-thread-session.json",
         runtimeConfigSignature,
       },
     ]),
@@ -299,7 +299,7 @@ test("Pi run executor reuses the latest Pi session for delegation-eligible follo
 
   const result = await executor.executeRun({ cwd: "/repo", run });
 
-  assert.equal(result.piSessionPath, "/tmp/existing-thread-session.json");
+  assert.equal(result.sessionPath, "/tmp/existing-thread-session.json");
   assert.deepEqual(calls, [
     "open:/tmp/existing-thread-session.json",
     'session:/repo:/agent-dir:{"kind":"open","sessionPath":"/tmp/existing-thread-session.json"}',
@@ -340,7 +340,7 @@ test("Pi run executor does not reuse an older conversation session when the runt
         status: "completed",
         createdAt: "2026-04-20T00:00:00.000Z",
         updatedAt: "2026-04-20T00:00:05.000Z",
-        piSessionPath: "/tmp/existing-thread-session.json",
+        sessionPath: "/tmp/existing-thread-session.json",
         runtimeConfigSignature: "stale-signature",
       },
     ]),
@@ -376,7 +376,7 @@ test("Pi run executor does not reuse an older conversation session when the runt
 
   const result = await executor.executeRun({ cwd: "/repo", run });
 
-  assert.equal(result.piSessionPath, "/tmp/new-thread-session.json");
+  assert.equal(result.sessionPath, "/tmp/new-thread-session.json");
   assert.equal(calls.some((entry) => entry.startsWith("open:")), false);
   assert.equal(calls[0], "create:/repo");
   assert.match(calls[1] ?? "", /^session:\/repo:\/agent-dir:\{"kind":"create"/);
@@ -402,7 +402,7 @@ test("Pi run executor uses followUp only when the reopened Pi session is still s
     agentDir: "/agent-dir",
     sessionManagerFactory,
     loadRuntimeConfig: () => runtimeConfig,
-    loadConversationSessionBinding: () => ({ piSessionPath: "/tmp/streaming-thread-session.json", runtimeConfigSignature }),
+    loadConversationSessionBinding: () => ({ sessionPath: "/tmp/streaming-thread-session.json", runtimeConfigSignature }),
     createSession: async ({ cwd, agentDir, sessionManager }) => {
       calls.push(`session:${cwd}:${agentDir}:${JSON.stringify(sessionManager)}`);
       return {
@@ -456,7 +456,7 @@ test("Pi run executor prefers the canonical conversation session binding over sc
     agentDir: "/agent-dir",
     sessionManagerFactory,
     loadRuntimeConfig: () => runtimeConfig,
-    loadConversationSessionBinding: () => ({ piSessionPath: "/tmp/canonical-thread-session.json", runtimeConfigSignature }),
+    loadConversationSessionBinding: () => ({ sessionPath: "/tmp/canonical-thread-session.json", runtimeConfigSignature }),
     loadConversationRuns: () => ([
       {
         id: "run-older",
@@ -466,7 +466,7 @@ test("Pi run executor prefers the canonical conversation session binding over sc
         status: "completed",
         createdAt: "2026-04-20T00:00:00.000Z",
         updatedAt: "2026-04-20T00:00:10.000Z",
-        piSessionPath: "/tmp/non-canonical-latest-run-session.json",
+        sessionPath: "/tmp/non-canonical-latest-run-session.json",
         runtimeConfigSignature,
       },
     ]),
@@ -500,7 +500,7 @@ test("Pi run executor prefers the canonical conversation session binding over sc
 
   const result = await executor.executeRun({ cwd: "/repo", run });
 
-  assert.equal(result.piSessionPath, "/tmp/canonical-thread-session.json");
+  assert.equal(result.sessionPath, "/tmp/canonical-thread-session.json");
   assert.deepEqual(calls, [
     "open:/tmp/canonical-thread-session.json",
     'session:/repo:/agent-dir:{"kind":"open","sessionPath":"/tmp/canonical-thread-session.json"}',
@@ -551,12 +551,12 @@ test("Pi run executor resumes an existing Pi session for a blocked run", async (
     status: "waiting_for_human",
     createdAt: "2026-04-20T00:00:00.000Z",
     updatedAt: "2026-04-20T00:00:00.000Z",
-    piSessionPath: "/tmp/existing-session.json",
+    sessionPath: "/tmp/existing-session.json",
   };
 
   const result = await executor.resumeRun({ cwd: "/repo", run, reply: "Use SQLite only if JSON becomes limiting." });
 
-  assert.equal(result.piSessionPath, "/tmp/pi-session-2.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-2.json");
   assert.match(result.summary, /Pi-backed run resumed/);
   assert.deepEqual(calls, [
     "open:/tmp/existing-session.json",
@@ -595,7 +595,7 @@ test("Pi run executor uses plain string prompt results as the agent message", as
   assert.equal(result.kind, "completed");
   assert.equal(result.message, "PINCHY_E2E_OK The dashboard conversation loop is working.");
   assert.match(result.summary, /Pi-backed run completed/);
-  assert.equal(result.piSessionPath, "/tmp/pi-session-string.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-string.json");
 });
 
 test("Pi run executor captures assistant text from streamed session events", async () => {
@@ -640,7 +640,7 @@ test("Pi run executor captures assistant text from streamed session events", asy
   assert.equal(result.kind, "completed");
   assert.equal(result.message, "PINCHY_STREAM_OK");
   assert.match(result.summary, /Pi-backed run completed/);
-  assert.equal(result.piSessionPath, "/tmp/pi-session-stream.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-stream.json");
 });
 
 test("Pi run executor collapses exact duplicated assistant text captured from Pi", async () => {
@@ -847,7 +847,7 @@ test("Pi run executor falls back to the last assistant session message when prom
   assert.equal(result.kind, "completed");
   assert.equal(result.message, "PINCHY_HISTORY_OK");
   assert.match(result.summary, /Pi-backed run completed/);
-  assert.equal(result.piSessionPath, "/tmp/pi-session-history.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-history.json");
 });
 
 test("Pi run executor aborts an active Pi session when run cancellation is requested", async () => {
@@ -900,7 +900,7 @@ test("Pi run executor can steer an active session using the conversation session
   const calls: string[] = [];
   const executor = createPiRunExecutor({
     loadConversationSessionBinding: () => ({
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
     }),
     createSession: async () => ({
       session: {
@@ -941,7 +941,7 @@ test("Pi run executor can queue a follow-up on an active session using the conve
   const calls: string[] = [];
   const executor = createPiRunExecutor({
     loadConversationSessionBinding: () => ({
-      piSessionPath: "/tmp/pi-thread-session.json",
+      sessionPath: "/tmp/pi-thread-session.json",
     }),
     createSession: async () => ({
       session: {
@@ -1015,7 +1015,7 @@ test("Pi run executor preserves structured waiting_for_human outcomes returned b
   const result = await executor.executeRun({ cwd: "/repo", run });
 
   assert.equal(result.kind, "waiting_for_human");
-  assert.equal(result.piSessionPath, "/tmp/pi-session-3.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-3.json");
   assert.equal(result.blockedReason, "Need persistence format");
   assert.equal(result.question.prompt, "Should I use JSON files or SQLite?");
 });
@@ -1048,12 +1048,12 @@ test("Pi run executor preserves structured failed outcomes returned by Pi follow
     status: "waiting_for_human",
     createdAt: "2026-04-20T00:00:00.000Z",
     updatedAt: "2026-04-20T00:00:00.000Z",
-    piSessionPath: "/tmp/existing-session.json",
+    sessionPath: "/tmp/existing-session.json",
   };
 
   const result = await executor.resumeRun({ cwd: "/repo", run, reply: "Please continue." });
 
   assert.equal(result.kind, "failed");
   assert.equal(result.error, "tool call rejected");
-  assert.equal(result.piSessionPath, "/tmp/pi-session-4.json");
+  assert.equal(result.sessionPath, "/tmp/pi-session-4.json");
 });
