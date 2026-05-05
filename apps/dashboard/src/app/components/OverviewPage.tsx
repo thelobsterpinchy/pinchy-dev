@@ -32,12 +32,12 @@ export function OverviewPage() {
         <div className="p-6">
         <div className="max-w-6xl mx-auto space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <MetricCard label="Pending tasks" value={summary.pendingTasks} tone="text-blue-400" />
+            <MetricCard label="Delegated tasks" value={summary.pendingTasks} tone="text-blue-400" />
             <MetricCard label="Pending approvals" value={summary.pendingApprovals} tone="text-amber-400" />
             <MetricCard label="Saved memories" value={summary.savedMemories} tone="text-purple-400" />
             <MetricCard label="Workspaces" value={summary.workspaces} tone="text-green-500" />
             <MetricCard label="Pinned memories" value={summary.pinnedMemories} tone="text-emerald-400" />
-            <MetricCard label="Recent runs" value={summary.recentRuns} tone="text-pink-400" />
+            <MetricCard label="Orchestration runs" value={summary.recentRuns} tone="text-pink-400" />
             <MetricCard label="Reload requests" value={summary.pendingReloads} tone="text-slate-400" />
           </div>
 
@@ -67,8 +67,8 @@ export function OverviewPage() {
               <Card className="bg-[#111827] border-gray-800 p-5">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-100">Daemon health</h2>
-                    <p className="text-sm text-gray-400">Current automation posture</p>
+                    <h2 className="text-xl font-semibold text-gray-100">Orchestration health</h2>
+                    <p className="text-sm text-gray-400">Current autonomous runtime posture</p>
                   </div>
                   <Button data-testid="reload-runtime" variant="default" size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => void onReloadRuntime()}><RefreshCcw className="w-4 h-4 mr-2" /> Reload Runtime</Button>
                 </div>
@@ -94,8 +94,8 @@ export function OverviewPage() {
             <div className="space-y-6">
               <Card className="bg-[#111827] border-gray-800 p-5">
                 <div className="mb-4">
-                  <h2 className="text-xl font-semibold text-gray-100">Selected conversation</h2>
-                  <p className="text-sm text-gray-400">Use this like an operator cockpit for one thread</p>
+                  <h2 className="text-xl font-semibold text-gray-100">Selected orchestration thread</h2>
+                  <p className="text-sm text-gray-400">Use this as the primary Pinchy surface for one thread</p>
                 </div>
                 {!conversationState ? <div className="text-sm text-gray-500">Select a conversation from the chat page.</div> : (
                   <>

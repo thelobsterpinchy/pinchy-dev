@@ -276,16 +276,16 @@ test("buildDashboardUtilityRailState uses the mock-style details rail width and 
     isOpen: true,
     width: 320,
     toggleLabel: "Hide tools rail",
-    title: "Parallel workbench",
-    subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
+    title: "Orchestration workbench",
+    subtitle: "Questions, delegated execution, runs, and orchestration tools stay nearby without taking over the chat.",
   });
 
   assert.deepEqual(buildDashboardUtilityRailState({ isOpen: true, page: "overview" }), {
     isOpen: false,
     width: 0,
     toggleLabel: "Hide tools rail",
-    title: "Parallel workbench",
-    subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
+    title: "Orchestration workbench",
+    subtitle: "Questions, delegated execution, runs, and orchestration tools stay nearby without taking over the chat.",
   });
 });
 
@@ -353,15 +353,15 @@ test("buildChatWorkbenchState keeps background work visible from the chat home",
     recentRuns: 8,
     hasActiveConversationRun: true,
   }), {
-    title: "Parallel workbench",
-    subtitle: "Chat with Pinchy while tasks, approvals, and background runs continue alongside this thread.",
+    title: "Orchestration workbench",
+    subtitle: "Work with Pinchy's main orchestration thread while delegated execution, approvals, and background runs continue underneath it.",
     badges: [
       { label: "3 queued tasks", tone: "info" },
       { label: "1 approval waiting", tone: "warning" },
       { label: "8 recent runs", tone: "idle" },
       { label: "thread active", tone: "info" },
     ],
-    helper: "Queue focused background work here without leaving the main conversation.",
+    helper: "Queue delegated execution here without leaving the main orchestration conversation.",
   });
 });
 
@@ -378,13 +378,13 @@ test("buildChatWorkspacePanelState keeps chat tools collapsed by default and aut
     delegationTaskCount: 0,
   }), {
     tools: {
-      title: "Tools & delegation",
+      title: "Orchestration tools",
       summary: "Select a conversation to unlock bounded task tools for this thread.",
       defaultExpanded: false,
       toggleLabel: "Show tools",
     },
     workflows: {
-      title: "Linked workflows",
+      title: "Delegated execution",
       summary: "No linked workflows for this conversation yet.",
       defaultExpanded: false,
       toggleLabel: "Show workflows",
@@ -404,13 +404,13 @@ test("buildChatWorkspacePanelState keeps chat tools collapsed by default and aut
     delegationTaskCount: 3,
   }), {
     tools: {
-      title: "Tools & delegation",
+      title: "Orchestration tools",
       summary: "1 queued task draft • 3 delegation tasks ready",
       defaultExpanded: false,
       toggleLabel: "Show tools",
     },
     workflows: {
-      title: "Linked workflows",
+      title: "Delegated execution",
       summary: "2 active workflows • 2 completed for this thread.",
       defaultExpanded: true,
       toggleLabel: "Show workflows",
@@ -430,9 +430,9 @@ test("buildConversationOrchestrationState keeps subtask orchestration scoped to 
     conversationId: "conversation-1",
     tasks,
   }), {
-    title: "Parallel workflows",
-    subtitle: "Pinchy can keep orchestrating this thread while bounded tasks run in parallel.",
-    helper: "2 linked background tasks for this conversation.",
+    title: "Orchestration plan",
+    subtitle: "Pinchy owns this thread's state and can delegate bounded execution through Pi when useful.",
+    helper: "2 delegated execution tasks linked to this conversation.",
     linkedTasks: [tasks[1], tasks[0]],
     counts: {
       pending: 1,

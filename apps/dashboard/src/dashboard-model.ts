@@ -474,8 +474,8 @@ export function buildDashboardUtilityRailState(input: {
     isOpen: isConversationPage ? input.isOpen : false,
     width: isConversationPage && input.isOpen ? 320 : 0,
     toggleLabel: input.isOpen ? "Hide tools rail" : "Show tools rail",
-    title: "Parallel workbench",
-    subtitle: "Questions, workflows, runs, and delegation tools stay nearby without taking over the chat.",
+    title: "Orchestration workbench",
+    subtitle: "Questions, delegated execution, runs, and orchestration tools stay nearby without taking over the chat.",
   };
 }
 
@@ -530,15 +530,15 @@ export function buildChatWorkbenchState(input: {
   hasActiveConversationRun: boolean;
 }) {
   return {
-    title: "Parallel workbench",
-    subtitle: "Chat with Pinchy while tasks, approvals, and background runs continue alongside this thread.",
+    title: "Orchestration workbench",
+    subtitle: "Work with Pinchy's main orchestration thread while delegated execution, approvals, and background runs continue underneath it.",
     badges: [
       { label: `${input.pendingTasks} queued task${input.pendingTasks === 1 ? "" : "s"}`, tone: "info" as const },
       { label: `${input.pendingApprovals} approval${input.pendingApprovals === 1 ? " waiting" : "s waiting"}`, tone: input.pendingApprovals > 0 ? "warning" as const : "idle" as const },
       { label: `${input.recentRuns} recent run${input.recentRuns === 1 ? "" : "s"}`, tone: "idle" as const },
       { label: input.hasActiveConversationRun ? "thread active" : "thread idle", tone: input.hasActiveConversationRun ? "info" as const : "idle" as const },
     ],
-    helper: "Queue focused background work here without leaving the main conversation.",
+    helper: "Queue delegated execution here without leaving the main orchestration conversation.",
   };
 }
 
@@ -576,7 +576,7 @@ export function buildChatWorkspacePanelState(input: {
 
   return {
     tools: {
-      title: "Tools & delegation",
+      title: "Orchestration tools",
       summary: input.hasSelectedConversation
         ? `${queuedTaskLabel} • ${delegationTaskLabel}`
         : "Select a conversation to unlock bounded task tools for this thread.",
@@ -584,7 +584,7 @@ export function buildChatWorkspacePanelState(input: {
       toggleLabel: "Show tools",
     },
     workflows: {
-      title: "Linked workflows",
+      title: "Delegated execution",
       summary: activeWorkflowCount > 0
         ? `${activeWorkflowCount} active workflow${activeWorkflowCount === 1 ? "" : "s"} • ${completedWorkflowCount} completed for this thread.`
         : "No linked workflows for this conversation yet.",
@@ -610,9 +610,9 @@ export function buildConversationOrchestrationState(input: {
     : [];
 
   return {
-    title: "Parallel workflows",
-    subtitle: "Pinchy can keep orchestrating this thread while bounded tasks run in parallel.",
-    helper: `${linkedTasks.length} linked background task${linkedTasks.length === 1 ? "" : "s"} for this conversation.`,
+    title: "Orchestration plan",
+    subtitle: "Pinchy owns this thread's state and can delegate bounded execution through Pi when useful.",
+    helper: `${linkedTasks.length} delegated execution task${linkedTasks.length === 1 ? "" : "s"} linked to this conversation.`,
     linkedTasks,
     counts: {
       pending: linkedTasks.filter((task) => task.status === "pending").length,

@@ -2,24 +2,50 @@
 
 ## Overview
 
-`pinchy-dev` is a **local Pi agent runtime** with three main layers:
+`pinchy-dev` is a **local autonomous orchestration runtime** with Pi-backed execution. The day-to-day product surface is Pinchy's own conversation, memory, run, task, dashboard, and notification model; Pi is an internal execution backend that Pinchy can call through adapters.
 
-1. **Pi host app**
-   - starts interactive and daemon sessions via Pi SDK
-   - manages session persistence and runtime startup
+The runtime has four main layers:
+
+1. **Pinchy orchestration core**
+   - owns conversation memory, run state, task state, blocked questions, completion synthesis, and orchestration events
+   - exposes explicit ports for repositories, clocks, context assembly, model selection, and agent execution
+   - keeps user-facing lifecycle state separate from the underlying Pi session/runtime state
+   - lives under `apps/host/src/orchestration-core`
+
+2. **Pinchy host/API/dashboard app**
+   - starts interactive, daemon, API, and dashboard processes
+   - manages local runtime startup, package CLI behavior, dashboard state, and API actions
    - provides reusable helper modules for validation detection, browser artifact comparison, approval policy, image matching, task queueing, generated-tool review, and dashboard rendering/API state
 
-2. **Pi extension layer**
+3. **Pi execution adapter and extension layer**
+   - calls Pi through explicit orchestration-core executor ports
    - adds browser debugging, desktop observation, validation helpers, local model provider registration, model routing, approval workflows, safety guardrails, audit logging, screen interaction, simulator tooling, task inbox, and self-improvement helpers
+
+4. **Pi skill layer**
+   - injects task-specific workflows for website debugging, app debugging, TDD implementation, design-pattern review, Playwright investigation, and self-improvement
+
+## Orchestration and Pi boundary
+
+Pinchy owns the autonomous product loop:
+- persistent conversations and memories
+- user prompts, replies, and blocked questions
+- run/task lifecycle state
+- delegated-work scheduling and synthesis
+- dashboard/API/operator controls
+- release, validation, and local operational workflows
+
+Pi owns execution inside an adapter call:
+- model/tool execution for a bounded run
+- within-run coding-agent behavior
+- Pi-native tool invocation and session mechanics
+
+Subagents are represented in Pinchy as delegated execution runs. The user can intentionally inspect or guide them, but the ordinary UI should treat them as implementation details underneath the main Pinchy orchestration thread. Higher-level orchestration code should depend on `orchestration-core` ports rather than importing Pi runtime details directly.
 
 ### Runtime state files
 - `.pinchy-run-context.json` stores the current active run label/id
 - `.pinchy-run-history.json` stores recent task/goal/iteration/watch/reload timeline entries
 - `.pinchy-daemon-health.json` stores daemon heartbeat, activity, and last-error metadata
 - `.pinchy-reload-requests.json` stores pending one-click runtime reload requests until the daemon consumes them
-
-3. **Pi skill layer**
-   - injects task-specific workflows for website debugging, app debugging, TDD implementation, design-pattern review, Playwright investigation, and self-improvement
 
 ## Runtime model
 

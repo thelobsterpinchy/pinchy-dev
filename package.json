@@ -1,7 +1,7 @@
 {
   "name": "pinchy-dev",
   "private": false,
-  "version": "0.2.11",
+  "version": "0.3.0",
   "description": "Local-first autonomous coding agent workspace built on Pi with dashboard, API, worker, and browser debugging workflows.",
   "keywords": [
     "pinchy",
@@ -12,13 +12,13 @@
     "react",
     "typescript"
   ],
-  "homepage": "https://github.com/thelobsterpinchy/pinchy-dev#readme",
+  "homepage": "https://github.com/pinchy-dev/pinchy-dev#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thelobsterpinchy/pinchy-dev.git"
+    "url": "git+https://github.com/pinchy-dev/pinchy-dev.git"
   },
   "bugs": {
-    "url": "https://github.com/thelobsterpinchy/pinchy-dev/issues"
+    "url": "https://github.com/pinchy-dev/pinchy-dev/issues"
   },
   "license": "MIT",
   "type": "module",
@@ -59,6 +59,7 @@
     "up": "tsx apps/host/src/up.ts",
     "check": "tsc --noEmit",
     "test": "for test_file in tests/*.test.ts; do node --import tsx --test \"$test_file\" || exit 1; done",
+    "release:verify": "tsx scripts/release-verify.ts",
     "bootstrap": "bash scripts/bootstrap.sh"
   },
   "dependencies": {

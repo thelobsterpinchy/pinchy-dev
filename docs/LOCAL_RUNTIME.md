@@ -13,7 +13,7 @@ npm install -g pinchy-dev
 GitHub fallback:
 
 ```bash
-npm install -g github:thelobsterpinchy/pinchy-dev
+npm install -g github:pinchy-dev/pinchy-dev
 ```
 
 Then use it from the target repository:
