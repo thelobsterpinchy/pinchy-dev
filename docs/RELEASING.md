@@ -3,7 +3,7 @@
 ## Manual release
 
 1. Update code and docs.
-2. Bump `package.json` version.
+2. Bump `package.json` version and add the matching `CHANGELOG.md` entry in the same change.
 3. Run validation:
 
 ```bash

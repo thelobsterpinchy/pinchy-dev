@@ -20,6 +20,7 @@ test("release workflow uses the shared release verification script before npm pu
 
   assert.match(workflow, /run: npm run release:verify/);
   assert.match(workflow, /run: npm publish/);
+  assert.match(releasing, /matching `CHANGELOG\.md` entry/i);
   assert.match(releasing, /npm run release:verify/);
   assert.match(releasing, /git switch -c release\/0\.3\.0/);
   assert.match(releasing, /git tag -a v0\.3\.0/);

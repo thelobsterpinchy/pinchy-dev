@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { DEFAULT_WATCH_CONFIG } from "./watch-config-defaults.js";
 
 const PINCHY_GITIGNORE_LINES = [
+  ".pinchy/env",
   ".pinchy/run/",
   ".pinchy/state/",
   ".pinchy-approvals.json",

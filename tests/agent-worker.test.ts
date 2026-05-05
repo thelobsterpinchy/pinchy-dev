@@ -76,7 +76,7 @@ test("processNextQueuedRun notifies mapped Discord summaries after parent run co
       {
         conversationId: conversation.id,
         runId: run.id,
-        summary: "Completed for Discord.",
+        summary: "Done.",
         mappedOnly: true,
       },
     ]);

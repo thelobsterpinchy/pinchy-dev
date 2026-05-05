@@ -125,7 +125,7 @@ export function createDiscordNotifier(dependencies: DiscordNotifierDependencies 
       const mappedThread = input.conversationId
         ? listDiscordThreadMappings(cwd).find((mapping) => mapping.conversationId === input.conversationId)
         : undefined;
-      const content = `Pinchy run summary\n\n${input.summary}`;
+      const content = input.summary;
 
       if (sendBotMessage && mappedThread) {
         try {

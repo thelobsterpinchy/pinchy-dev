@@ -137,13 +137,11 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
       name: "discord_bot",
       status: "warn",
       message: "Discord bot gateway is not configured.",
-      hint: "Follow docs/DISCORD.md, then set PINCHY_DISCORD_BOT_TOKEN, PINCHY_API_TOKEN, PINCHY_DISCORD_ALLOWED_GUILD_IDS, and PINCHY_DISCORD_ALLOWED_CHANNEL_IDS to enable Discord control.",
+      hint: "Run `pinchy setup` and choose Discord remote control, or follow docs/DISCORD.md.",
     });
   } else {
     const missing: string[] = [];
     if (!discordConfig.apiToken) missing.push("PINCHY_API_TOKEN");
-    if (discordConfig.allowedGuildIds.length === 0) missing.push("PINCHY_DISCORD_ALLOWED_GUILD_IDS");
-    if (discordConfig.allowedChannelIds.length === 0) missing.push("PINCHY_DISCORD_ALLOWED_CHANNEL_IDS");
     if (!discordConfig.botUserId) missing.push("PINCHY_DISCORD_BOT_USER_ID");
     checks.push({
       name: "discord_bot",
@@ -153,7 +151,7 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
         : `Discord bot gateway is missing required settings: ${missing.join(", ")}.`,
       hint: missing.length === 0
         ? "Ensure the Discord app has Message Content Intent and channel permissions: view/send messages, create public threads, send in threads, and read message history."
-        : "Set the missing environment variables before running `pinchy up`. See docs/DISCORD.md.",
+        : "Run `pinchy setup` to save the missing local Discord settings. Guild and channel allowlists are optional.",
     });
   }
 

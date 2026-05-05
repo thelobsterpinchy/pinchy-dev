@@ -174,8 +174,7 @@ test("Discord notifier sends mapped-only run summaries to mapped Discord threads
     });
 
     assert.equal(botMessages[0]?.channelId, "thread-1");
-    assert.match(botMessages[0]?.content ?? "", /Pinchy run summary/);
-    assert.match(botMessages[0]?.content ?? "", /Completed\./);
+    assert.equal(botMessages[0]?.content, "Completed.");
     assert.equal(delivery?.status, "sent");
     assert.equal(delivery?.externalId, "discord-message-1");
   });

@@ -105,7 +105,7 @@ function parseRunKind(value: unknown) {
   return typeof value === "string" && isRunKind(value) ? value : undefined;
 }
 
-export function createApiServer({ cwd, apiToken = process.env.PINCHY_API_TOKEN }: ApiServerOptions) {
+export function createApiServer({ cwd, apiToken }: ApiServerOptions) {
   return http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const { pathname, searchParams } = url;
@@ -418,7 +418,7 @@ export function createApiServer({ cwd, apiToken = process.env.PINCHY_API_TOKEN }
 async function main() {
   const cwd = process.env.PINCHY_CWD ?? process.cwd();
   const port = Number(process.env.PINCHY_API_PORT ?? 4320);
-  const server = createApiServer({ cwd });
+  const server = createApiServer({ cwd, apiToken: process.env.PINCHY_API_TOKEN });
   server.listen(port, () => {
     console.log(`Pinchy API running at http://127.0.0.1:${port}`);
   });

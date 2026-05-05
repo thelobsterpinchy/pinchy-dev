@@ -221,6 +221,7 @@ Mentioning the bot in an allowed channel creates a Discord thread mapped to a Pi
 See `docs/DISCORD.md` for setup, permissions, and troubleshooting.
 
 For browser-debugging access, Pinchy’s Playwright-backed browser tools require a local browser install. The repo provides:
+- `pinchy doctor` can confirm whether Playwright Chromium is ready for browser debugging
 - `npm run playwright:install`
 
 If Playwright is upgraded and browser tools start failing with a missing executable message, rerun that command.

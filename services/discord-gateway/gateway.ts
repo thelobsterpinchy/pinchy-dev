@@ -32,7 +32,7 @@ type DiscordMessageCreatePayload = {
   };
 };
 
-function normalizeDiscordMessage(payload: DiscordMessageCreatePayload, config: DiscordGatewayConfig): DiscordGatewayMessage | undefined {
+export function normalizeDiscordMessage(payload: DiscordMessageCreatePayload): DiscordGatewayMessage | undefined {
   if (!payload.author?.id || !payload.channel_id) {
     return undefined;
   }
@@ -40,7 +40,6 @@ function normalizeDiscordMessage(payload: DiscordMessageCreatePayload, config: D
     id: payload.id,
     guildId: payload.guild_id,
     channelId: payload.channel_id,
-    threadId: config.allowedChannelIds.includes(payload.channel_id) ? undefined : payload.channel_id,
     authorId: payload.author.id,
     authorUsername: payload.author.username,
     content: payload.content,
@@ -59,11 +58,12 @@ function parsePayload(data: unknown): DiscordGatewayPayload | undefined {
 }
 
 function createIdentifyPayload(config: DiscordGatewayConfig) {
+  const intents = 1 | 512 | 4096 | 32768;
   return {
     op: 2,
     d: {
       token: config.botToken,
-      intents: 1 | 512 | 32768,
+      intents,
       properties: {
         os: process.platform,
         browser: "pinchy",
@@ -144,8 +144,12 @@ export async function startDiscordGateway(input: {
     }
 
     if (payload.op === 0 && payload.t === "MESSAGE_CREATE") {
-      const message = normalizeDiscordMessage(payload.d as DiscordMessageCreatePayload, config);
-      if (!message) return;
+      const message = normalizeDiscordMessage(payload.d as DiscordMessageCreatePayload);
+      if (!message) {
+        console.warn("[pinchy-discord] ignored malformed MESSAGE_CREATE payload");
+        return;
+      }
+      console.log(`[pinchy-discord] received message guild=${message.guildId ?? "dm"} channel=${message.channelId} author=${message.authorId} bot=${message.isBot ? "yes" : "no"} mentions=${message.mentionedUserIds?.join(",") ?? "none"} contentLength=${message.content.length}`);
       void routeDiscordGatewayMessage(message, {
         cwd: input.cwd,
         config,
@@ -159,6 +163,8 @@ export async function startDiscordGateway(input: {
         .then((result) => {
           if (result.action !== "ignored") {
             console.log(`[pinchy-discord] ${result.action} conversation=${result.conversationId} thread=${result.threadId}`);
+          } else {
+            console.log(`[pinchy-discord] ignored message guild=${message.guildId ?? "dm"} channel=${message.channelId} reason=${result.reason}`);
           }
         })
         .catch((error) => {

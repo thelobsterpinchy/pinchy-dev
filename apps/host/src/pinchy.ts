@@ -20,6 +20,7 @@ import { loadPinchyRuntimeConfig } from "./runtime-config.js";
 import { parsePinchyConfigCliValue, setPinchyConfigValue } from "./pinchy-config.js";
 import { summarizePinchyConfigSet, summarizePinchyConfigView } from "./pinchy-config-cli.js";
 import { buildTsxEntrypointCommand, getPinchyPackageRoot, resolvePinchyPackagePath } from "./package-runtime.js";
+import { applyPinchyWorkspaceEnv } from "./workspace-env.js";
 import { shouldRunAsCliEntry } from "./module-entry.js";
 
 function summarizeStatus(cwd: string, json = false) {
@@ -66,6 +67,7 @@ async function runForegroundEntrypoint(entryPath: string, args: string[] = []) {
 
 export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.ProcessEnv = process.env) {
   const cwd = env.PINCHY_CWD ?? process.cwd();
+  applyPinchyWorkspaceEnv(cwd, env);
   const parsed = parsePinchyCliArgs(argv);
 
   if (parsed.error) {

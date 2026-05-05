@@ -37,10 +37,4 @@ export function assertDiscordGatewayConfigReady(config: DiscordGatewayConfig) {
   if (!config.apiToken) {
     throw new Error("PINCHY_API_TOKEN is required to start the Discord gateway.");
   }
-  if (config.allowedGuildIds.length === 0) {
-    throw new Error("PINCHY_DISCORD_ALLOWED_GUILD_IDS must include at least one guild ID.");
-  }
-  if (config.allowedChannelIds.length === 0) {
-    throw new Error("PINCHY_DISCORD_ALLOWED_CHANNEL_IDS must include at least one channel ID.");
-  }
 }

@@ -39,8 +39,6 @@ test("buildPinchySetupPlan provisions Playwright and reports optional local tool
   assert.deepEqual(plan.discordSetup.missingEnv, [
     "PINCHY_DISCORD_BOT_TOKEN",
     "PINCHY_API_TOKEN",
-    "PINCHY_DISCORD_ALLOWED_GUILD_IDS",
-    "PINCHY_DISCORD_ALLOWED_CHANNEL_IDS",
     "PINCHY_DISCORD_BOT_USER_ID",
   ]);
 });
@@ -219,7 +217,8 @@ test("runInteractivePinchySetup collects provider and Discord setup without writ
     "openai",
     "deepseek-coder",
     "http://127.0.0.1:1234/v1",
-    "2",
+    "1",
+    "bot-token-secret",
     "guild-1",
     "channel-1",
     "bot-1",
@@ -231,8 +230,8 @@ test("runInteractivePinchySetup collects provider and Discord setup without writ
 
   assert.match(summary ?? "", /"orchestrationProvider": "ollama"/);
   assert.match(summary ?? "", /"subagentProvider": "openai"/);
-  assert.match(summary ?? "", /PINCHY_DISCORD_BOT_TOKEN="<discord-bot-token>"/);
-  assert.doesNotMatch(summary ?? "", /bot-token-secret/);
+  assert.match(summary ?? "", /PINCHY_DISCORD_BOT_TOKEN="bot-token-secret"/);
+  assert.match(summary ?? "", /PINCHY_API_TOKEN="pinchy_[a-f0-9]+"/);
 });
 
 test("runInteractivePinchySetup uses selector prompts by default in interactive mode", async () => {
@@ -318,10 +317,40 @@ test("runInteractivePinchySetup prints only the selected setup sections", async 
   assert.match(llmOnly ?? "", /LLM runtime/);
   assert.doesNotMatch(llmOnly ?? "", /Discord environment/);
 
-  const discordAnswers = ["3", "1"];
+  const discordAnswers = ["3", "2"];
   const discordOnly = await runInteractivePinchySetup({
     question: async () => discordAnswers.shift() ?? "",
   });
   assert.match(discordOnly ?? "", /Discord environment/);
+  assert.match(discordOnly ?? "", /PINCHY_API_TOKEN="pinchy_[a-f0-9]+"/);
   assert.doesNotMatch(discordOnly ?? "", /LLM runtime/);
+});
+
+test("runInteractivePinchySetup saves Discord connection settings to workspace env", async () => {
+  await withTempDir(async (cwd) => {
+    const answers = [
+      "3",
+      "1",
+      "discord-token-secret",
+      "guild-1",
+      "channel-1",
+      "bot-user-1",
+      "user-1",
+    ];
+
+    const summary = await runInteractivePinchySetup({
+      cwd,
+      question: async () => answers.shift() ?? "",
+    });
+
+    const envText = readFileSync(join(cwd, ".pinchy/env"), "utf8");
+    assert.match(summary ?? "", /Saved Discord connection settings/);
+    assert.doesNotMatch(summary ?? "", /discord-token-secret/);
+    assert.match(summary ?? "", /PINCHY_DISCORD_BOT_TOKEN="<saved-in-\.pinchy\/env>"/);
+    assert.match(envText, /PINCHY_DISCORD_BOT_TOKEN="discord-token-secret"/);
+    assert.match(envText, /PINCHY_API_TOKEN="pinchy_[a-f0-9]+"/);
+    assert.match(envText, /PINCHY_DISCORD_ALLOWED_GUILD_IDS="guild-1"/);
+    assert.match(envText, /PINCHY_DISCORD_ALLOWED_CHANNEL_IDS="channel-1"/);
+    assert.match(envText, /PINCHY_DISCORD_BOT_USER_ID="bot-user-1"/);
+  });
 });

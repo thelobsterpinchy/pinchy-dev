@@ -99,6 +99,26 @@ test("api server exposes health and conversation endpoints", async () => {
   });
 });
 
+test("api server ignores ambient PINCHY_API_TOKEN unless auth is explicitly configured", async () => {
+  const originalToken = process.env.PINCHY_API_TOKEN;
+  process.env.PINCHY_API_TOKEN = "ambient-token";
+
+  try {
+    await withServer(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/conversations`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "No explicit auth" }),
+      });
+
+      assert.equal(response.status, 201);
+    });
+  } finally {
+    if (originalToken === undefined) delete process.env.PINCHY_API_TOKEN;
+    else process.env.PINCHY_API_TOKEN = originalToken;
+  }
+});
+
 test("api server requires bearer token for non-health routes when PINCHY_API_TOKEN is configured", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-api-auth-"));
   const server = createApiServer({ cwd, apiToken: "local-token" });

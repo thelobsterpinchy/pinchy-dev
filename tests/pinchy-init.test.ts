@@ -21,6 +21,7 @@ test("buildPinchyInitPlan scaffolds packaged defaults and gitignore lines for a 
     /prefer tests\/docs\/guardrails, and stop if no safe improvement is needed\./,
   );
 
+  assert.match(plan.gitignoreText, /\.pinchy\/env/);
   assert.match(plan.gitignoreText, /\.pinchy\/run\//);
   assert.match(plan.gitignoreText, /\.pinchy-tasks\.json\.bak-\*/);
   assert.match(plan.gitignoreText, /artifacts\//);

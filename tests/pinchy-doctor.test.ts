@@ -81,8 +81,6 @@ test("buildPinchyDoctorReport reports a healthy initialized workspace when core 
     env: {
       PINCHY_DISCORD_BOT_TOKEN: "bot-token",
       PINCHY_API_TOKEN: "api-token",
-      PINCHY_DISCORD_ALLOWED_GUILD_IDS: "guild-1",
-      PINCHY_DISCORD_ALLOWED_CHANNEL_IDS: "channel-1",
       PINCHY_DISCORD_BOT_USER_ID: "bot-1",
     },
   });
@@ -105,10 +103,10 @@ test("buildPinchyDoctorReport fails Discord bot checks when required gateway set
   const discordCheck = report.checks.find((check) => check.name === "discord_bot");
   assert.equal(discordCheck?.status, "fail");
   assert.match(discordCheck?.message ?? "", /PINCHY_API_TOKEN/);
-  assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_GUILD_IDS/);
-  assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_CHANNEL_IDS/);
   assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_BOT_USER_ID/);
-  assert.match(discordCheck?.hint ?? "", /docs\/DISCORD\.md/);
+  assert.doesNotMatch(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_GUILD_IDS/);
+  assert.doesNotMatch(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_CHANNEL_IDS/);
+  assert.match(discordCheck?.hint ?? "", /pinchy setup/);
 });
 
 test("buildPinchyDoctorReport warns when Discord bot gateway is not configured", () => {
@@ -120,7 +118,7 @@ test("buildPinchyDoctorReport warns when Discord bot gateway is not configured",
 
   const discordCheck = report.checks.find((check) => check.name === "discord_bot");
   assert.equal(discordCheck?.status, "warn");
-  assert.match(discordCheck?.hint ?? "", /PINCHY_DISCORD_BOT_TOKEN/);
+  assert.match(discordCheck?.hint ?? "", /pinchy setup/);
   assert.match(discordCheck?.hint ?? "", /docs\/DISCORD\.md/);
 });
 
@@ -128,12 +126,14 @@ test("summarizePinchyDoctorReportJson returns machine-readable doctor output", (
   const report = buildPinchyDoctorReport("/tmp/project", {
     pathExists: () => true,
     commandExists: () => true,
+    env: {},
   });
 
   const json = summarizePinchyDoctorReportJson(report);
-  const parsed = JSON.parse(json) as { cwd: string; summary: { status: string } };
+  const parsed = JSON.parse(json) as { cwd: string; summary: { status: string }; checks: Array<{ name: string; status: string }> };
   assert.equal(parsed.cwd, "/tmp/project");
   assert.equal(parsed.summary.status, "warn");
+  assert.equal(parsed.checks.find((check) => check.name === "discord_bot")?.status, "warn");
 });
 
 test("summarizePinchyDoctorReport renders actionable doctor output", () => {

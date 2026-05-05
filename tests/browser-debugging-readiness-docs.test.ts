@@ -25,6 +25,13 @@ test("README and OPERATIONS stay aligned on browser-debugging readiness workflow
   assertMentions(readme, browserToolPatterns);
   assertMentions(operations, browserToolPatterns);
 
+  assert.match(readme, /pinchy doctor/i);
+  assert.match(readme, /browser-debugging access/i);
+  assert.match(readme, /Playwright-backed browser tools require a local browser install/i);
+  assert.match(readme, /`pinchy doctor`/i);
+  assert.match(readme, /Playwright Chromium is ready for browser debugging/i);
+
+  assert.match(operations, /run `pinchy doctor` when you want a quick readiness check/i);
   assert.match(operations, /run `browser_debug_scan` first/i);
   assert.match(operations, /saved HTML and visible-text evidence/i);
   assert.match(operations, /bounded multi-step reproduction flows/i);

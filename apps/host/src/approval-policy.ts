@@ -46,6 +46,10 @@ const TOOL_SCOPE_BY_NAME: Record<string, string> = {
   simulator_swipe: "simulator.actions",
 };
 
+export function getApprovalScopeForTool(toolName: string) {
+  return TOOL_SCOPE_BY_NAME[toolName];
+}
+
 export function getApprovalPolicyPath(cwd: string) {
   return resolve(cwd, APPROVAL_POLICY_FILE);
 }
@@ -100,7 +104,7 @@ function isScopeAlreadyAllowed(cwd: string, scope: string) {
 export function filterActionableApprovals(cwd: string, approvals: ApprovalRecord[]) {
   return approvals.filter((approval) => {
     if (approval.status !== "pending") return true;
-    const scope = TOOL_SCOPE_BY_NAME[approval.toolName];
+    const scope = getApprovalScopeForTool(approval.toolName);
     if (!scope) return true;
     return !isScopeAlreadyAllowed(cwd, scope);
   });

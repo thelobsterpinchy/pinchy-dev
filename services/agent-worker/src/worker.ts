@@ -255,7 +255,7 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
           cwd,
           conversationId: persistedRun.conversationId,
           runId: persistedRun.id,
-          summary: outcome.summary,
+          summary: outcome.message,
           sendRunSummary: dependencies.sendRunSummary,
         });
       }
@@ -517,7 +517,7 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
           cwd,
           conversationId: persistedRun.conversationId,
           runId: persistedRun.id,
-          summary: outcome.summary,
+          summary: outcome.message,
           sendRunSummary: dependencies.sendRunSummary,
         });
       }

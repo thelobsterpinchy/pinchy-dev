@@ -2,6 +2,7 @@ import type { Question } from "../../packages/shared/src/contracts.js";
 import type { DiscordGatewayConfig } from "./config.js";
 import type { DiscordGatewayApiClient } from "./api-client.js";
 import { findDiscordThreadMapping, listDiscordThreadMappings, upsertDiscordThreadMapping } from "./thread-store.js";
+import { assessUserRequestTasks } from "../../apps/host/src/orchestration-policy.js";
 
 export type DiscordGatewayMessage = {
   id: string;
@@ -34,7 +35,7 @@ export type DiscordGatewayRouteResult =
 const PENDING_QUESTION_STATUSES = new Set<Question["status"]>(["pending_delivery", "waiting_for_human"]);
 
 function isAllowedIdentity(config: DiscordGatewayConfig, message: DiscordGatewayMessage) {
-  if (!message.guildId || !config.allowedGuildIds.includes(message.guildId)) {
+  if (message.guildId && config.allowedGuildIds.length > 0 && !config.allowedGuildIds.includes(message.guildId)) {
     return false;
   }
   if (config.allowedUserIds.length > 0 && !config.allowedUserIds.includes(message.authorId)) {
@@ -43,8 +44,16 @@ function isAllowedIdentity(config: DiscordGatewayConfig, message: DiscordGateway
   return true;
 }
 
+function isAllowedTopLevelChannel(config: DiscordGatewayConfig, channelId: string) {
+  return config.allowedChannelIds.length === 0 || config.allowedChannelIds.includes(channelId);
+}
+
 function mentionsPinchy(config: DiscordGatewayConfig, message: DiscordGatewayMessage) {
   return Boolean(config.botUserId && message.mentionedUserIds?.includes(config.botUserId));
+}
+
+function isDirectMessage(message: DiscordGatewayMessage) {
+  return !message.guildId;
 }
 
 function cleanPrompt(content: string) {
@@ -59,6 +68,18 @@ function buildConversationTitle(content: string) {
 
 function buildThreadName(content: string) {
   return buildConversationTitle(content).replace(/[^\w .-]/g, "").trim() || "Pinchy";
+}
+
+function mappingGuildId(message: DiscordGatewayMessage) {
+  return message.guildId ?? "";
+}
+
+function isDirectMessageMapping(mapping: { guildId: string }) {
+  return mapping.guildId === "";
+}
+
+function shouldAcknowledgeQueuedWork(prompt: string) {
+  return assessUserRequestTasks(prompt).requiresDelegation;
 }
 
 function buildRawPayload(message: DiscordGatewayMessage) {
@@ -93,7 +114,7 @@ function buildDiscordHelpMessage() {
     "",
     "- Reply with `status` to see what Pinchy is doing.",
     "- If Pinchy asks a question, your next normal reply will answer that question.",
-    "- Otherwise, any normal reply queues a new objective in this same Pinchy thread.",
+    "- Otherwise, any normal reply queues a new objective in this same Discord conversation.",
     "- Open the dashboard for the full transcript, delegated agents, and cancel controls.",
   ].join("\n");
 }
@@ -163,32 +184,36 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
     return { action: "ignored", reason: "empty prompt" };
   }
 
-  if (message.threadId) {
+  const guildId = mappingGuildId(message);
+  const mappedThreadId = message.threadId
+    ?? listDiscordThreadMappings(runtime.cwd).find((entry) => entry.guildId === guildId && entry.threadId === message.channelId)?.threadId;
+
+  if (mappedThreadId) {
     const mapping = findDiscordThreadMapping(runtime.cwd, {
-      guildId: message.guildId ?? "",
+      guildId,
       channelId: message.channelId,
-      threadId: message.threadId,
-    }) ?? listDiscordThreadMappings(runtime.cwd).find((entry) => entry.guildId === message.guildId && entry.threadId === message.threadId);
+      threadId: mappedThreadId,
+    }) ?? listDiscordThreadMappings(runtime.cwd).find((entry) => entry.guildId === guildId && entry.threadId === mappedThreadId);
     if (!mapping) {
       return { action: "ignored", reason: "thread is not mapped to a Pinchy conversation" };
     }
 
     if (isHelpCommand(prompt)) {
-      await acknowledge(runtime, message.threadId, buildDiscordHelpMessage());
+      await acknowledge(runtime, mappedThreadId, buildDiscordHelpMessage());
       return {
         action: "reported_help",
         conversationId: mapping.conversationId,
-        threadId: message.threadId,
+        threadId: mappedThreadId,
       };
     }
 
     const conversationState = await runtime.apiClient.fetchConversationState(mapping.conversationId);
     if (isStatusCommand(prompt)) {
-      await acknowledge(runtime, message.threadId, buildDiscordStatusMessage(conversationState));
+      await acknowledge(runtime, mappedThreadId, buildDiscordStatusMessage(conversationState));
       return {
         action: "reported_status",
         conversationId: mapping.conversationId,
-        threadId: message.threadId,
+        threadId: mappedThreadId,
       };
     }
 
@@ -200,12 +225,12 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
         content: prompt,
         rawPayload: buildRawPayload(message),
       });
-      await acknowledge(runtime, message.threadId, `Answer received. Pinchy can continue run ${pendingQuestion.runId}.`);
+      await acknowledge(runtime, mappedThreadId, `Answer received. Pinchy can continue run ${pendingQuestion.runId}.`);
       return {
         action: "answered_question",
         conversationId: mapping.conversationId,
         questionId: pendingQuestion.id,
-        threadId: message.threadId,
+        threadId: mappedThreadId,
       };
     }
 
@@ -219,12 +244,43 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
       goal: prompt,
       kind: "user_prompt",
     });
-    await acknowledge(runtime, message.threadId, `Queued the next Pinchy objective.\n\nRun: ${run.id}\nGoal: ${run.goal}`);
+    if (!isDirectMessageMapping(mapping) && shouldAcknowledgeQueuedWork(prompt)) {
+      await acknowledge(runtime, mappedThreadId, `Queued the next Pinchy objective.\n\nRun: ${run.id}\nGoal: ${run.goal}`);
+    }
     return {
       action: "queued_run",
       conversationId: mapping.conversationId,
       runId: run.id,
-      threadId: message.threadId,
+      threadId: mappedThreadId,
+    };
+  }
+
+  if (isDirectMessage(message)) {
+    const conversation = await runtime.apiClient.createConversation({
+      title: buildConversationTitle(message.content),
+    });
+    upsertDiscordThreadMapping(runtime.cwd, {
+      guildId,
+      channelId: message.channelId,
+      threadId: message.channelId,
+      conversationId: conversation.id,
+    });
+    await runtime.apiClient.appendMessage({
+      conversationId: conversation.id,
+      role: "user",
+      content: prompt,
+    });
+    const run = await runtime.apiClient.createRun({
+      conversationId: conversation.id,
+      goal: prompt,
+      kind: "user_prompt",
+    });
+
+    return {
+      action: "created_conversation",
+      conversationId: conversation.id,
+      runId: run.id,
+      threadId: message.channelId,
     };
   }
 
@@ -232,7 +288,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
     return { action: "ignored", reason: "top-level message did not mention Pinchy" };
   }
 
-  if (!runtime.config.allowedChannelIds.includes(message.channelId)) {
+  if (!isAllowedTopLevelChannel(runtime.config, message.channelId)) {
     return { action: "ignored", reason: "top-level channel is not allowed" };
   }
 
@@ -245,7 +301,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
     title: buildConversationTitle(message.content),
   });
   upsertDiscordThreadMapping(runtime.cwd, {
-    guildId: message.guildId ?? "",
+    guildId,
     channelId: message.channelId,
     threadId: thread.threadId,
     conversationId: conversation.id,
@@ -260,14 +316,16 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
     goal: prompt,
     kind: "user_prompt",
   });
-  await acknowledge(runtime, thread.threadId, [
-    "Pinchy is on it.",
-    "",
-    `Run: ${run.id}`,
-    `Goal: ${run.goal}`,
-    "",
-    "Reply in this thread to steer the work, answer questions, or queue the next objective. Reply with `status` any time.",
-  ].join("\n"));
+  if (shouldAcknowledgeQueuedWork(prompt)) {
+    await acknowledge(runtime, thread.threadId, [
+      "Pinchy is on it.",
+      "",
+      `Run: ${run.id}`,
+      `Goal: ${run.goal}`,
+      "",
+      "Reply in this thread to steer the work, answer questions, or queue the next objective. Reply with `status` any time.",
+    ].join("\n"));
+  }
 
   return {
     action: "created_conversation",

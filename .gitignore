@@ -14,6 +14,8 @@ __pycache__/
 pytest_cache/
 playwright-report/
 # Pinchy local runtime/state artifacts
+.pinchy/env
+.pinchy/discord-threads.json
 .pinchy/run/
 .pinchy/state/
 .pinchy-approval-policy.json
@@ -23,6 +25,8 @@ playwright-report/
 .pinchy-health.md
 .pinchy-iteration.json
 .pinchy-memory.json
+.pinchy-orchestration-events.jsonl
+.pinchy-orchestration-tasks.json
 .pinchy-run-context.json
 .pinchy-run-history.json
 .pinchy-tasks.json

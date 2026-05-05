@@ -223,8 +223,9 @@ Pinchy also supports a first-class Discord bot gateway. `pinchy up` starts the g
 
 - `PINCHY_DISCORD_BOT_TOKEN`
 - `PINCHY_API_TOKEN`
-- `PINCHY_DISCORD_ALLOWED_GUILD_IDS`
-- `PINCHY_DISCORD_ALLOWED_CHANNEL_IDS`
+- `PINCHY_DISCORD_BOT_USER_ID`
+- `PINCHY_DISCORD_ALLOWED_GUILD_IDS` (optional; unset allows any invited server)
+- `PINCHY_DISCORD_ALLOWED_CHANNEL_IDS` (optional; unset allows any channel the bot can access)
 - `PINCHY_DISCORD_ALLOWED_USER_IDS` (optional)
 
 When `PINCHY_API_TOKEN` is set, every API route except `GET /health` requires `Authorization: Bearer <token>`. The dashboard proxy and Discord gateway forward this token from the local environment.

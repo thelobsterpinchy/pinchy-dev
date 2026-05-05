@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,6 +9,7 @@ import { findPinchyProvider, PINCHY_PROVIDER_CATALOG } from "../../../packages/s
 import { getPinchyPackageRoot } from "./package-runtime.js";
 import type { PinchyRuntimeConfig } from "./runtime-config.js";
 import { updatePinchyRuntimeConfig } from "./pinchy-config.js";
+import { getPinchyWorkspaceEnvPath, savePinchyWorkspaceEnv } from "./workspace-env.js";
 
 export type PinchySetupStep = {
   label: string;
@@ -55,6 +57,8 @@ export type PinchyLlmSetupDraft = {
 };
 
 export type PinchyDiscordSetupDraft = {
+  botToken?: string;
+  apiToken?: string;
   allowedGuildIds?: string;
   allowedChannelIds?: string;
   botUserId?: string;
@@ -65,6 +69,7 @@ export type PinchyInteractiveSetupDraft = {
   llm?: PinchyLlmSetupDraft;
   discord?: PinchyDiscordSetupDraft;
   persistRuntimeConfig?: boolean;
+  persistWorkspaceEnvPath?: string;
 };
 
 type PinchySetupQuestion = (prompt: string) => Promise<string>;
@@ -124,8 +129,6 @@ export function buildPinchySetupPlan(input: {
   const requiredDiscordEnv = [
     "PINCHY_DISCORD_BOT_TOKEN",
     "PINCHY_API_TOKEN",
-    "PINCHY_DISCORD_ALLOWED_GUILD_IDS",
-    "PINCHY_DISCORD_ALLOWED_CHANNEL_IDS",
     "PINCHY_DISCORD_BOT_USER_ID",
   ];
   const missingDiscordEnv = requiredDiscordEnv.filter((key) => !env[key]?.trim());
@@ -210,6 +213,10 @@ function cleanInput(value: string | undefined) {
   return trimmed ? trimmed : undefined;
 }
 
+function generateLocalApiToken() {
+  return `pinchy_${randomBytes(24).toString("hex")}`;
+}
+
 function providerHint(providerId: string | undefined) {
   const provider = findPinchyProvider(providerId);
   if (!provider) return undefined;
@@ -286,10 +293,10 @@ export function buildLlmEnvTemplate(draft: PinchyLlmSetupDraft = {}) {
 
 export function buildDiscordEnvTemplate(draft: PinchyDiscordSetupDraft = {}) {
   const entries = [
-    ["PINCHY_DISCORD_BOT_TOKEN", "<discord-bot-token>"],
-    ["PINCHY_API_TOKEN", "<local-pinchy-api-token>"],
-    ["PINCHY_DISCORD_ALLOWED_GUILD_IDS", cleanInput(draft.allowedGuildIds) ?? "<discord-guild-id>"],
-    ["PINCHY_DISCORD_ALLOWED_CHANNEL_IDS", cleanInput(draft.allowedChannelIds) ?? "<discord-channel-id>"],
+    ["PINCHY_DISCORD_BOT_TOKEN", cleanInput(draft.botToken) ?? "<discord-bot-token>"],
+    ["PINCHY_API_TOKEN", cleanInput(draft.apiToken) ?? "<generated-local-api-token>"],
+    ["PINCHY_DISCORD_ALLOWED_GUILD_IDS", cleanInput(draft.allowedGuildIds) ?? "<optional-discord-guild-id-allowlist>"],
+    ["PINCHY_DISCORD_ALLOWED_CHANNEL_IDS", cleanInput(draft.allowedChannelIds) ?? "<optional-discord-channel-id-allowlist>"],
     ["PINCHY_DISCORD_BOT_USER_ID", cleanInput(draft.botUserId) ?? "<discord-bot-user-id>"],
     ["PINCHY_DISCORD_ALLOWED_USER_IDS", cleanInput(draft.allowedUserIds)],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]));
@@ -319,14 +326,26 @@ export function summarizeInteractiveSetupDraft(draft: PinchyInteractiveSetupDraf
     );
   }
   if (draft.discord) {
+    const discordTemplate = draft.persistWorkspaceEnvPath
+      ? buildDiscordEnvTemplate({
+        ...draft.discord,
+        botToken: "<saved-in-.pinchy/env>",
+        apiToken: "<saved-in-.pinchy/env>",
+      })
+      : buildDiscordEnvTemplate(draft.discord);
     lines.push(
       "[pinchy] Discord environment:",
-      buildDiscordEnvTemplate(draft.discord).trimEnd(),
+      draft.persistWorkspaceEnvPath
+        ? `[pinchy] Saved Discord connection settings to ${draft.persistWorkspaceEnvPath}.`
+        : "[pinchy] PINCHY_API_TOKEN is generated locally by setup. It is not a Discord value; use the same value for Pinchy API and the Discord gateway.",
+      discordTemplate.trimEnd(),
     );
   }
-  lines.push(draft.persistRuntimeConfig
-    ? "[pinchy] Pinchy setup writes only non-secret runtime settings. It does not write tokens or secrets."
-    : "[pinchy] Pinchy setup prints templates only. It does not write tokens or secrets.");
+  lines.push(draft.persistWorkspaceEnvPath
+    ? "[pinchy] Pinchy setup stores Discord secrets only in the workspace-local .pinchy/env file. Do not commit it."
+    : draft.persistRuntimeConfig
+      ? "[pinchy] Pinchy setup writes only non-secret runtime settings. It does not write tokens or secrets."
+      : "[pinchy] Pinchy setup prints templates only. It does not write tokens or secrets.");
   return `${lines.join("\n")}\n`;
 }
 
@@ -420,24 +439,27 @@ async function collectDiscordSetupDraft(question: PinchySetupQuestion, env: Node
   const existingConfigured = Boolean(
     env.PINCHY_DISCORD_BOT_TOKEN?.trim()
     && env.PINCHY_API_TOKEN?.trim()
-    && env.PINCHY_DISCORD_ALLOWED_GUILD_IDS?.trim()
-    && env.PINCHY_DISCORD_ALLOWED_CHANNEL_IDS?.trim(),
+    && env.PINCHY_DISCORD_BOT_USER_ID?.trim(),
   );
   const choice = await selectOption(question, "Discord remote control", [
+    { label: "Connect Discord now", description: "save bot token and generated API token to .pinchy/env; server/channel allowlists are optional" },
     { label: "Show setup checklist", description: "print the required environment variables and docs" },
-    { label: "Enter server and channel IDs", description: "fill the non-secret Discord IDs into the env template" },
     { label: "Skip Discord for now", description: existingConfigured ? "Discord already looks configured from this shell" : "configure later" },
   ], existingConfigured ? 2 : 0);
 
   if (choice === 2) return undefined;
-  if (choice === 0) return {};
+  const apiToken = env.PINCHY_API_TOKEN?.trim() || generateLocalApiToken();
+  if (choice === 1) return { apiToken };
 
-  const allowedGuildIds = await askWithDefault(question, "Discord server/guild ID", env.PINCHY_DISCORD_ALLOWED_GUILD_IDS);
-  const allowedChannelIds = await askWithDefault(question, "Discord channel ID", env.PINCHY_DISCORD_ALLOWED_CHANNEL_IDS);
+  const botToken = await askWithDefault(question, "Discord bot token", env.PINCHY_DISCORD_BOT_TOKEN);
+  const allowedGuildIds = await askWithDefault(question, "Discord server/guild ID allowlist (optional)", env.PINCHY_DISCORD_ALLOWED_GUILD_IDS);
+  const allowedChannelIds = await askWithDefault(question, "Discord channel ID allowlist (optional)", env.PINCHY_DISCORD_ALLOWED_CHANNEL_IDS);
   const botUserId = await askWithDefault(question, "Discord bot user ID", env.PINCHY_DISCORD_BOT_USER_ID);
   const allowedUserIds = await askWithDefault(question, "Allowed Discord user IDs (optional)", env.PINCHY_DISCORD_ALLOWED_USER_IDS);
 
   return {
+    botToken,
+    apiToken,
     allowedGuildIds,
     allowedChannelIds,
     botUserId,
@@ -458,6 +480,17 @@ function buildRuntimeConfigPatch(draft: PinchyLlmSetupDraft): Partial<PinchyRunt
     subagentBaseUrl: cleanInput(draft.subagentBaseUrl),
   }).filter((entry): entry is [keyof PinchyRuntimeConfig, string] => Boolean(entry[1]));
   return Object.fromEntries(entries) as Partial<PinchyRuntimeConfig>;
+}
+
+function buildWorkspaceEnvPatch(draft: PinchyDiscordSetupDraft): Record<string, string | undefined> {
+  return {
+    PINCHY_DISCORD_BOT_TOKEN: cleanInput(draft.botToken),
+    PINCHY_API_TOKEN: cleanInput(draft.apiToken),
+    PINCHY_DISCORD_ALLOWED_GUILD_IDS: cleanInput(draft.allowedGuildIds),
+    PINCHY_DISCORD_ALLOWED_CHANNEL_IDS: cleanInput(draft.allowedChannelIds),
+    PINCHY_DISCORD_BOT_USER_ID: cleanInput(draft.botUserId),
+    PINCHY_DISCORD_ALLOWED_USER_IDS: cleanInput(draft.allowedUserIds),
+  };
 }
 
 async function collectInteractiveSetupDraft(question: PinchySetupQuestion, input: {
@@ -505,6 +538,10 @@ export async function runInteractivePinchySetup(input: {
       updatePinchyRuntimeConfig(input.cwd, buildRuntimeConfigPatch(draft.llm));
       draft.persistRuntimeConfig = true;
     }
+    if (input.cwd && draft.discord?.botToken) {
+      savePinchyWorkspaceEnv(input.cwd, buildWorkspaceEnvPatch(draft.discord));
+      draft.persistWorkspaceEnvPath = getPinchyWorkspaceEnvPath(input.cwd);
+    }
     return summarizeInteractiveSetupDraft(draft);
   }
 
@@ -515,6 +552,10 @@ export async function runInteractivePinchySetup(input: {
     if (input.cwd && draft.llm) {
       updatePinchyRuntimeConfig(input.cwd, buildRuntimeConfigPatch(draft.llm));
       draft.persistRuntimeConfig = true;
+    }
+    if (input.cwd && draft.discord?.botToken) {
+      savePinchyWorkspaceEnv(input.cwd, buildWorkspaceEnvPatch(draft.discord));
+      draft.persistWorkspaceEnvPath = getPinchyWorkspaceEnvPath(input.cwd);
     }
     const summary = summarizeInteractiveSetupDraft(draft);
     stdout.write(summary);

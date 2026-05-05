@@ -28,7 +28,7 @@ export type ManagedServiceReadinessCheck = {
   url: string;
 };
 
-export function buildManagedServiceDefinitions(): ManagedServiceDefinition[] {
+export function buildManagedServiceDefinitions(env: NodeJS.ProcessEnv = process.env): ManagedServiceDefinition[] {
   const api = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/api/src/server.ts"));
   const worker = buildTsxEntrypointCommand(resolvePinchyPackagePath("services/agent-worker/src/worker.ts"));
   const dashboard = buildTsxEntrypointCommand(resolvePinchyPackagePath("apps/host/src/dashboard.ts"));
@@ -39,7 +39,7 @@ export function buildManagedServiceDefinitions(): ManagedServiceDefinition[] {
     { name: "worker", command: worker.command, args: worker.args },
     { name: "dashboard", command: dashboard.command, args: dashboard.args },
     { name: "daemon", command: daemon.command, args: daemon.args },
-    { name: "discord", command: discord.command, args: discord.args, enabled: Boolean(process.env.PINCHY_DISCORD_BOT_TOKEN) },
+    { name: "discord", command: discord.command, args: discord.args, enabled: Boolean(env.PINCHY_DISCORD_BOT_TOKEN) },
   ];
 }
 
@@ -70,11 +70,11 @@ function readStoredPid(pidPath: string) {
   }
 }
 
-export function startManagedServices(cwd: string, definitions = buildManagedServiceDefinitions()) {
-  return definitions.map((service) => startManagedService(cwd, service));
+export function startManagedServices(cwd: string, definitions = buildManagedServiceDefinitions(), env: NodeJS.ProcessEnv = process.env) {
+  return definitions.map((service) => startManagedService(cwd, service, env));
 }
 
-export function startManagedService(cwd: string, service: ManagedServiceDefinition): ManagedServiceStartResult {
+export function startManagedService(cwd: string, service: ManagedServiceDefinition, env: NodeJS.ProcessEnv = process.env): ManagedServiceStartResult {
   const { pidPath, logPath } = getManagedServiceStatePaths(cwd, service.name);
   mkdirSync(dirname(pidPath), { recursive: true });
 
@@ -103,7 +103,7 @@ export function startManagedService(cwd: string, service: ManagedServiceDefiniti
     cwd,
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    env,
   });
   child.unref();
   writeFileSync(pidPath, `${child.pid}\n`, "utf8");
