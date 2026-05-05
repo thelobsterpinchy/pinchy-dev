@@ -1,8 +1,8 @@
 # pinchy-dev
 
-`pinchy-dev` is Pinchy: a local-first coding agent you run on your own machine.
+`pinchy-dev` is Pinchy: a local-first autonomous orchestration runtime you run on your own machine.
 
-Pinchy wraps the **Pi coding agent** framework with a chat-first local product surface:
+Pinchy owns the chat, memory, run, task, dashboard, and operator lifecycle while using the **Pi coding agent** framework as an internal execution backend:
 - a `pinchy` CLI
 - a local dashboard
 - persistent conversations and runs
@@ -18,10 +18,10 @@ Install Pinchy globally:
 npm install -g pinchy-dev
 ```
 
-If you are trying Pinchy before npm publishing is available, you can also install from GitHub:
+You can also install directly from GitHub:
 
 ```bash
-npm install -g github:thelobsterpinchy/pinchy-dev
+npm install -g github:pinchy-dev/pinchy-dev
 ```
 
 ## Quick start
@@ -70,7 +70,7 @@ Pinchy is designed for developers who want a local coding agent that stays usabl
 Pinchy is:
 - **local-first** — your runtime state, dashboard, and workflows stay on your machine
 - **chat-first** — the main experience is conversation-oriented rather than a pile of disconnected tools
-- **orchestration-aware** — Pinchy can break multi-part requests into bounded delegated tasks
+- **orchestration-owned** — Pinchy owns durable memory, run state, task state, questions, and synthesis
 - **inspectable** — runs, agent activity, questions, artifacts, and local state are visible and auditable
 - **debugging-oriented** — especially strong at website, browser, and local app debugging
 - **disciplined** — built to prefer TDD, small changes, and explicit validation
@@ -78,7 +78,7 @@ Pinchy is:
 ## Typical workflows
 
 ### Ask Pinchy to work in a repo
-Use the chat shell or dashboard to ask Pinchy to inspect code, plan changes, implement a fix, or validate a result.
+Use the chat shell or dashboard to ask Pinchy to inspect code, plan changes, implement a fix, or validate a result. This is the primary orchestration surface; delegated Pi-backed execution appears underneath it when useful.
 
 ### Debug a website or browser flow
 Pinchy can reproduce issues, capture screenshots and DOM snapshots, inspect console/network failures, and compare artifacts.
@@ -90,7 +90,7 @@ Pinchy includes local desktop and simulator observation/control tools with appro
 For broader requests, Pinchy can break work into bounded delegated tasks, keep progress visible, and synthesize results back in-thread.
 
 ### Steer an active agent
-When delegated work is running, you can inspect the agent session and submit scoped guidance rather than losing control of the thread.
+When delegated work is running, you can intentionally inspect the execution session and submit scoped guidance without losing the main orchestration thread.
 
 ## Capability highlights
 

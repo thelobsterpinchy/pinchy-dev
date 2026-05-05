@@ -23,14 +23,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
-        run: npm run check
-
-      - name: Run tests
-        run: npm test
-
-      - name: Verify packaged install smoke
-        run: npm run pinchy:install-smoke
+      - name: Verify release
+        run: npm run release:verify
 
       - name: Publish package
         run: npm publish

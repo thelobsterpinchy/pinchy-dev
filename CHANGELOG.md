@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- make Pinchy's autonomous orchestration layer the documented primary product/runtime boundary, with Pi treated as an internal execution backend
+- add `npm run release:verify` to run typecheck, tests, dashboard build, pack dry run, and packaged install smoke through one release gate
+- harden release verification against local npm cache ownership issues by forcing an isolated temporary npm cache by default
+- route the npm publish workflow through the shared release verifier before `npm publish`
+- update dashboard and README language so delegated agents appear as bounded execution underneath the main orchestration thread
+- update package metadata and install docs for the moved `pinchy-dev/pinchy-dev` GitHub repository
+
 ## 0.2.11
 
 - separate orchestration-core state from Pi execution with file-backed task, agent-run, and event repositories
