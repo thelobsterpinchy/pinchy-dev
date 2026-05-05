@@ -38,21 +38,27 @@ The npm package version is the source of truth. Branch names are for review clar
 
 ## Automated release via GitHub Actions
 
-This repository includes `.github/workflows/publish-npm.yml`.
+This repository includes `.github/workflows/tag-release.yml` for normal releases and `.github/workflows/publish-npm.yml` for manually pushed version tags.
 
-It publishes when you push a version tag matching `v*`.
+When a release PR is merged to `main`, `tag-release.yml` reads the package version, requires a matching changelog entry, verifies the release, publishes to npm, and then pushes the matching version tag.
 
 Example:
 
 ```bash
-git tag v0.2.2
-git push origin v0.2.2
+git switch -c release/0.3.2
+npm version 0.3.2 --no-git-tag-version
+npm run release:verify
+git commit -am "Release 0.3.2"
+git push origin release/0.3.2
 ```
 
 The workflow will:
 - run `npm ci`
 - run `npm run release:verify`
 - publish to npm
+- push the matching `v*` tag
+
+If you intentionally push a version tag manually, `publish-npm.yml` can still publish from that tag. Normal releases should use the merged-to-`main` flow so publishing does not depend on a bot-created tag triggering a second workflow.
 
 ## Required GitHub secret
 

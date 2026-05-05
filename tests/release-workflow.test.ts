@@ -35,9 +35,13 @@ test("main push workflow auto-tags package versions with release guardrails", ()
 
   assert.match(workflow, /branches:\n\s+- main/);
   assert.match(workflow, /permissions:\n\s+contents: write/);
+  assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
   assert.match(workflow, /require\('\.\/package\.json'\)\.version/);
   assert.match(workflow, /grep -Eq "\^##\[\[:space:\]\]\+\$version\(\[\[:space:\]\]\|\$\)"/);
   assert.match(workflow, /git rev-parse "\$tag"/);
+  assert.match(workflow, /run: npm run release:verify/);
+  assert.match(workflow, /run: npm publish/);
+  assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
   assert.match(workflow, /git tag -a "\$tag" -m "Release \$tag"/);
   assert.match(workflow, /git push origin "\$tag"/);
 });
