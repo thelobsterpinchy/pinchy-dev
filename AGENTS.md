@@ -50,6 +50,11 @@
 - `npm run dashboard` — local dashboard server + API on port `4310`
 - `npm run dashboard:web` — React/Vite dashboard app on port `4311`
 
+## Release checklist
+
+- When bumping `package.json` for a release, add a matching `## <version>` entry to `CHANGELOG.md` in the same commit or PR.
+- Before opening a release PR, run `npm run release:verify`; rerun outside the sandbox if local IPC or HTTP bind permissions block `tsx` or server tests.
+
 ## Self-improvement rules
 
 When asked to improve `pinchy-dev` itself:
