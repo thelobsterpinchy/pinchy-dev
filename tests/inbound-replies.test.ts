@@ -28,7 +28,7 @@ test("ingestInboundReply persists a normalized reply and marks the question answ
       channelHints: ["dashboard"],
     });
 
-    const reply = ingestInboundReply(cwd, {
+    const reply = await ingestInboundReply(cwd, {
       questionId: question.id,
       conversationId: conversation.id,
       channel: "dashboard",
@@ -57,38 +57,32 @@ test("ingestInboundReply rejects replies for unknown, mismatched, or already ans
       priority: "normal",
     });
 
-    assert.throws(() => {
-      ingestInboundReply(cwd, {
+    await assert.rejects(() => ingestInboundReply(cwd, {
         questionId: "question-missing",
         conversationId: conversation.id,
         channel: "dashboard",
         content: "Unknown",
-      });
-    }, /Question not found/);
+      }), /Question not found/);
 
-    assert.throws(() => {
-      ingestInboundReply(cwd, {
+    await assert.rejects(() => ingestInboundReply(cwd, {
         questionId: question.id,
         conversationId: otherConversation.id,
         channel: "dashboard",
         content: "Wrong conversation",
-      });
-    }, /conversation/);
+      }), /conversation/);
 
-    ingestInboundReply(cwd, {
+    await ingestInboundReply(cwd, {
       questionId: question.id,
       conversationId: conversation.id,
       channel: "dashboard",
       content: "First reply",
     });
 
-    assert.throws(() => {
-      ingestInboundReply(cwd, {
+    await assert.rejects(() => ingestInboundReply(cwd, {
         questionId: question.id,
         conversationId: conversation.id,
         channel: "dashboard",
         content: "Second reply",
-      });
-    }, /already answered/);
+      }), /already answered/);
   });
 });

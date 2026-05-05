@@ -209,6 +209,7 @@ export type AgentGuidance = {
   conversationId: string;
   taskId: string;
   runId?: string;
+  agentRunId?: string;
   content: string;
   status: AgentGuidanceStatus;
   createdAt: string;

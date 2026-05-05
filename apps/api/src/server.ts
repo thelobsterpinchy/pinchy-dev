@@ -330,6 +330,8 @@ export function createApiServer({ cwd }: ApiServerOptions) {
           sendJson(res, 201, createQuestion(requestCwd, {
             conversationId: payload.conversationId,
             runId: payload.runId,
+            agentRunId: typeof payload.agentRunId === "string" ? payload.agentRunId : undefined,
+            taskId: typeof payload.taskId === "string" ? payload.taskId : undefined,
             prompt: payload.prompt,
             priority: payload.priority === "low" || payload.priority === "normal" || payload.priority === "high" || payload.priority === "urgent" ? payload.priority : "normal",
             channelHints: Array.isArray(payload.channelHints)
@@ -344,7 +346,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
     const questionIdForReply = getRouteParams(pathname, "/questions/", "/reply");
     if (questionIdForReply && req.method === "POST") {
       void readJsonBody(req)
-        .then((payload) => {
+        .then(async (payload) => {
           if (typeof payload.conversationId !== "string" || typeof payload.content !== "string") {
             sendJson(res, 400, { ok: false, error: "conversationId and content are required" });
             return;
@@ -355,7 +357,7 @@ export function createApiServer({ cwd }: ApiServerOptions) {
             return;
           }
           try {
-            const reply = ingestInboundReply(requestCwd, {
+            const reply = await ingestInboundReply(requestCwd, {
               questionId: questionIdForReply,
               conversationId: payload.conversationId,
               channel,
@@ -376,10 +378,10 @@ export function createApiServer({ cwd }: ApiServerOptions) {
 
     if (req.method === "POST" && pathname === "/webhooks/discord/reply") {
       void readJsonBody(req)
-        .then((payload) => {
+        .then(async (payload) => {
           try {
             const normalized = normalizeDiscordInboundReply(payload);
-            const reply = ingestInboundReply(requestCwd, normalized);
+            const reply = await ingestInboundReply(requestCwd, normalized);
             sendJson(res, 201, reply);
           } catch (error) {
             if (error instanceof DiscordInboundNormalizationError) {

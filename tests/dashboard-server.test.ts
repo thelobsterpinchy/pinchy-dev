@@ -74,7 +74,7 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       toolRetryHardStopThreshold?: number;
       dangerModeEnabled?: boolean;
       workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
-      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
+      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationModel?: string; subagentModel?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
     };
     assert.equal(initial.defaultProvider, "openai-codex");
     assert.equal(initial.defaultModel, "gpt-5.4");
@@ -96,6 +96,8 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "env",
       defaultThinkingLevel: "env",
       defaultBaseUrl: "unset",
+      orchestrationModel: "unset",
+      subagentModel: "unset",
       autoDeleteEnabled: "unset",
       autoDeleteDays: "unset",
       toolRetryWarningThreshold: "unset",
@@ -240,6 +242,8 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "workspace",
       defaultThinkingLevel: "workspace",
       defaultBaseUrl: "workspace",
+      orchestrationModel: "unset",
+      subagentModel: "unset",
       autoDeleteEnabled: "workspace",
       autoDeleteDays: "workspace",
       toolRetryWarningThreshold: "workspace",

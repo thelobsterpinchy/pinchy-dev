@@ -19,7 +19,7 @@ test("buildManagedServiceDefinitions returns installable direct-entry service co
   assert.ok((services[0]?.args ?? []).some((entry) => /apps\/api\/src\/server\.ts$/.test(entry)));
   assert.ok((services[1]?.args ?? []).some((entry) => /services\/agent-worker\/src\/worker\.ts$/.test(entry)));
   assert.ok((services[2]?.args ?? []).some((entry) => /apps\/host\/src\/dashboard\.ts$/.test(entry)));
-  assert.ok((services[3]?.args ?? []).some((entry) => /apps\/host\/src\/daemon\.ts$/.test(entry)));
+  assert.ok((services[3]?.args ?? []).some((entry) => /apps\/host\/src\/pinchy-daemon\.ts$/.test(entry)));
   assert.ok((services[0]?.args ?? []).every((entry) => !/^run$/.test(entry)));
 });
 

@@ -1,4 +1,6 @@
 import { createHumanReply, getQuestionById, getRunById, markQuestionAnswered } from "../../apps/host/src/agent-state-store.js";
+import { FileBackedAgentRunRepository, FileBackedEventRecorder, FileBackedTaskRepository } from "../../apps/host/src/orchestration-core/adapters/file-repositories.js";
+import { recordHumanReplyReceived } from "../../apps/host/src/orchestration-core/application/human-interactions.js";
 import type { HumanReply, NotificationChannel } from "../../packages/shared/src/contracts.js";
 
 export class InboundReplyIngestionError extends Error {
@@ -16,7 +18,13 @@ type IngestInboundReplyInput = {
   rawPayload?: unknown;
 };
 
-export function ingestInboundReply(cwd: string, input: IngestInboundReplyInput): HumanReply {
+const systemClock = {
+  nowIso() {
+    return new Date().toISOString();
+  },
+};
+
+export async function ingestInboundReply(cwd: string, input: IngestInboundReplyInput): Promise<HumanReply> {
   const question = getQuestionById(cwd, input.questionId);
   if (!question) {
     throw new InboundReplyIngestionError(`Question not found: ${input.questionId}`, 404);
@@ -48,5 +56,13 @@ export function ingestInboundReply(cwd: string, input: IngestInboundReplyInput):
   });
 
   markQuestionAnswered(cwd, question.id);
+  await recordHumanReplyReceived({
+    taskRepository: new FileBackedTaskRepository(cwd),
+    agentRunRepository: new FileBackedAgentRunRepository(cwd),
+    eventRecorder: new FileBackedEventRecorder(cwd),
+    clock: systemClock,
+    question,
+    reply,
+  });
   return reply;
 }

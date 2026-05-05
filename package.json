@@ -1,7 +1,7 @@
 {
   "name": "pinchy-dev",
   "private": false,
-  "version": "0.2.6",
+  "version": "0.2.11",
   "description": "Local-first autonomous coding agent workspace built on Pi with dashboard, API, worker, and browser debugging workflows.",
   "keywords": [
     "pinchy",
@@ -58,7 +58,7 @@
     "worker": "tsx services/agent-worker/src/worker.ts",
     "up": "tsx apps/host/src/up.ts",
     "check": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "for test_file in tests/*.test.ts; do node --import tsx --test \"$test_file\" || exit 1; done",
     "bootstrap": "bash scripts/bootstrap.sh"
   },
   "dependencies": {

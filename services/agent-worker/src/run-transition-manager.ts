@@ -1,4 +1,6 @@
 import { appendMessage, createQuestion, getRunById, hasConversation, updateRunStatus } from "../../../apps/host/src/agent-state-store.js";
+import { FileBackedAgentRunRepository, FileBackedEventRecorder, FileBackedTaskRepository } from "../../../apps/host/src/orchestration-core/adapters/file-repositories.js";
+import { recordAgentBlockedQuestion } from "../../../apps/host/src/orchestration-core/application/human-interactions.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import type { RunOutcome } from "./run-outcomes.js";
 
@@ -8,10 +10,20 @@ type ApplyRunOutcomeArgs = {
   outcome: RunOutcome;
 };
 
-export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
+const systemClock = {
+  nowIso() {
+    return new Date().toISOString();
+  },
+};
+
+export async function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
   if (!hasConversation(cwd, run.conversationId) || !getRunById(cwd, run.id)) {
     return undefined;
   }
+
+  const taskRepository = new FileBackedTaskRepository(cwd);
+  const agentRunRepository = new FileBackedAgentRunRepository(cwd);
+  const eventRecorder = new FileBackedEventRecorder(cwd);
 
   switch (outcome.kind) {
     case "completed": {
@@ -28,12 +40,23 @@ export function applyRunOutcome({ cwd, run, outcome }: ApplyRunOutcomeArgs) {
         blockedReason: outcome.blockedReason,
         sessionPath: outcome.sessionPath,
       });
-      createQuestion(cwd, {
+      const agentRun = await agentRunRepository.findByBackendRunRef(run.id);
+      const question = createQuestion(cwd, {
         conversationId: run.conversationId,
         runId: run.id,
+        agentRunId: agentRun?.id,
+        taskId: agentRun?.taskId,
         prompt: outcome.question.prompt,
         priority: outcome.question.priority ?? "normal",
         channelHints: outcome.question.channelHints,
+      });
+      await recordAgentBlockedQuestion({
+        taskRepository,
+        agentRunRepository,
+        eventRecorder,
+        clock: systemClock,
+        backendRunRef: run.id,
+        question,
       });
       appendAgentMessage(cwd, run, outcome.message);
       return waiting;

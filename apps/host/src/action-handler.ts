@@ -7,6 +7,8 @@ import { appendFinalThreadSynthesisIfReady, appendOrchestrationUpdate, appendPla
 import { queueReloadRequest } from "./reload-requests.js";
 import { clearCompletedTasks, deleteTask, enqueueDelegationPlan, enqueueTask, reprioritizeTask, updateTaskStatus } from "./task-queue.js";
 import { createAgentGuidance, appendMessage, requestRunCancellation } from "./agent-state-store.js";
+import { FileBackedAgentRunRepository, FileBackedEventRecorder, FileBackedTaskRepository } from "./orchestration-core/adapters/file-repositories.js";
+import { recordGuidanceQueued } from "./orchestration-core/application/human-interactions.js";
 
 type DashboardServerOptions = {
   agentSessionController?: {
@@ -28,6 +30,12 @@ function saveApprovals(cwd: string, approvals: ApprovalRecord[]) {
   const path = resolve(cwd, ".pinchy-approvals.json");
   writeFileSync(path, JSON.stringify(approvals, null, 2), "utf8");
 }
+
+const systemClock = {
+  nowIso() {
+    return new Date().toISOString();
+  },
+};
 
 function summarizeTaskStatus(task: Pick<PinchyTask, "title" | "status">) {
   const statusText = task.status === "done"
@@ -69,7 +77,7 @@ export async function handleAction(
         runId: updated.runId,
         intro: summarizeTaskStatus(updated),
       });
-      appendFinalThreadSynthesisIfReady(cwd, {
+      await appendFinalThreadSynthesisIfReady(cwd, {
         conversationId: updated.conversationId,
         runId: updated.runId,
       });
@@ -115,11 +123,22 @@ export async function handleAction(
     return deleted;
   }
   if (action === "agent-guidance" && typeof payload.conversationId === "string" && typeof payload.taskId === "string" && typeof payload.content === "string") {
+    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    const agentRunRepository = new FileBackedAgentRunRepository(cwd);
+    const agentRun = runId ? await agentRunRepository.findByBackendRunRef(runId) : undefined;
     const guidance = createAgentGuidance(cwd, {
       conversationId: payload.conversationId,
-      taskId: payload.taskId,
-      runId: typeof payload.runRunId === "string" ? (payload.runId as string | undefined) : undefined,
+      taskId: agentRun?.taskId ?? payload.taskId,
+      runId,
+      agentRunId: agentRun?.id,
       content: payload.content.trim(),
+    });
+    await recordGuidanceQueued({
+      taskRepository: new FileBackedTaskRepository(cwd),
+      agentRunRepository,
+      eventRecorder: new FileBackedEventRecorder(cwd),
+      clock: systemClock,
+      guidance,
     });
     return guidance;
   }

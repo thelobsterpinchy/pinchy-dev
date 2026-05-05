@@ -281,7 +281,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
       if (runtimeConfig.submarine?.enabled) {
         return submarineAdapter.resumeRun({ cwd, run, reply });
       }
-      if (!run.piSessionPath or !run.sessionPath) {
+      if (!run.sessionPath) {
         throw new Error(`Cannot resume run without correct SessionPath: ${run.id}`);
       }
       const defaults = buildSessionDefaults(cwd);

@@ -19,6 +19,16 @@ class InMemoryTaskRepository implements TaskRepository {
     return this.tasks.filter((task) => task.parentRunId === runId && task.status === "ready");
   }
 
+  async listByRun(runId: string, filter: { status?: OrchestrationTask["status"] } = {}): Promise<OrchestrationTask[]> {
+    return this.tasks
+      .filter((task) => task.parentRunId === runId)
+      .filter((task) => !filter.status || task.status === filter.status);
+  }
+
+  async get(taskId: string): Promise<OrchestrationTask | undefined> {
+    return this.tasks.find((task) => task.id === taskId);
+  }
+
   async save(task: OrchestrationTask): Promise<void> {
     const index = this.tasks.findIndex((entry) => entry.id === task.id);
     if (index >= 0) {
@@ -35,6 +45,18 @@ class InMemoryTaskRepository implements TaskRepository {
 
 class InMemoryAgentRunRepository implements AgentRunRepository {
   private readonly agentRuns: AgentRun[] = [];
+
+  async listByParentRun(parentRunId: string): Promise<AgentRun[]> {
+    return this.agentRuns.filter((agentRun) => agentRun.parentRunId === parentRunId);
+  }
+
+  async get(agentRunId: string): Promise<AgentRun | undefined> {
+    return this.agentRuns.find((agentRun) => agentRun.id === agentRunId);
+  }
+
+  async findByBackendRunRef(backendRunRef: string): Promise<AgentRun | undefined> {
+    return this.agentRuns.find((agentRun) => agentRun.backendRunRef === backendRunRef);
+  }
 
   async save(agentRun: AgentRun): Promise<void> {
     this.agentRuns.push(agentRun);
@@ -118,6 +140,10 @@ class InMemoryEventRecorder implements EventRecorder {
 
   async record(event: OrchestrationEvent): Promise<void> {
     this.events.push(event);
+  }
+
+  async listByRun(runId: string): Promise<OrchestrationEvent[]> {
+    return this.events.filter((event) => event.runId === runId);
   }
 }
 

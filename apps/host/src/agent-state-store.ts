@@ -318,6 +318,8 @@ export function updateRunStatus(cwd: string, runId: string, status: RunStatus, p
 export function createQuestion(cwd: string, input: {
   conversationId: string;
   runId: string;
+  agentRunId?: string;
+  taskId?: string;
   prompt: string;
   priority: QuestionPriority;
   channelHints?: NotificationChannel[];
@@ -330,6 +332,8 @@ export function createQuestion(cwd: string, input: {
     prompt: input.prompt,
     priority: input.priority,
     channelHints: input.channelHints,
+    agentRunId: input.agentRunId,
+    taskId: input.taskId,
     createdAt: nowIso(),
     status: "pending_delivery",
   };
@@ -457,13 +461,14 @@ export function setConversationSessionBinding(cwd: string, input: { conversation
   return getConversationSessionBinding(cwd, input.conversationId);
 }
 
-export function createAgentGuidance(cwd: string, input: { conversationId: string; taskId: string; runId?: string; content: string }) {
+export function createAgentGuidance(cwd: string, input: { conversationId: string; taskId: string; runId?: string; agentRunId?: string; content: string }) {
   const guidances = loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE);
   const guidance: AgentGuidance = {
     id: createId("guidance"),
     conversationId: input.conversationId,
     taskId: input.taskId,
     runId: input.runId,
+    agentRunId: input.agentRunId,
     content: input.content,
     status: "pending",
     createdAt: nowIso(),
@@ -473,11 +478,12 @@ export function createAgentGuidance(cwd: string, input: { conversationId: string
   return guidance;
 }
 
-export function listAgentGuidances(cwd: string, filter: { conversationId?: string; taskId?: string; runId?: string; status?: AgentGuidance["status"] } = {}) {
+export function listAgentGuidances(cwd: string, filter: { conversationId?: string; taskId?: string; runId?: string; agentRunId?: string; status?: AgentGuidance["status"] } = {}) {
   return loadCollection<AgentGuidance>(cwd, AGENT_GUIDANCES_FILE)
     .filter((guidance) => !filter.conversationId || guidance.conversationId === filter.conversationId)
     .filter((guidance) => !filter.taskId || guidance.taskId === filter.taskId)
     .filter((guidance) => !filter.runId || guidance.runId === filter.runId)
+    .filter((guidance) => !filter.agentRunId || guidance.agentRunId === filter.agentRunId)
     .filter((guidance) => !filter.status || guidance.status === filter.status)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
