@@ -6,6 +6,7 @@ import { buildRuntimeConfigSignature } from "../../../apps/host/src/runtime-conf
 import { loadPinchyRuntimeConfig, type PinchyRuntimeConfig, type RuntimeModelOptions, type ThinkingLevel } from "../../../apps/host/src/runtime-config.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import { createRuntimeModelSettingsResourceLoader } from "./pi-model-runtime-settings.js";
+import { selectRuntimeModel } from "./runtime-model-selection.js";
 import { createSubmarineAdapter } from "./pi-submarine-adapter.js";
 import { normalizeRunOutcome, type PiRunExecutionResult } from "./run-outcomes.js";
 import { buildRunExecutionPrompt, shouldReuseConversationSessionForRun } from "./run-orchestration-prompt.js";
@@ -187,17 +188,18 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
 
   function buildSessionDefaults(cwd: string) {
     const runtimeConfig = loadRuntimeConfig(cwd);
-    const resolvedModel = runtimeConfig.defaultProvider && runtimeConfig.defaultModel
-      ? resolveModel(runtimeConfig.defaultProvider, runtimeConfig.defaultModel, agentDir)
+    const selection = selectRuntimeModel(runtimeConfig, "orchestration");
+    const resolvedModel = selection.provider && selection.modelId
+      ? resolveModel(selection.provider, selection.modelId, agentDir)
       : undefined;
-    const model = runtimeConfig.defaultBaseUrl && resolvedModel && typeof resolvedModel === "object"
-      ? { ...resolvedModel, baseUrl: runtimeConfig.defaultBaseUrl }
+    const model = selection.baseUrl && resolvedModel && typeof resolvedModel === "object"
+      ? { ...resolvedModel, baseUrl: selection.baseUrl }
       : resolvedModel;
 
     return {
       model,
-      thinkingLevel: runtimeConfig.defaultThinkingLevel,
-      modelOptions: runtimeConfig.modelOptions,
+      thinkingLevel: selection.thinkingLevel,
+      modelOptions: selection.modelOptions,
       runtimeConfigSignature: buildRuntimeConfigSignature(runtimeConfig),
     };
   }

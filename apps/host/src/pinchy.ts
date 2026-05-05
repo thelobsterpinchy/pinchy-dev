@@ -14,7 +14,7 @@ import {
 import { formatPinchyInitSummary, initializePinchyWorkspace } from "./pinchy-init.js";
 import { buildPinchyDoctorReport, summarizePinchyDoctorReport, summarizePinchyDoctorReportJson } from "./pinchy-doctor.js";
 import { formatPinchyVersion, summarizeLogs as summarizeLogSections, summarizeLogsJson, summarizeRestartResults, summarizeStatus as summarizeManagedStatus, summarizeStatusJson, summarizeStopResults } from "./pinchy-command-output.js";
-import { buildPinchySetupPlan, runPinchySetup, summarizePinchySetupPlan } from "./pinchy-setup.js";
+import { buildPinchySetupPlan, runInteractivePinchySetup, runPinchySetup, summarizePinchySetupPlan } from "./pinchy-setup.js";
 import { parsePinchyCliArgs, PINCHY_CLI_COMMANDS, summarizePinchyCliHelp } from "./pinchy-cli.js";
 import { loadPinchyRuntimeConfig } from "./runtime-config.js";
 import { parsePinchyConfigCliValue, setPinchyConfigValue } from "./pinchy-config.js";
@@ -83,9 +83,10 @@ export async function runPinchyCli(argv = process.argv.slice(2), env: NodeJS.Pro
       return;
     }
     case "setup": {
-      const plan = buildPinchySetupPlan();
+      const plan = buildPinchySetupPlan({ env, runtimeConfig: loadPinchyRuntimeConfig(cwd) });
       console.log(summarizePinchySetupPlan(plan));
       runPinchySetup(plan);
+      await runInteractivePinchySetup();
       return;
     }
     case "version": {

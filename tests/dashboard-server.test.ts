@@ -98,8 +98,8 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       toolRetryWarningThreshold?: number;
       toolRetryHardStopThreshold?: number;
       dangerModeEnabled?: boolean;
-      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
-      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationModel?: string; subagentModel?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
+      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationProvider?: string; orchestrationModel?: string; orchestrationBaseUrl?: string; subagentProvider?: string; subagentModel?: string; subagentBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
+      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationProvider?: string; orchestrationModel?: string; orchestrationBaseUrl?: string; subagentProvider?: string; subagentModel?: string; subagentBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
     };
     assert.equal(initial.defaultProvider, "openai-codex");
     assert.equal(initial.defaultModel, "gpt-5.4");
@@ -121,8 +121,12 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "env",
       defaultThinkingLevel: "env",
       defaultBaseUrl: "unset",
+      orchestrationProvider: "unset",
       orchestrationModel: "unset",
+      orchestrationBaseUrl: "unset",
+      subagentProvider: "unset",
       subagentModel: "unset",
+      subagentBaseUrl: "unset",
       autoDeleteEnabled: "unset",
       autoDeleteDays: "unset",
       toolRetryWarningThreshold: "unset",
@@ -138,6 +142,12 @@ test("dashboard server exposes effective runtime settings through the dashboard 
         defaultModel: "qwen3-coder",
         defaultThinkingLevel: "high",
         defaultBaseUrl: "http://127.0.0.1:11434/v1",
+        orchestrationProvider: "ollama",
+        orchestrationModel: "qwen3-coder",
+        orchestrationBaseUrl: "http://127.0.0.1:11434/v1",
+        subagentProvider: "openai",
+        subagentModel: "deepseek-coder",
+        subagentBaseUrl: "http://127.0.0.1:1234/v1",
         modelOptions: {
           temperature: 0.15,
           topP: 0.92,
@@ -177,6 +187,12 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel?: string;
       defaultThinkingLevel?: string;
       defaultBaseUrl?: string;
+      orchestrationProvider?: string;
+      orchestrationModel?: string;
+      orchestrationBaseUrl?: string;
+      subagentProvider?: string;
+      subagentModel?: string;
+      subagentBaseUrl?: string;
       modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number };
       savedModelConfigs?: Array<{ id: string; name: string; provider?: string; model?: string; baseUrl?: string; thinkingLevel?: string; modelOptions?: { temperature?: number; topK?: number; maxTokens?: number } }>;
       storedProviderCredentials?: Record<string, boolean>;
@@ -185,13 +201,19 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       toolRetryWarningThreshold?: number;
       toolRetryHardStopThreshold?: number;
       dangerModeEnabled?: boolean;
-      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string; provider?: string; model?: string; baseUrl?: string; thinkingLevel?: string; modelOptions?: { temperature?: number; topK?: number; maxTokens?: number } }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
-      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
+      workspaceDefaults?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationProvider?: string; orchestrationModel?: string; orchestrationBaseUrl?: string; subagentProvider?: string; subagentModel?: string; subagentBaseUrl?: string; modelOptions?: { temperature?: number; topP?: number; topK?: number; maxTokens?: number; seed?: number; stop?: string[]; repeatPenalty?: number; presencePenalty?: number; frequencyPenalty?: number; contextWindow?: number }; savedModelConfigs?: Array<{ id: string; name: string; provider?: string; model?: string; baseUrl?: string; thinkingLevel?: string; modelOptions?: { temperature?: number; topK?: number; maxTokens?: number } }>; autoDeleteEnabled?: boolean; autoDeleteDays?: number; toolRetryWarningThreshold?: number; toolRetryHardStopThreshold?: number; dangerModeEnabled?: boolean };
+      sources?: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; defaultBaseUrl?: string; orchestrationProvider?: string; orchestrationModel?: string; orchestrationBaseUrl?: string; subagentProvider?: string; subagentModel?: string; subagentBaseUrl?: string; autoDeleteEnabled?: string; autoDeleteDays?: string; toolRetryWarningThreshold?: string; toolRetryHardStopThreshold?: string; dangerModeEnabled?: string };
     };
     assert.equal(updated.defaultProvider, "ollama");
     assert.equal(updated.defaultModel, "qwen3-coder");
     assert.equal(updated.defaultThinkingLevel, "high");
     assert.equal(updated.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.equal(updated.orchestrationProvider, "ollama");
+    assert.equal(updated.orchestrationModel, "qwen3-coder");
+    assert.equal(updated.orchestrationBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.equal(updated.subagentProvider, "openai");
+    assert.equal(updated.subagentModel, "deepseek-coder");
+    assert.equal(updated.subagentBaseUrl, "http://127.0.0.1:1234/v1");
     assert.deepEqual(updated.modelOptions, {
       temperature: 0.15,
       topP: 0.92,
@@ -230,6 +252,12 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "qwen3-coder",
       defaultThinkingLevel: "high",
       defaultBaseUrl: "http://127.0.0.1:11434/v1",
+      orchestrationProvider: "ollama",
+      orchestrationModel: "qwen3-coder",
+      orchestrationBaseUrl: "http://127.0.0.1:11434/v1",
+      subagentProvider: "openai",
+      subagentModel: "deepseek-coder",
+      subagentBaseUrl: "http://127.0.0.1:1234/v1",
       modelOptions: {
         temperature: 0.15,
         topP: 0.92,
@@ -267,8 +295,12 @@ test("dashboard server exposes effective runtime settings through the dashboard 
       defaultModel: "workspace",
       defaultThinkingLevel: "workspace",
       defaultBaseUrl: "workspace",
-      orchestrationModel: "unset",
-      subagentModel: "unset",
+      orchestrationProvider: "workspace",
+      orchestrationModel: "workspace",
+      orchestrationBaseUrl: "workspace",
+      subagentProvider: "workspace",
+      subagentModel: "workspace",
+      subagentBaseUrl: "workspace",
       autoDeleteEnabled: "workspace",
       autoDeleteDays: "workspace",
       toolRetryWarningThreshold: "workspace",
@@ -284,6 +316,12 @@ test("dashboard server exposes effective runtime settings through the dashboard 
     assert.equal(onDisk.defaultModel, "qwen3-coder");
     assert.equal(onDisk.defaultThinkingLevel, "high");
     assert.equal(onDisk.defaultBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.equal(onDisk.orchestrationProvider, "ollama");
+    assert.equal(onDisk.orchestrationModel, "qwen3-coder");
+    assert.equal(onDisk.orchestrationBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.equal(onDisk.subagentProvider, "openai");
+    assert.equal(onDisk.subagentModel, "deepseek-coder");
+    assert.equal(onDisk.subagentBaseUrl, "http://127.0.0.1:1234/v1");
     assert.deepEqual(onDisk.modelOptions, {
       temperature: 0.15,
       topP: 0.92,

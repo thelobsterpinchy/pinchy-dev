@@ -66,8 +66,12 @@ export type PinchyRuntimeConfig = {
   defaultThinkingLevel?: ThinkingLevel;
   defaultBaseUrl?: string;
   modelOptions?: RuntimeModelOptions;
+  orchestrationProvider?: string;
   orchestrationModel?: string;
+  orchestrationBaseUrl?: string;
+  subagentProvider?: string;
   subagentModel?: string;
+  subagentBaseUrl?: string;
   savedModelConfigs?: SavedModelConfig[];
   autoDeleteEnabled?: boolean;
   autoDeleteDays?: number;
@@ -83,8 +87,12 @@ export type PinchyRuntimeConfigDetails = PinchyRuntimeConfig & {
     defaultModel: RuntimeConfigSource;
     defaultThinkingLevel: RuntimeConfigSource;
     defaultBaseUrl: RuntimeConfigSource;
+    orchestrationProvider: RuntimeConfigSource;
     orchestrationModel: RuntimeConfigSource;
+    orchestrationBaseUrl: RuntimeConfigSource;
+    subagentProvider: RuntimeConfigSource;
     subagentModel: RuntimeConfigSource;
+    subagentBaseUrl: RuntimeConfigSource;
     autoDeleteEnabled: RuntimeConfigSource;
     autoDeleteDays: RuntimeConfigSource;
     toolRetryWarningThreshold: RuntimeConfigSource;
@@ -100,8 +108,12 @@ type RuntimeConfigFile = {
   defaultBaseUrl?: string;
   modelOptions?: unknown;
   savedModelConfigs?: unknown;
+  orchestrationProvider?: string;
   orchestrationModel?: string;
+  orchestrationBaseUrl?: string;
+  subagentProvider?: string;
   subagentModel?: string;
+  subagentBaseUrl?: string;
   autoDeleteEnabled?: boolean;
   autoDeleteDays?: number;
   toolRetryWarningThreshold?: number;
@@ -273,10 +285,30 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     { value: normalizeOptionalString(process.env.PINCHY_ORCHESTRATION_MODEL), source: "env" },
     { value: undefined, source: "unset" },
   ]);
+  const orchestrationProvider = resolveConfigValue<string>([
+    { value: normalizeOptionalString(workspaceFile.orchestrationProvider), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_ORCHESTRATION_PROVIDER), source: "env" },
+    { value: undefined, source: "unset" },
+  ]);
+  const orchestrationBaseUrl = resolveConfigValue<string>([
+    { value: normalizeOptionalString(workspaceFile.orchestrationBaseUrl), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_ORCHESTRATION_BASE_URL), source: "env" },
+    { value: undefined, source: "unset" },
+  ]);
 
   const subagentModel = resolveConfigValue<string>([
     { value: normalizeOptionalString(workspaceFile.subagentModel), source: "workspace" },
     { value: normalizeOptionalString(process.env.PINCHY_SUBAGENT_MODEL), source: "env" },
+    { value: undefined, source: "unset" },
+  ]);
+  const subagentProvider = resolveConfigValue<string>([
+    { value: normalizeOptionalString(workspaceFile.subagentProvider), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_SUBAGENT_PROVIDER), source: "env" },
+    { value: undefined, source: "unset" },
+  ]);
+  const subagentBaseUrl = resolveConfigValue<string>([
+    { value: normalizeOptionalString(workspaceFile.subagentBaseUrl), source: "workspace" },
+    { value: normalizeOptionalString(process.env.PINCHY_SUBAGENT_BASE_URL), source: "env" },
     { value: undefined, source: "unset" },
   ]);
 
@@ -287,8 +319,12 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     defaultBaseUrl: baseUrl.value,
     modelOptions: normalizeRuntimeModelOptions(workspaceFile.modelOptions),
     savedModelConfigs: normalizeSavedModelConfigs(workspaceFile.savedModelConfigs),
+    orchestrationProvider: orchestrationProvider.value,
     orchestrationModel: orchestrationModel.value,
+    orchestrationBaseUrl: orchestrationBaseUrl.value,
+    subagentProvider: subagentProvider.value,
     subagentModel: subagentModel.value,
+    subagentBaseUrl: subagentBaseUrl.value,
     autoDeleteEnabled: autoDeleteEnabled.value,
     autoDeleteDays: autoDeleteDays.value,
     toolRetryWarningThreshold: toolRetryWarningThreshold.value,
@@ -300,8 +336,12 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
       defaultModel: model.source,
       defaultThinkingLevel: thinking.source,
       defaultBaseUrl: baseUrl.source,
+      orchestrationProvider: orchestrationProvider.source,
       orchestrationModel: orchestrationModel.source,
+      orchestrationBaseUrl: orchestrationBaseUrl.source,
+      subagentProvider: subagentProvider.source,
       subagentModel: subagentModel.source,
+      subagentBaseUrl: subagentBaseUrl.source,
       autoDeleteEnabled: autoDeleteEnabled.source,
       autoDeleteDays: autoDeleteDays.source,
       toolRetryWarningThreshold: toolRetryWarningThreshold.source,
@@ -320,8 +360,12 @@ export function loadPinchyRuntimeConfig(cwd: string, options: RuntimeConfigLoadO
     defaultBaseUrl: details.defaultBaseUrl,
     modelOptions: details.modelOptions,
     savedModelConfigs: details.savedModelConfigs,
+    orchestrationProvider: details.orchestrationProvider,
     orchestrationModel: details.orchestrationModel,
+    orchestrationBaseUrl: details.orchestrationBaseUrl,
+    subagentProvider: details.subagentProvider,
     subagentModel: details.subagentModel,
+    subagentBaseUrl: details.subagentBaseUrl,
     autoDeleteEnabled: details.autoDeleteEnabled,
     autoDeleteDays: details.autoDeleteDays,
     toolRetryWarningThreshold: details.toolRetryWarningThreshold,

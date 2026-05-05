@@ -11,6 +11,12 @@ function withTempDir(run: (cwd: string) => void) {
   const originalModel = process.env.PINCHY_DEFAULT_MODEL;
   const originalThinking = process.env.PINCHY_DEFAULT_THINKING_LEVEL;
   const originalBaseUrl = process.env.PINCHY_DEFAULT_BASE_URL;
+  const originalOrchestrationProvider = process.env.PINCHY_ORCHESTRATION_PROVIDER;
+  const originalOrchestrationModel = process.env.PINCHY_ORCHESTRATION_MODEL;
+  const originalOrchestrationBaseUrl = process.env.PINCHY_ORCHESTRATION_BASE_URL;
+  const originalSubagentProvider = process.env.PINCHY_SUBAGENT_PROVIDER;
+  const originalSubagentModel = process.env.PINCHY_SUBAGENT_MODEL;
+  const originalSubagentBaseUrl = process.env.PINCHY_SUBAGENT_BASE_URL;
   try {
     run(cwd);
   } finally {
@@ -22,6 +28,18 @@ function withTempDir(run: (cwd: string) => void) {
     else process.env.PINCHY_DEFAULT_THINKING_LEVEL = originalThinking;
     if (originalBaseUrl === undefined) delete process.env.PINCHY_DEFAULT_BASE_URL;
     else process.env.PINCHY_DEFAULT_BASE_URL = originalBaseUrl;
+    if (originalOrchestrationProvider === undefined) delete process.env.PINCHY_ORCHESTRATION_PROVIDER;
+    else process.env.PINCHY_ORCHESTRATION_PROVIDER = originalOrchestrationProvider;
+    if (originalOrchestrationModel === undefined) delete process.env.PINCHY_ORCHESTRATION_MODEL;
+    else process.env.PINCHY_ORCHESTRATION_MODEL = originalOrchestrationModel;
+    if (originalOrchestrationBaseUrl === undefined) delete process.env.PINCHY_ORCHESTRATION_BASE_URL;
+    else process.env.PINCHY_ORCHESTRATION_BASE_URL = originalOrchestrationBaseUrl;
+    if (originalSubagentProvider === undefined) delete process.env.PINCHY_SUBAGENT_PROVIDER;
+    else process.env.PINCHY_SUBAGENT_PROVIDER = originalSubagentProvider;
+    if (originalSubagentModel === undefined) delete process.env.PINCHY_SUBAGENT_MODEL;
+    else process.env.PINCHY_SUBAGENT_MODEL = originalSubagentModel;
+    if (originalSubagentBaseUrl === undefined) delete process.env.PINCHY_SUBAGENT_BASE_URL;
+    else process.env.PINCHY_SUBAGENT_BASE_URL = originalSubagentBaseUrl;
     rmSync(cwd, { recursive: true, force: true });
   }
 }
@@ -48,6 +66,54 @@ test("loadPinchyRuntimeConfig reads provider, model, and thinking defaults from 
     assert.equal(config.autoDeleteDays, 14);
     assert.equal(config.toolRetryWarningThreshold, 6);
     assert.equal(config.toolRetryHardStopThreshold, 12);
+  });
+});
+
+test("loadPinchyRuntimeConfig reads separate orchestration and subagent provider endpoints", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      defaultProvider: "openai-codex",
+      defaultModel: "gpt-5.4",
+      orchestrationProvider: "ollama",
+      orchestrationModel: "qwen3-coder",
+      orchestrationBaseUrl: "http://127.0.0.1:11434/v1",
+      subagentProvider: "openai",
+      subagentModel: "deepseek-coder",
+      subagentBaseUrl: "http://127.0.0.1:1234/v1",
+    }));
+
+    const config = loadPinchyRuntimeConfig(cwd);
+    assert.equal(config.orchestrationProvider, "ollama");
+    assert.equal(config.orchestrationModel, "qwen3-coder");
+    assert.equal(config.orchestrationBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.equal(config.subagentProvider, "openai");
+    assert.equal(config.subagentModel, "deepseek-coder");
+    assert.equal(config.subagentBaseUrl, "http://127.0.0.1:1234/v1");
+  });
+});
+
+test("loadPinchyRuntimeConfig supports env defaults for orchestration and subagent provider endpoints", () => {
+  withTempDir((cwd) => {
+    process.env.PINCHY_ORCHESTRATION_PROVIDER = "ollama";
+    process.env.PINCHY_ORCHESTRATION_MODEL = "qwen3-coder";
+    process.env.PINCHY_ORCHESTRATION_BASE_URL = "http://127.0.0.1:11434/v1";
+    process.env.PINCHY_SUBAGENT_PROVIDER = "openai";
+    process.env.PINCHY_SUBAGENT_MODEL = "deepseek-coder";
+    process.env.PINCHY_SUBAGENT_BASE_URL = "http://127.0.0.1:1234/v1";
+
+    const detailed = loadPinchyRuntimeConfigDetails(cwd, { globalSettingsPath: join(cwd, "missing-global-settings.json") });
+    assert.equal(detailed.orchestrationProvider, "ollama");
+    assert.equal(detailed.orchestrationModel, "qwen3-coder");
+    assert.equal(detailed.orchestrationBaseUrl, "http://127.0.0.1:11434/v1");
+    assert.equal(detailed.subagentProvider, "openai");
+    assert.equal(detailed.subagentModel, "deepseek-coder");
+    assert.equal(detailed.subagentBaseUrl, "http://127.0.0.1:1234/v1");
+    assert.equal(detailed.sources.orchestrationProvider, "env");
+    assert.equal(detailed.sources.orchestrationModel, "env");
+    assert.equal(detailed.sources.orchestrationBaseUrl, "env");
+    assert.equal(detailed.sources.subagentProvider, "env");
+    assert.equal(detailed.sources.subagentModel, "env");
+    assert.equal(detailed.sources.subagentBaseUrl, "env");
   });
 });
 

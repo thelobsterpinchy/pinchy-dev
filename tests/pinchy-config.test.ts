@@ -21,6 +21,12 @@ test("setPinchyConfigValue writes runtime config keys and readPinchyConfigValue 
     setPinchyConfigValue(cwd, "defaultModel", "qwen2.5-coder");
     setPinchyConfigValue(cwd, "defaultThinkingLevel", "medium");
     setPinchyConfigValue(cwd, "defaultBaseUrl", "http://localhost:11434/v1");
+    setPinchyConfigValue(cwd, "orchestrationProvider", "ollama");
+    setPinchyConfigValue(cwd, "orchestrationModel", "qwen3-coder");
+    setPinchyConfigValue(cwd, "orchestrationBaseUrl", "http://localhost:11434/v1");
+    setPinchyConfigValue(cwd, "subagentProvider", "openai");
+    setPinchyConfigValue(cwd, "subagentModel", "deepseek-coder");
+    setPinchyConfigValue(cwd, "subagentBaseUrl", "http://localhost:1234/v1");
     setPinchyConfigValue(cwd, "autoDeleteEnabled", true);
     setPinchyConfigValue(cwd, "autoDeleteDays", 30);
 
@@ -28,12 +34,20 @@ test("setPinchyConfigValue writes runtime config keys and readPinchyConfigValue 
     assert.equal(readPinchyConfigValue(cwd, "defaultModel"), "qwen2.5-coder");
     assert.equal(readPinchyConfigValue(cwd, "defaultThinkingLevel"), "medium");
     assert.equal(readPinchyConfigValue(cwd, "defaultBaseUrl"), "http://localhost:11434/v1");
+    assert.equal(readPinchyConfigValue(cwd, "orchestrationProvider"), "ollama");
+    assert.equal(readPinchyConfigValue(cwd, "orchestrationModel"), "qwen3-coder");
+    assert.equal(readPinchyConfigValue(cwd, "orchestrationBaseUrl"), "http://localhost:11434/v1");
+    assert.equal(readPinchyConfigValue(cwd, "subagentProvider"), "openai");
+    assert.equal(readPinchyConfigValue(cwd, "subagentModel"), "deepseek-coder");
+    assert.equal(readPinchyConfigValue(cwd, "subagentBaseUrl"), "http://localhost:1234/v1");
     assert.equal(readPinchyConfigValue(cwd, "autoDeleteEnabled"), true);
     assert.equal(readPinchyConfigValue(cwd, "autoDeleteDays"), 30);
 
     const file = JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")) as Record<string, string | boolean | number>;
     assert.equal(file.defaultProvider, "ollama");
     assert.equal(file.defaultBaseUrl, "http://localhost:11434/v1");
+    assert.equal(file.orchestrationProvider, "ollama");
+    assert.equal(file.subagentProvider, "openai");
     assert.equal(file.autoDeleteEnabled, true);
     assert.equal(file.autoDeleteDays, 30);
   });
@@ -41,6 +55,8 @@ test("setPinchyConfigValue writes runtime config keys and readPinchyConfigValue 
 
 test("parsePinchyConfigCliValue coerces boolean and numeric config values for CLI usage", () => {
   assert.equal(parsePinchyConfigCliValue("defaultProvider", "ollama"), "ollama");
+  assert.equal(parsePinchyConfigCliValue("orchestrationProvider", "ollama"), "ollama");
+  assert.equal(parsePinchyConfigCliValue("subagentBaseUrl", "http://localhost:1234/v1"), "http://localhost:1234/v1");
   assert.equal(parsePinchyConfigCliValue("dangerModeEnabled", "true"), true);
   assert.equal(parsePinchyConfigCliValue("autoDeleteEnabled", "false"), false);
   assert.equal(parsePinchyConfigCliValue("autoDeleteDays", "30"), 30);

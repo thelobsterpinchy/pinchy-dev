@@ -44,10 +44,7 @@ function isAllowedIdentity(config: DiscordGatewayConfig, message: DiscordGateway
 }
 
 function mentionsPinchy(config: DiscordGatewayConfig, message: DiscordGatewayMessage) {
-  if (config.botUserId && message.mentionedUserIds?.includes(config.botUserId)) {
-    return true;
-  }
-  return /<@!?[^>]+>/.test(message.content);
+  return Boolean(config.botUserId && message.mentionedUserIds?.includes(config.botUserId));
 }
 
 function cleanPrompt(content: string) {
