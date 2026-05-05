@@ -4,9 +4,13 @@
 
 - make `pinchy setup` use guided selector prompts instead of an unstructured question list
 - persist non-secret LLM runtime choices to `.pinchy-runtime.json` while preserving existing workspace settings
+- default new and existing workspaces to the Submarine runtime for dogfooding while keeping `submarine.enabled: false` as the standard Pi rollback
+- make `pinchy setup` recommend Submarine as the runtime strategy for new dogfood workspaces and keep the standard Pi runtime as an explicit fallback
 - let `pinchy setup` connect Discord by saving the bot token, generated local API token, and allowed server/channel IDs to `.pinchy/env`
 - make Discord server/channel allowlists optional so invite permissions can be the default access boundary
 - support Discord DMs by mapping each DM channel to a Pinchy conversation without requiring a bot mention
+- bundle the Submarine Python stdio bridge, launch it through Pinchy-managed `PYTHONPATH`, and convert bridge startup/EPIPE failures into failed run outcomes with stderr context
+- prefer Exa-backed `internet_search` when `EXA_API_KEY` is configured, document the shared orchestrator/subagent tool access, and keep no-key fallback search providers
 - load `.pinchy/env` automatically before `pinchy up` starts the API and Discord gateway
 - prompt before installation work, skip Playwright Chromium when already installed, and prefer the package-local Playwright binary for global installs
 

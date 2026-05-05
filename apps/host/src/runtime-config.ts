@@ -126,6 +126,11 @@ export type RuntimeConfigLoadOptions = {
   globalSettingsPath?: string;
 };
 
+const DEFAULT_SUBMARINE_ROLE = "worker";
+const DEFAULT_SUBMARINE_MODEL = "qwen3-coder";
+const DEFAULT_SUBMARINE_SUPERVISOR_BASE_URL = "http://127.0.0.1:8080/v1";
+const DEFAULT_SUBMARINE_AGENT_BASE_URL = "http://127.0.0.1:8000/v1";
+
 function loadJsonFile<T>(path: string): T | undefined {
   if (!existsSync(path)) return undefined;
   try {
@@ -160,8 +165,11 @@ function normalizeOptionalFiniteNumber(value: unknown) {
 
 function normalizeOptionalStringArray(value: unknown) {
   if (!Array.isArray(value)) return undefined;
-  const items = value
-    .flatMap((entry) => typeof entry === "string" && entry.trim().length > 0 ? [entry] : []);
+  const items = value.flatMap((entry) => {
+    if (typeof entry !== "string") return [];
+    const normalized = entry.replace(/^[ \t]+|[ \t]+$/g, "");
+    return normalized.length > 0 ? [normalized] : [];
+  });
   return items.length > 0 ? items : undefined;
 }
 
@@ -204,6 +212,40 @@ export function normalizeRuntimeModelOptions(value: unknown): RuntimeModelOption
   if (contextWindow !== undefined) normalized.contextWindow = contextWindow;
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function withDefaultSubmarineRuntimeConfig(
+  submarine: SubmarineRuntimeConfig | undefined,
+  input: {
+    defaultModel?: string;
+    defaultBaseUrl?: string;
+    subagentModel?: string;
+    subagentBaseUrl?: string;
+  },
+): SubmarineRuntimeConfig {
+  if (submarine?.enabled === false) {
+    return submarine;
+  }
+
+  const agents = submarine?.agents ?? {};
+  const hasAgents = Object.keys(agents).length > 0;
+  const role = hasAgents ? Object.keys(agents)[0] ?? DEFAULT_SUBMARINE_ROLE : DEFAULT_SUBMARINE_ROLE;
+  return {
+    ...(submarine ?? {}),
+    enabled: true,
+    pythonPath: submarine?.pythonPath ?? "python3",
+    scriptModule: submarine?.scriptModule ?? "submarine.serve_stdio",
+    supervisorModel: submarine?.supervisorModel ?? input.defaultModel ?? DEFAULT_SUBMARINE_MODEL,
+    supervisorBaseUrl: submarine?.supervisorBaseUrl ?? input.defaultBaseUrl ?? DEFAULT_SUBMARINE_SUPERVISOR_BASE_URL,
+    agents: {
+      ...agents,
+      [role]: {
+        ...(agents[role] ?? {}),
+        model: agents[role]?.model ?? input.subagentModel ?? submarine?.supervisorModel ?? input.defaultModel ?? DEFAULT_SUBMARINE_MODEL,
+        baseUrl: agents[role]?.baseUrl ?? input.subagentBaseUrl ?? DEFAULT_SUBMARINE_AGENT_BASE_URL,
+      },
+    },
+  };
 }
 
 export function normalizeSavedModelConfigs(value: unknown): SavedModelConfig[] | undefined {
@@ -312,7 +354,7 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     { value: undefined, source: "unset" },
   ]);
 
-  return {
+  const resolved: Omit<PinchyRuntimeConfigDetails, "sources" | "submarine"> = {
     defaultProvider: provider.value,
     defaultModel: model.value,
     defaultThinkingLevel: thinking.value,
@@ -330,7 +372,16 @@ export function loadPinchyRuntimeConfigDetails(cwd: string, options: RuntimeConf
     toolRetryWarningThreshold: toolRetryWarningThreshold.value,
     toolRetryHardStopThreshold: toolRetryHardStopThreshold.value,
     dangerModeEnabled: dangerModeEnabled.value,
-    submarine: workspaceFile.submarine,
+  };
+
+  return {
+    ...resolved,
+    submarine: withDefaultSubmarineRuntimeConfig(workspaceFile.submarine, {
+      defaultModel: resolved.defaultModel,
+      defaultBaseUrl: resolved.defaultBaseUrl,
+      subagentModel: resolved.subagentModel,
+      subagentBaseUrl: resolved.subagentBaseUrl,
+    }),
     sources: {
       defaultProvider: provider.source,
       defaultModel: model.source,

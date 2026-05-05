@@ -106,7 +106,10 @@ export async function processPendingTaskRuns(
   dependencies: PendingTaskRunDependencies = { enqueueTaskRun: enqueueQueuedTaskRun },
   options: { limit?: number } = {},
 ) {
-  const limit = Math.max(1, Math.floor(options.limit ?? 4));
+  const requestedLimit = options.limit ?? 4;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.floor(requestedLimit))
+    : 4;
   const scheduled = [];
 
   for (let index = 0; index < limit; index += 1) {

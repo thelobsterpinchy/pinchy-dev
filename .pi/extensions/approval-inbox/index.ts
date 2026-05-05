@@ -81,7 +81,10 @@ export default function approvalInbox(pi: ExtensionAPI) {
     }
 
     if (!ctx.hasUI && process.env.PINCHY_ALLOW_DESKTOP_ACTIONS !== "1") {
-      return { block: true, reason: `Pending approval required. Review ${APPROVALS_PATH} and approve the request, then retry.` };
+      return {
+        block: true,
+        reason: `Pending approval required. Review ${APPROVALS_PATH}, run /approvals to inspect pending requests, then /approve <id> or /deny <id> before retrying.`,
+      };
     }
   });
 

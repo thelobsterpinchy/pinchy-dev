@@ -142,14 +142,18 @@ test("parseDesktopUiSnapshotOutput preserves window titles containing separators
   });
 });
 
-test("desktop observer inspection tools stay read-only on non-mac platforms", async () => {
+test("desktop observer tools stay read-only on non-mac platforms", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-desktop-non-darwin-"));
   try {
     const harness = createHarness();
+    let screenshotCalls = 0;
     let activeInfoCalls = 0;
     let uiSnapshotCalls = 0;
     registerDesktopObserverTools(harness.pi, {
       platform: "linux",
+      captureMacScreenshot: async () => {
+        screenshotCalls += 1;
+      },
       activeMacAppInfo: async () => {
         activeInfoCalls += 1;
         return { appName: "Should not run", windowTitle: "" };
@@ -159,6 +163,11 @@ test("desktop observer inspection tools stay read-only on non-mac platforms", as
         return { appName: "Should not run", windowTitle: "", buttonNames: [] };
       },
     });
+
+    const screenshotTool = harness.tools.get("desktop_screenshot");
+    const screenshotResponse = await screenshotTool.execute("call-3", {}, undefined, undefined, { cwd });
+    assert.deepEqual(screenshotResponse.details, {});
+    assert.match(screenshotResponse.content[0]?.text ?? "", /macos implementation only/i);
 
     const activeAppTool = harness.tools.get("active_app_info");
     const activeAppResponse = await activeAppTool.execute("call-4", {}, undefined, undefined, { cwd });
@@ -170,6 +179,7 @@ test("desktop observer inspection tools stay read-only on non-mac platforms", as
     assert.deepEqual(uiSnapshotResponse.details, {});
     assert.match(uiSnapshotResponse.content[0]?.text ?? "", /macos implementation only/i);
 
+    assert.equal(screenshotCalls, 0);
     assert.equal(activeInfoCalls, 0);
     assert.equal(uiSnapshotCalls, 0);
     assert.equal(existsSync(join(cwd, "artifacts")), false);
@@ -245,6 +255,42 @@ test("desktop_open_app stops before launching when approval is denied", async ()
     assert.equal(response.details.approved, false);
     assert.equal(openedAppName, undefined);
     assert.match(response.content[0]?.text ?? "", /not approved/i);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("desktop_open_app stays non-interactive on non-mac platforms", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pinchy-desktop-open-app-non-darwin-"));
+  try {
+    const harness = createHarness();
+    let openedAppName: string | undefined;
+    let approvalRequested = false;
+    registerDesktopObserverTools(harness.pi, {
+      platform: "linux",
+      openMacApp: async (appName) => {
+        openedAppName = appName;
+      },
+      requestScopedApproval: async () => {
+        approvalRequested = true;
+        return true;
+      },
+    });
+
+    const tool = harness.tools.get("desktop_open_app");
+    const response = await tool.execute(
+      "call-6",
+      { appName: "Safari", reason: "Inspect a local dashboard issue" },
+      undefined,
+      undefined,
+      { cwd },
+    );
+
+    assert.equal(response.isError, undefined);
+    assert.deepEqual(response.details, {});
+    assert.equal(openedAppName, undefined);
+    assert.equal(approvalRequested, false);
+    assert.match(response.content[0]?.text ?? "", /macos implementation only/i);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

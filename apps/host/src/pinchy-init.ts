@@ -51,6 +51,19 @@ function buildDefaultRuntimeConfig() {
     defaultProvider: "",
     defaultModel: "",
     defaultThinkingLevel: "medium",
+    submarine: {
+      enabled: true,
+      pythonPath: "python3",
+      scriptModule: "submarine.serve_stdio",
+      supervisorModel: "qwen3-coder",
+      supervisorBaseUrl: "http://127.0.0.1:8080/v1",
+      agents: {
+        worker: {
+          model: "qwen3-coder",
+          baseUrl: "http://127.0.0.1:8000/v1",
+        },
+      },
+    },
   }, null, 2)}\n`;
 }
 
@@ -118,6 +131,8 @@ export function formatPinchyInitSummary(cwd: string, plan: PinchyInitPlan) {
     `[pinchy] copied: ${plan.copyPaths.length} paths`,
     `[pinchy] wrote: ${plan.writeFiles.length} files`,
     "[pinchy] Next steps:",
+    "[pinchy]   Submarine runtime is enabled for new workspaces.",
+    "[pinchy]   To roll back: set submarine.enabled false in .pinchy-runtime.json.",
     "[pinchy]   pinchy doctor",
     "[pinchy]   pinchy up",
     "[pinchy]   pinchy agent",

@@ -406,6 +406,33 @@ test("dashboard server rejects invalid settings patches without persisting earli
   });
 });
 
+test("dashboard server rejects tool retry hard stop thresholds that do not exceed the warning threshold", async () => {
+  await withServer(async ({ cwd, baseUrl }) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      toolRetryWarningThreshold: 6,
+      toolRetryHardStopThreshold: 10,
+    }, null, 2));
+
+    const response = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        toolRetryHardStopThreshold: 6,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { ok?: boolean; error?: string };
+    assert.equal(payload.ok, false);
+    assert.match(payload.error ?? "", /hard stop threshold must be greater than warning threshold/i);
+
+    assert.deepEqual(JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")), {
+      toolRetryWarningThreshold: 6,
+      toolRetryHardStopThreshold: 10,
+    });
+  });
+});
+
 test("dashboard server persists provider api keys in Pi auth storage and reports which providers have stored credentials", async () => {
   await withServer(async ({ baseUrl, agentDir }) => {
     const initial = await fetch(`${baseUrl}/api/settings`).then((response) => response.json() as Promise<{ storedProviderCredentials?: Record<string, boolean> }>);
@@ -673,6 +700,22 @@ test("dashboard server exposes memory CRUD and reports memories in api state", a
 
     const finalState = await fetch(`${baseUrl}/api/state`).then((response) => response.json() as Promise<{ memories: Array<{ id: string }> }>);
     assert.deepEqual(finalState.memories, []);
+  });
+});
+
+
+test("dashboard server returns 404 instead of crashing on malformed percent-encoded route ids", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const artifactResponse = await fetch(`${baseUrl}/artifact/%E0%A4%A`);
+    assert.equal(artifactResponse.status, 404);
+    assert.equal(await artifactResponse.text(), "not found");
+
+    const generatedToolResponse = await fetch(`${baseUrl}/api/generated-tools/%E0%A4%A`);
+    assert.equal(generatedToolResponse.status, 404);
+    assert.deepEqual(await generatedToolResponse.json(), {
+      ok: false,
+      error: "Generated tool not found.",
+    });
   });
 });
 

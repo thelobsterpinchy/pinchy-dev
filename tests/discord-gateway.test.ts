@@ -146,6 +146,27 @@ test("Discord REST client aborts hung requests after its timeout", async () => {
   );
 });
 
+test("Discord REST client triggers typing indicators", async () => {
+  const calls: Array<{ url: string; method?: string; body?: BodyInit | null }> = [];
+  const client = createDiscordRestClient({
+    token: "bot-token",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body });
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  await client.triggerTyping({ channelId: "channel-1" });
+
+  assert.deepEqual(calls, [
+    {
+      url: "https://discord.com/api/v10/channels/channel-1/typing",
+      method: "POST",
+      body: undefined,
+    },
+  ]);
+});
+
 test("discord router creates a thread, conversation, message, and run from an allowed mention", async () => {
   await withTempDir(async (cwd) => {
     const { apiClient, calls } = createMockApiClient();
@@ -280,6 +301,7 @@ test("discord router creates a conversation from a direct message without requir
   await withTempDir(async (cwd) => {
     const { apiClient, calls } = createMockApiClient();
     const acknowledgements: Array<{ channelId: string; content: string }> = [];
+    const typing: Array<{ channelId: string }> = [];
 
     const result = await routeDiscordGatewayMessage({
       id: "dm-message-1",
@@ -298,6 +320,9 @@ test("discord router creates a conversation from a direct message without requir
         acknowledgements.push(input);
         return { id: "ack-1" };
       },
+      triggerTyping: async (input) => {
+        typing.push(input);
+      },
     });
 
     assert.equal(result.action, "created_conversation");
@@ -312,6 +337,7 @@ test("discord router creates a conversation from a direct message without requir
       "createRun:conversation-1:Fix setup so Discord is easier.:user_prompt",
     ]);
     assert.deepEqual(acknowledgements, []);
+    assert.deepEqual(typing, [{ channelId: "dm-channel-1" }]);
   });
 });
 
@@ -419,6 +445,7 @@ test("discord router queues a new run in a mapped thread when no question is pen
       conversationId: "conversation-1",
     });
     const { apiClient, calls } = createMockApiClient();
+    const typing: Array<{ channelId: string }> = [];
 
     const result = await routeDiscordGatewayMessage({
       id: "message-2",
@@ -432,6 +459,9 @@ test("discord router queues a new run in a mapped thread when no question is pen
       config,
       apiClient,
       createThread: async () => ({ threadId: "unused" }),
+      triggerTyping: async (input) => {
+        typing.push(input);
+      },
     });
 
     assert.equal(result.action, "queued_run");
@@ -440,6 +470,7 @@ test("discord router queues a new run in a mapped thread when no question is pen
       "appendMessage:conversation-1:Continue with tests.",
       "createRun:conversation-1:Continue with tests.:user_prompt",
     ]);
+    assert.deepEqual(typing, [{ channelId: "thread-1" }]);
   });
 });
 

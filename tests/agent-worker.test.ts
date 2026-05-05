@@ -83,6 +83,34 @@ test("processNextQueuedRun notifies mapped Discord summaries after parent run co
   });
 });
 
+test("processNextQueuedRun starts and stops typing while a Discord-mapped run executes", async () => {
+  await withTempDir(async (cwd) => {
+    const conversation = createConversation(cwd, { title: "Discord typing demo" });
+    createRun(cwd, { conversationId: conversation.id, goal: "Answer Discord" });
+    const events: string[] = [];
+
+    await processNextQueuedRun(cwd, {
+      executeRun: async () => {
+        events.push("execute");
+        return {
+          summary: "Completed",
+          message: "Actual response",
+        };
+      },
+      startTyping: (_cwd, input) => {
+        events.push(`start:${input.conversationId}`);
+        return () => events.push(`stop:${input.conversationId}`);
+      },
+    });
+
+    assert.deepEqual(events, [
+      `start:${conversation.id}`,
+      "execute",
+      `stop:${conversation.id}`,
+    ]);
+  });
+});
+
 test("processNextQueuedRun applies pending scoped agent guidance before execution", async () => {
   await withTempDir(async (cwd) => {
     const conversation = createConversation(cwd, { title: "Queued agent guidance" });

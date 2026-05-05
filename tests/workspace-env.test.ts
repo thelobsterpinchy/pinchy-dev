@@ -35,3 +35,53 @@ test("workspace env persists local Discord secrets and applies them without over
     assert.equal(env.PINCHY_DISCORD_BOT_TOKEN, "discord-token");
   });
 });
+
+test("applyPinchyWorkspaceEnv preserves explicit empty shell values", async () => {
+  await withTempDir((cwd) => {
+    savePinchyWorkspaceEnv(cwd, {
+      PINCHY_API_TOKEN: "local-api-token",
+      PINCHY_DISCORD_BOT_TOKEN: "discord-token",
+    });
+
+    const env: NodeJS.ProcessEnv = {
+      PINCHY_API_TOKEN: "",
+    };
+    applyPinchyWorkspaceEnv(cwd, env);
+
+    assert.equal(env.PINCHY_API_TOKEN, "");
+    assert.equal(env.PINCHY_DISCORD_BOT_TOKEN, "discord-token");
+  });
+});
+
+test("savePinchyWorkspaceEnv clears existing keys when a patch value is blank or undefined", async () => {
+  await withTempDir((cwd) => {
+    savePinchyWorkspaceEnv(cwd, {
+      PINCHY_API_TOKEN: "local-api-token",
+      PINCHY_DISCORD_BOT_TOKEN: "discord-token",
+      PINCHY_DISCORD_ALLOWED_CHANNEL_IDS: "channel-1",
+    });
+
+    savePinchyWorkspaceEnv(cwd, {
+      PINCHY_API_TOKEN: undefined,
+      PINCHY_DISCORD_ALLOWED_CHANNEL_IDS: "   ",
+    });
+
+    assert.deepEqual(loadPinchyWorkspaceEnv(cwd), {
+      PINCHY_DISCORD_BOT_TOKEN: "discord-token",
+    });
+  });
+});
+
+test("workspace env round-trips escaped values saved with JSON quoting", async () => {
+  await withTempDir((cwd) => {
+    const expectedValue = 'line1\nline2\t\\path\\file"quote"'.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+
+    savePinchyWorkspaceEnv(cwd, {
+      PINCHY_ESCAPED_VALUE: expectedValue,
+    });
+
+    assert.deepEqual(loadPinchyWorkspaceEnv(cwd), {
+      PINCHY_ESCAPED_VALUE: expectedValue,
+    });
+  });
+});

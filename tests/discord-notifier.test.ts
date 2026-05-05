@@ -179,3 +179,25 @@ test("Discord notifier sends mapped-only run summaries to mapped Discord threads
     assert.equal(delivery?.externalId, "discord-message-1");
   });
 });
+
+test("Discord notifier triggers typing for mapped conversations", async () => {
+  await withTempDir(async (cwd) => {
+    upsertDiscordThreadMapping(cwd, {
+      guildId: "",
+      channelId: "dm-channel-1",
+      threadId: "dm-channel-1",
+      conversationId: "conversation-1",
+    });
+    const typing: Array<{ channelId: string }> = [];
+    const notifier = createDiscordNotifier({
+      botToken: "bot-token",
+      triggerBotTyping: async (input) => {
+        typing.push(input);
+      },
+    });
+
+    await notifier.triggerTyping(cwd, { conversationId: "conversation-1" });
+
+    assert.deepEqual(typing, [{ channelId: "dm-channel-1" }]);
+  });
+});

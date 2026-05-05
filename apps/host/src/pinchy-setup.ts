@@ -7,7 +7,7 @@ import type { Readable, Writable } from "node:stream";
 import { chromium } from "playwright";
 import { findPinchyProvider, PINCHY_PROVIDER_CATALOG } from "../../../packages/shared/src/pi-provider-catalog.js";
 import { getPinchyPackageRoot } from "./package-runtime.js";
-import type { PinchyRuntimeConfig } from "./runtime-config.js";
+import { withDefaultSubmarineRuntimeConfig, type PinchyRuntimeConfig } from "./runtime-config.js";
 import { updatePinchyRuntimeConfig } from "./pinchy-config.js";
 import { getPinchyWorkspaceEnvPath, savePinchyWorkspaceEnv } from "./workspace-env.js";
 
@@ -33,6 +33,16 @@ export type PinchySetupPlan = {
   llmSetup: {
     configuredRoles: string[];
     missingRoles: string[];
+    docsPath: string;
+    hint: string;
+  };
+  webSearchSetup: {
+    status: "exa_configured" | "fallback";
+    docsPath: string;
+    hint: string;
+  };
+  runtimeSetup: {
+    status: "pi" | "submarine";
     docsPath: string;
     hint: string;
   };
@@ -65,9 +75,26 @@ export type PinchyDiscordSetupDraft = {
   allowedUserIds?: string;
 };
 
+export type PinchyWebSearchSetupDraft = {
+  exaApiKey?: string;
+};
+
+export type PinchySubmarineSetupDraft = {
+  enabled?: boolean;
+  pythonPath?: string;
+  scriptModule?: string;
+  supervisorModel?: string;
+  supervisorBaseUrl?: string;
+  agentRole?: string;
+  agentModel?: string;
+  agentBaseUrl?: string;
+};
+
 export type PinchyInteractiveSetupDraft = {
   llm?: PinchyLlmSetupDraft;
   discord?: PinchyDiscordSetupDraft;
+  webSearch?: PinchyWebSearchSetupDraft;
+  submarine?: PinchySubmarineSetupDraft;
   persistRuntimeConfig?: boolean;
   persistWorkspaceEnvPath?: string;
 };
@@ -122,7 +149,16 @@ export function buildPinchySetupPlan(input: {
   const pathExists = input.pathExists ?? existsSync;
   const getPlaywrightBrowserPath = input.resolvePlaywrightBrowserPath ?? resolvePlaywrightBrowserPath;
   const env = input.env ?? process.env;
-  const runtimeConfig = input.runtimeConfig ?? {};
+  const inputRuntimeConfig = input.runtimeConfig ?? {};
+  const runtimeConfig = {
+    ...inputRuntimeConfig,
+    submarine: withDefaultSubmarineRuntimeConfig(inputRuntimeConfig.submarine, {
+      defaultModel: inputRuntimeConfig.defaultModel,
+      defaultBaseUrl: inputRuntimeConfig.defaultBaseUrl,
+      subagentModel: inputRuntimeConfig.subagentModel,
+      subagentBaseUrl: inputRuntimeConfig.subagentBaseUrl,
+    }),
+  };
   const playwrightCommand = input.playwrightCommand ?? resolvePlaywrightInstallCommand(getPinchyPackageRoot(), { pathExists });
   const playwrightBrowserPath = getPlaywrightBrowserPath();
   const hasPlaywrightChromium = Boolean(playwrightBrowserPath && pathExists(playwrightBrowserPath));
@@ -172,6 +208,20 @@ export function buildPinchySetupPlan(input: {
       docsPath: "docs/LOCAL_RUNTIME.md",
       hint: "Use pinchy setup interactively or pinchy config set to choose provider/model defaults. Use OpenAI-compatible providers with base URLs for local LLM servers.",
     },
+    webSearchSetup: {
+      status: env.EXA_API_KEY?.trim() ? "exa_configured" : "fallback",
+      docsPath: "docs/LOCAL_RUNTIME.md",
+      hint: env.EXA_API_KEY?.trim()
+        ? "Exa-backed internet_search is configured for orchestrator and subagent sessions."
+        : "Set EXA_API_KEY with pinchy setup or .pinchy/env to use Exa-backed internet_search; Pinchy falls back to lightweight public providers without it.",
+    },
+    runtimeSetup: {
+      status: runtimeConfig.submarine?.enabled ? "submarine" : "pi",
+      docsPath: "docs/SUBMARINE_DEFAULT_PLAN.md",
+      hint: runtimeConfig.submarine?.enabled
+        ? "Submarine runtime is enabled. Run pinchy doctor before relying on it for all workflows."
+        : "Standard Pi runtime is active. Run pinchy setup to enable the Submarine default, or keep Pi as an explicit fallback.",
+    },
     discordSetup: {
       status: missingDiscordEnv.length === 0 ? "configured" : "not_configured",
       missingEnv: missingDiscordEnv,
@@ -195,6 +245,14 @@ export function summarizePinchySetupPlan(plan: PinchySetupPlan) {
     `[pinchy] llm roles to configure: ${plan.llmSetup.missingRoles.length > 0 ? plan.llmSetup.missingRoles.join(", ") : "none"}`,
     `[pinchy] hint: ${plan.llmSetup.hint}`,
     `[pinchy] docs: ${plan.llmSetup.docsPath}`,
+    "[pinchy] Web search:",
+    `[pinchy] internet_search: ${plan.webSearchSetup.status}`,
+    `[pinchy] hint: ${plan.webSearchSetup.hint}`,
+    `[pinchy] docs: ${plan.webSearchSetup.docsPath}`,
+    "[pinchy] Runtime strategy:",
+    `[pinchy] runtime: ${plan.runtimeSetup.status}`,
+    `[pinchy] hint: ${plan.runtimeSetup.hint}`,
+    `[pinchy] docs: ${plan.runtimeSetup.docsPath}`,
     "[pinchy] Discord remote control:",
     `[pinchy] discord: ${plan.discordSetup.status}${plan.discordSetup.missingEnv.length > 0 ? ` (missing ${plan.discordSetup.missingEnv.join(", ")})` : ""}`,
     `[pinchy] hint: ${plan.discordSetup.hint}`,
@@ -303,6 +361,35 @@ export function buildDiscordEnvTemplate(draft: PinchyDiscordSetupDraft = {}) {
   return `${entries.map(([key, value]) => `export ${key}=${quoteShell(value)}`).join("\n")}\n`;
 }
 
+export function buildWebSearchEnvTemplate(draft: PinchyWebSearchSetupDraft = {}) {
+  const entries = [
+    ["EXA_API_KEY", cleanInput(draft.exaApiKey) ?? "<exa-api-key>"],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+  return `${entries.map(([key, value]) => `export ${key}=${quoteShell(value)}`).join("\n")}\n`;
+}
+
+export function buildSubmarineRuntimeConfigTemplate(draft: PinchySubmarineSetupDraft = {}) {
+  const role = cleanInput(draft.agentRole) ?? "worker";
+  const submarine = draft.enabled
+    ? {
+      enabled: true,
+      pythonPath: cleanInput(draft.pythonPath) ?? "python3",
+      scriptModule: cleanInput(draft.scriptModule) ?? "submarine.serve_stdio",
+      supervisorModel: cleanInput(draft.supervisorModel) ?? "qwen3-coder",
+      supervisorBaseUrl: cleanInput(draft.supervisorBaseUrl) ?? "http://127.0.0.1:8080/v1",
+      agents: {
+        [role]: {
+          model: cleanInput(draft.agentModel) ?? cleanInput(draft.supervisorModel) ?? "qwen3-coder",
+          baseUrl: cleanInput(draft.agentBaseUrl) ?? "http://127.0.0.1:8000/v1",
+        },
+      },
+    }
+    : {
+      enabled: false,
+    };
+  return `${JSON.stringify({ submarine }, null, 2)}\n`;
+}
+
 export function summarizeInteractiveSetupDraft(draft: PinchyInteractiveSetupDraft) {
   const lines = ["[pinchy] Interactive setup templates:"];
   if (draft.llm) {
@@ -341,8 +428,33 @@ export function summarizeInteractiveSetupDraft(draft: PinchyInteractiveSetupDraf
       discordTemplate.trimEnd(),
     );
   }
+  if (draft.webSearch) {
+    const webSearchTemplate = draft.persistWorkspaceEnvPath && draft.webSearch.exaApiKey
+      ? buildWebSearchEnvTemplate({ exaApiKey: "<saved-in-.pinchy/env>" })
+      : buildWebSearchEnvTemplate(draft.webSearch);
+    lines.push(
+      "[pinchy] Web search environment:",
+      draft.persistWorkspaceEnvPath && draft.webSearch.exaApiKey
+        ? `[pinchy] Saved Exa search settings to ${draft.persistWorkspaceEnvPath}.`
+        : "[pinchy] EXA_API_KEY enables Exa-backed internet_search for orchestrator and subagent sessions.",
+      webSearchTemplate.trimEnd(),
+    );
+  }
+  if (draft.submarine) {
+    if (draft.persistRuntimeConfig) {
+      lines.push("[pinchy] Saved runtime strategy settings to .pinchy-runtime.json.");
+    } else {
+      lines.push(
+        "[pinchy] Runtime strategy .pinchy-runtime.json:",
+        buildSubmarineRuntimeConfigTemplate(draft.submarine).trimEnd(),
+      );
+    }
+    lines.push(draft.submarine.enabled
+      ? "[pinchy] Submarine is the default runtime for new workspaces. Run pinchy doctor before dogfooding live workflows."
+      : "[pinchy] Standard Pi runtime remains active. Set submarine.enabled true later to opt back into Submarine.");
+  }
   lines.push(draft.persistWorkspaceEnvPath
-    ? "[pinchy] Pinchy setup stores Discord secrets only in the workspace-local .pinchy/env file. Do not commit it."
+    ? "[pinchy] Pinchy setup stores local secrets only in the workspace-local .pinchy/env file. Do not commit it."
     : draft.persistRuntimeConfig
       ? "[pinchy] Pinchy setup writes only non-secret runtime settings. It does not write tokens or secrets."
       : "[pinchy] Pinchy setup prints templates only. It does not write tokens or secrets.");
@@ -467,6 +579,50 @@ async function collectDiscordSetupDraft(question: PinchySetupQuestion, env: Node
   };
 }
 
+async function collectWebSearchSetupDraft(question: PinchySetupQuestion, env: NodeJS.ProcessEnv): Promise<PinchyWebSearchSetupDraft | undefined> {
+  const existingConfigured = Boolean(env.EXA_API_KEY?.trim());
+  const choice = await selectOption(question, "Web search provider", [
+    { label: "Connect Exa now", description: "save EXA_API_KEY to .pinchy/env for internet_search" },
+    { label: "Use built-in fallback providers", description: existingConfigured ? "keep existing EXA_API_KEY untouched" : "no key required; lower quality than Exa" },
+  ], existingConfigured ? 1 : 0);
+  if (choice === 1) return undefined;
+  const exaApiKey = await askWithDefault(question, "Exa API key", env.EXA_API_KEY);
+  return { exaApiKey };
+}
+
+async function collectSubmarineSetupDraft(question: PinchySetupQuestion, runtimeConfig: PinchyRuntimeConfig): Promise<PinchySubmarineSetupDraft | undefined> {
+  const choice = await selectOption(question, "Runtime strategy", [
+    { label: "Use standard Pi runtime", description: "explicit fallback; set submarine.enabled false" },
+    { label: "Enable Submarine runtime", description: "recommended default for new dogfood workspaces" },
+    { label: "Keep current runtime settings", description: runtimeConfig.submarine?.enabled ? "Submarine is currently enabled" : "standard Pi runtime is currently active" },
+  ], runtimeConfig.submarine?.enabled ? 2 : 1);
+
+  if (choice === 2) return undefined;
+  if (choice === 0) return { enabled: false };
+
+  const existingAgentEntry = Object.entries(runtimeConfig.submarine?.agents ?? {})[0];
+  const existingAgentRole = existingAgentEntry?.[0] ?? "worker";
+  const existingAgent = existingAgentEntry?.[1];
+  const pythonPath = await askWithDefault(question, "Submarine Python path", runtimeConfig.submarine?.pythonPath ?? "python3");
+  const scriptModule = await askWithDefault(question, "Submarine script module", runtimeConfig.submarine?.scriptModule ?? "submarine.serve_stdio");
+  const supervisorModel = await askWithDefault(question, "Submarine supervisor model", runtimeConfig.submarine?.supervisorModel ?? runtimeConfig.defaultModel ?? "qwen3-coder");
+  const supervisorBaseUrl = await askWithDefault(question, "Submarine supervisor base URL", runtimeConfig.submarine?.supervisorBaseUrl ?? runtimeConfig.defaultBaseUrl ?? "http://127.0.0.1:8080/v1");
+  const agentRole = await askWithDefault(question, "Submarine subagent role name", existingAgentRole);
+  const agentModel = await askWithDefault(question, "Submarine subagent model", existingAgent?.model ?? runtimeConfig.subagentModel ?? supervisorModel);
+  const agentBaseUrl = await askWithDefault(question, "Submarine subagent base URL", existingAgent?.baseUrl ?? runtimeConfig.subagentBaseUrl ?? "http://127.0.0.1:8000/v1");
+
+  return {
+    enabled: true,
+    pythonPath,
+    scriptModule,
+    supervisorModel,
+    supervisorBaseUrl,
+    agentRole,
+    agentModel,
+    agentBaseUrl,
+  };
+}
+
 function buildRuntimeConfigPatch(draft: PinchyLlmSetupDraft): Partial<PinchyRuntimeConfig> {
   const entries = Object.entries({
     defaultProvider: cleanInput(draft.defaultProvider),
@@ -493,6 +649,43 @@ function buildWorkspaceEnvPatch(draft: PinchyDiscordSetupDraft): Record<string, 
   };
 }
 
+function buildWebSearchWorkspaceEnvPatch(draft: PinchyWebSearchSetupDraft): Record<string, string | undefined> {
+  return {
+    EXA_API_KEY: cleanInput(draft.exaApiKey),
+  };
+}
+
+function buildSubmarineRuntimeConfigPatch(runtimeConfig: PinchyRuntimeConfig, draft: PinchySubmarineSetupDraft): Partial<PinchyRuntimeConfig> {
+  if (!draft.enabled) {
+    return {
+      submarine: {
+        ...(runtimeConfig.submarine ?? {}),
+        enabled: false,
+      },
+    };
+  }
+
+  const role = cleanInput(draft.agentRole) ?? "worker";
+  return {
+    submarine: {
+      ...(runtimeConfig.submarine ?? {}),
+      enabled: true,
+      pythonPath: cleanInput(draft.pythonPath) ?? "python3",
+      scriptModule: cleanInput(draft.scriptModule) ?? "submarine.serve_stdio",
+      supervisorModel: cleanInput(draft.supervisorModel) ?? runtimeConfig.defaultModel,
+      supervisorBaseUrl: cleanInput(draft.supervisorBaseUrl) ?? runtimeConfig.defaultBaseUrl,
+      agents: {
+        ...(runtimeConfig.submarine?.agents ?? {}),
+        [role]: {
+          ...(runtimeConfig.submarine?.agents?.[role] ?? {}),
+          model: cleanInput(draft.agentModel) ?? cleanInput(draft.supervisorModel) ?? runtimeConfig.subagentModel ?? runtimeConfig.defaultModel,
+          baseUrl: cleanInput(draft.agentBaseUrl) ?? runtimeConfig.subagentBaseUrl,
+        },
+      },
+    },
+  };
+}
+
 async function collectInteractiveSetupDraft(question: PinchySetupQuestion, input: {
   runtimeConfig?: PinchyRuntimeConfig;
   env?: NodeJS.ProcessEnv;
@@ -503,17 +696,23 @@ async function collectInteractiveSetupDraft(question: PinchySetupQuestion, input
     { label: "LLM runtime and Discord", description: "recommended first run" },
     { label: "LLM runtime only", description: "persist provider/model choices" },
     { label: "Discord only", description: "print env guidance without writing secrets" },
+    { label: "Web search only", description: "connect Exa for internet_search" },
+    { label: "Runtime strategy only", description: "choose standard Pi runtime or opt into Submarine" },
     { label: "Show current plan and exit", description: "no changes" },
   ], 0);
-  if (answer === 3) return undefined;
+  if (answer === 5) return undefined;
 
   const llm = answer === 0 || answer === 1 ? await collectLlmSetupDraft(question, runtimeConfig) : undefined;
   const discord = answer === 0 || answer === 2 ? await collectDiscordSetupDraft(question, env) : undefined;
-  if (!llm && !discord) return undefined;
+  const webSearch = answer === 3 ? await collectWebSearchSetupDraft(question, env) : undefined;
+  const submarine = answer === 4 ? await collectSubmarineSetupDraft(question, runtimeConfig) : undefined;
+  if (!llm && !discord && !webSearch && !submarine) return undefined;
 
   return {
     llm,
     discord,
+    webSearch,
+    submarine,
   };
 }
 
@@ -538,8 +737,16 @@ export async function runInteractivePinchySetup(input: {
       updatePinchyRuntimeConfig(input.cwd, buildRuntimeConfigPatch(draft.llm));
       draft.persistRuntimeConfig = true;
     }
+    if (input.cwd && draft.submarine) {
+      updatePinchyRuntimeConfig(input.cwd, buildSubmarineRuntimeConfigPatch(runtimeConfig, draft.submarine));
+      draft.persistRuntimeConfig = true;
+    }
     if (input.cwd && draft.discord?.botToken) {
       savePinchyWorkspaceEnv(input.cwd, buildWorkspaceEnvPatch(draft.discord));
+      draft.persistWorkspaceEnvPath = getPinchyWorkspaceEnvPath(input.cwd);
+    }
+    if (input.cwd && draft.webSearch?.exaApiKey) {
+      savePinchyWorkspaceEnv(input.cwd, buildWebSearchWorkspaceEnvPatch(draft.webSearch));
       draft.persistWorkspaceEnvPath = getPinchyWorkspaceEnvPath(input.cwd);
     }
     return summarizeInteractiveSetupDraft(draft);
@@ -553,8 +760,16 @@ export async function runInteractivePinchySetup(input: {
       updatePinchyRuntimeConfig(input.cwd, buildRuntimeConfigPatch(draft.llm));
       draft.persistRuntimeConfig = true;
     }
+    if (input.cwd && draft.submarine) {
+      updatePinchyRuntimeConfig(input.cwd, buildSubmarineRuntimeConfigPatch(runtimeConfig, draft.submarine));
+      draft.persistRuntimeConfig = true;
+    }
     if (input.cwd && draft.discord?.botToken) {
       savePinchyWorkspaceEnv(input.cwd, buildWorkspaceEnvPatch(draft.discord));
+      draft.persistWorkspaceEnvPath = getPinchyWorkspaceEnvPath(input.cwd);
+    }
+    if (input.cwd && draft.webSearch?.exaApiKey) {
+      savePinchyWorkspaceEnv(input.cwd, buildWebSearchWorkspaceEnvPatch(draft.webSearch));
       draft.persistWorkspaceEnvPath = getPinchyWorkspaceEnvPath(input.cwd);
     }
     const summary = summarizeInteractiveSetupDraft(draft);

@@ -72,3 +72,29 @@ test("loadDaemonGoalsConfig ignores invalid interval env overrides", () => {
     assert.equal(config.intervalMs, 1234);
   });
 });
+
+test("loadDaemonGoalsConfig trims config goals and drops blank or non-string entries", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-goals.json"), JSON.stringify({
+      goals: ["", "  Review retries safely.  ", null, "   ", 42, "Check promise rejection paths"],
+    }));
+
+    const config = loadDaemonGoalsConfig(cwd);
+
+    assert.deepEqual(config.goals, [
+      "Review retries safely.",
+      "Check promise rejection paths",
+    ]);
+  });
+});
+
+test("loadDaemonGoalsConfig falls back to enabled=true when config.enabled is not a boolean", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-goals.json"), JSON.stringify({ enabled: "false", goals: ["demo"] }));
+
+    const config = loadDaemonGoalsConfig(cwd);
+
+    assert.equal(config.enabled, true);
+    assert.deepEqual(config.goals, ["demo"]);
+  });
+});

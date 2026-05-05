@@ -154,6 +154,14 @@ function parseForm(body: string) {
   return Object.fromEntries(params.entries());
 }
 
+function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function getRouteParams(pathname: string, prefix: string, suffix = "") {
   if (!pathname.startsWith(prefix)) return undefined;
   const remainder = pathname.slice(prefix.length);
@@ -161,7 +169,7 @@ function getRouteParams(pathname: string, prefix: string, suffix = "") {
   const raw = suffix ? remainder.slice(0, -suffix.length) : remainder;
   const value = raw.replace(/^\//, "");
   if (!value || value.includes("/")) return undefined;
-  return decodeURIComponent(value);
+  return safeDecodeURIComponent(value);
 }
 
 async function readJsonBody(req: http.IncomingMessage) {
@@ -307,7 +315,11 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
     const activeWorkspacePath = getActiveWorkspacePath(cwd);
 
     if (req.url?.startsWith("/artifact/")) {
-      const name = decodeURIComponent(req.url.slice("/artifact/".length));
+      const name = safeDecodeURIComponent(req.url.slice("/artifact/".length));
+      if (!name) {
+        res.writeHead(404).end("not found");
+        return;
+      }
       const path = resolve(activeWorkspacePath, "artifacts", name);
       if (!existsSync(path)) {
         res.writeHead(404).end("not found");
@@ -484,6 +496,15 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
             hasRuntimeConfigChanges = true;
           }
 
+          if (
+            typeof nextRuntimeConfig.toolRetryWarningThreshold === "number"
+            && typeof nextRuntimeConfig.toolRetryHardStopThreshold === "number"
+            && nextRuntimeConfig.toolRetryHardStopThreshold <= nextRuntimeConfig.toolRetryWarningThreshold
+          ) {
+            sendJson(res, 400, { ok: false, error: "tool retry hard stop threshold must be greater than warning threshold" });
+            return;
+          }
+
           if (hasRuntimeConfigChanges) {
             updatePinchyRuntimeConfig(activeWorkspacePath, nextRuntimeConfig);
           }
@@ -635,7 +656,11 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
     }
 
     if (req.url?.startsWith("/api/generated-tools/") && req.method === "GET") {
-      const rawName = decodeURIComponent(req.url.slice("/api/generated-tools/".length));
+      const rawName = safeDecodeURIComponent(req.url.slice("/api/generated-tools/".length));
+      if (!rawName) {
+        sendJson(res, 404, { ok: false, error: "Generated tool not found." });
+        return;
+      }
       const wantsDiff = rawName.endsWith("/diff");
       const name = wantsDiff ? rawName.slice(0, -"/diff".length) : rawName;
       if (wantsDiff) {

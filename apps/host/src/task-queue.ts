@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { OrchestrationTask, PinchyTask } from "../../../packages/shared/src/contracts.js";
+import { isTaskStatus, type OrchestrationTask, type PinchyTask } from "../../../packages/shared/src/contracts.js";
 import {
   appendOrchestrationEvent,
   loadOrchestrationTasks,
@@ -14,11 +14,44 @@ export function getTasksPath(cwd: string) {
   return resolve(cwd, TASKS_FILE);
 }
 
+function normalizeTask(value: unknown): PinchyTask | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Partial<PinchyTask>;
+  if (
+    typeof candidate.id !== "string"
+    || typeof candidate.title !== "string"
+    || typeof candidate.prompt !== "string"
+    || typeof candidate.createdAt !== "string"
+    || typeof candidate.updatedAt !== "string"
+    || typeof candidate.status !== "string"
+    || !isTaskStatus(candidate.status)
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: candidate.id,
+    title: candidate.title,
+    prompt: candidate.prompt,
+    status: candidate.status,
+    createdAt: candidate.createdAt,
+    updatedAt: candidate.updatedAt,
+    source: candidate.source,
+    conversationId: candidate.conversationId,
+    runId: candidate.runId,
+    executionRunId: candidate.executionRunId,
+    dependsOnTaskIds: normalizeTaskDependencyIds(candidate.dependsOnTaskIds),
+    execution: candidate.execution,
+  };
+}
+
 export function loadTasks(cwd: string): PinchyTask[] {
   const path = getTasksPath(cwd);
   if (!existsSync(path)) return [];
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as PinchyTask[];
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((entry) => normalizeTask(entry)).filter((entry): entry is PinchyTask => Boolean(entry));
   } catch {
     return [];
   }
@@ -41,6 +74,18 @@ type DelegationPlanTaskInput = {
 
 export type TaskReprioritizationDirection = "up" | "down" | "top" | "bottom";
 
+function normalizeDelegationPlanId(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeTaskDependencyIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const normalized = value
+    .map((entry) => normalizeDelegationPlanId(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function createTaskRecord(input: {
   title: string;
   prompt: string;
@@ -58,7 +103,7 @@ function createTaskRecord(input: {
     conversationId: input.options?.conversationId,
     runId: input.options?.runId,
     executionRunId: input.options?.executionRunId,
-    dependsOnTaskIds: input.options?.dependsOnTaskIds?.filter(Boolean),
+    dependsOnTaskIds: normalizeTaskDependencyIds(input.options?.dependsOnTaskIds),
   };
 }
 
@@ -217,13 +262,13 @@ export function enqueueDelegationPlan(
       now,
       options,
     });
-    localIdToTaskId.set(task.id?.trim() || `task-${index + 1}`, created.id);
+    localIdToTaskId.set(normalizeDelegationPlanId(task.id) || `task-${index + 1}`, created.id);
     return { input: task, created };
   }).map(({ input, created }, index) => ({
     ...created,
     dependsOnTaskIds: (input.dependsOn ?? [])
-      .map((dependencyId) => dependencyId.trim())
-      .filter(Boolean)
+      .map((dependencyId) => normalizeDelegationPlanId(dependencyId))
+      .filter((dependencyId): dependencyId is string => Boolean(dependencyId))
       .map((dependencyId) => localIdToTaskId.get(dependencyId))
       .filter((value): value is string => Boolean(value)),
   } satisfies PinchyTask));

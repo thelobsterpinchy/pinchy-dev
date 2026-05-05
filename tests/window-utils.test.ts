@@ -24,3 +24,8 @@ test("parseWindowBoundsOutput returns undefined for incomplete AppleScript outpu
 test("parseWindowBoundsOutput returns undefined for non-numeric coordinates", () => {
   assert.equal(parseWindowBoundsOutput("Simulator|left|200|400|800\n"), undefined);
 });
+
+test("parseWindowBoundsOutput returns undefined for non-positive window sizes", () => {
+  assert.equal(parseWindowBoundsOutput("Simulator|100|200|0|800\n"), undefined);
+  assert.equal(parseWindowBoundsOutput("Simulator|100|200|400|-1\n"), undefined);
+});

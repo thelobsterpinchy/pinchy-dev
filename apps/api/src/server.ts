@@ -27,7 +27,21 @@ type ApiServerOptions = {
   apiToken?: string;
 };
 
+const DEFAULT_API_PORT = 4320;
+
 class InvalidJsonBodyError extends Error {}
+
+export function resolveApiServerPort(env: NodeJS.ProcessEnv = process.env) {
+  const rawPort = env.PINCHY_API_PORT?.trim();
+  if (!rawPort) return DEFAULT_API_PORT;
+
+  const parsed = Number(rawPort);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+    return DEFAULT_API_PORT;
+  }
+
+  return parsed;
+}
 
 function decodeWorkspaceOverrideHeaderValue(value: string) {
   try {
@@ -417,7 +431,7 @@ export function createApiServer({ cwd, apiToken }: ApiServerOptions) {
 
 async function main() {
   const cwd = process.env.PINCHY_CWD ?? process.cwd();
-  const port = Number(process.env.PINCHY_API_PORT ?? 4320);
+  const port = resolveApiServerPort(process.env);
   const server = createApiServer({ cwd, apiToken: process.env.PINCHY_API_TOKEN });
   server.listen(port, () => {
     console.log(`Pinchy API running at http://127.0.0.1:${port}`);

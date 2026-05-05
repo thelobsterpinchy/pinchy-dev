@@ -226,6 +226,13 @@ For browser-debugging access, Pinchy’s Playwright-backed browser tools require
 
 If Playwright is upgraded and browser tools start failing with a missing executable message, rerun that command.
 
+Suggested browser-debugging workflow:
+1. run `pinchy doctor` when Playwright Chromium readiness is in doubt
+2. run `browser_debug_scan` first to collect a screenshot, console issues, and failing requests
+3. use `browser_dom_snapshot` when you need saved HTML and visible-text evidence
+4. use `browser_execute_steps` for bounded multi-step reproduction flows
+5. save before/after artifacts and use `browser_compare_artifacts` when validating a fix
+
 ## Runtime boundary
 
 Pinchy now treats these path classes explicitly:

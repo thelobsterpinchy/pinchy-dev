@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildBingRssSearchUrl, buildOpenLibrarySearchUrl, parseBingRssResults, parseOpenLibraryResults, searchWeb } from "../apps/host/src/web-search.js";
+import { buildBingRssSearchUrl, buildExaSearchRequest, buildOpenLibrarySearchUrl, parseBingRssResults, parseOpenLibraryResults, searchWeb } from "../apps/host/src/web-search.js";
 
 test("buildBingRssSearchUrl encodes the query and count", () => {
   const url = buildBingRssSearchUrl({ query: "pinchy dev", count: 3 });
@@ -12,6 +12,17 @@ test("buildOpenLibrarySearchUrl encodes the title query and limit", () => {
   const url = buildOpenLibrarySearchUrl({ query: "Design Patterns: Elements of Reusable Object-Oriented Software", limit: 2 });
 
   assert.equal(url, "https://openlibrary.org/search.json?title=Design+Patterns%3A+Elements+of+Reusable+Object-Oriented+Software&limit=2");
+});
+
+test("buildExaSearchRequest uses the coding-agent docs default shape", () => {
+  assert.deepEqual(buildExaSearchRequest({ query: "React hooks best practices 2024", numResults: 10 }), {
+    query: "React hooks best practices 2024",
+    type: "auto",
+    numResults: 10,
+    contents: {
+      highlights: true,
+    },
+  });
 });
 
 test("parseBingRssResults extracts titles, links, and snippets", () => {
@@ -93,6 +104,53 @@ test("searchWeb returns parsed results from the provider response", async () => 
   ]);
 });
 
+test("searchWeb prefers Exa when EXA_API_KEY is configured", async () => {
+  let requestedUrl = "";
+  let requestedInit: RequestInit | undefined;
+  const results = await searchWeb(
+    { query: "React hooks best practices 2024", maxResults: 2 },
+    {
+      env: { EXA_API_KEY: "exa-key" },
+      fetch: async (url, init) => {
+        requestedUrl = String(url);
+        requestedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            results: [
+              {
+                title: "React Hooks",
+                url: "https://react.dev/reference/react/hooks",
+                highlights: ["Hooks let you use different React features from your components."],
+              },
+            ],
+          }),
+        } as Response;
+      },
+    },
+  );
+
+  assert.equal(requestedUrl, "https://api.exa.ai/search");
+  assert.equal(requestedInit?.method, "POST");
+  assert.deepEqual(requestedInit?.headers, {
+    "content-type": "application/json",
+    "x-api-key": "exa-key",
+  });
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), buildExaSearchRequest({
+    query: "React hooks best practices 2024",
+    numResults: 2,
+  }));
+  assert.equal(results.provider, "exa");
+  assert.deepEqual(results.results, [
+    {
+      title: "React Hooks",
+      url: "https://react.dev/reference/react/hooks",
+      snippet: "Hooks let you use different React features from your components.",
+    },
+  ]);
+});
+
 test("searchWeb prefers open library when it has much more relevant title matches", async () => {
   const requested: string[] = [];
   const results = await searchWeb(
@@ -129,6 +187,64 @@ test("searchWeb prefers open library when it has much more relevant title matche
   assert.equal(requested.length, 2);
   assert.equal(results.provider, "open-library");
   assert.match(results.results[0]?.title ?? "", /Design Patterns/);
+});
+
+test("searchWeb falls back to Open Library when Bing RSS fails", async () => {
+  const results = await searchWeb(
+    { query: "Design Patterns: Elements of Reusable Object-Oriented Software", maxResults: 2 },
+    {
+      fetch: async (url) => {
+        const value = String(url);
+        if (value.includes("bing.com")) {
+          return {
+            ok: false,
+            status: 503,
+            text: async () => "bing unavailable",
+          } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            docs: [
+              {
+                title: "Design Patterns. Elements of Reusable Object-oriented Software",
+                author_name: ["Erich Gamma", "Richard Helm"],
+                first_publish_year: 1994,
+                key: "/works/OL31219436W",
+              },
+            ],
+          }),
+        } as unknown as Response;
+      },
+    },
+  );
+
+  assert.equal(results.provider, "open-library");
+  assert.deepEqual(results.results, [
+    {
+      title: "Design Patterns. Elements of Reusable Object-oriented Software",
+      url: "https://openlibrary.org/works/OL31219436W",
+      snippet: "Erich Gamma, Richard Helm • first published 1994",
+    },
+  ]);
+});
+
+test("searchWeb reports Exa provider failures when configured", async () => {
+  await assert.rejects(
+    () => searchWeb(
+      { query: "pinchy dev" },
+      {
+        env: { EXA_API_KEY: "exa-key" },
+        fetch: async () => ({
+          ok: false,
+          status: 401,
+          text: async () => "invalid api key",
+        }) as Response,
+      },
+    ),
+    /Exa search provider request failed with status 401: invalid api key/,
+  );
 });
 
 test("searchWeb reranks docs-like web queries to prefer official documentation over forum noise", async () => {

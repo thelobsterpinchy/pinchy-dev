@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildLlmEnvTemplate, buildLlmRuntimeConfigTemplate, resolvePlaywrightInstallCommand, runInteractivePinchySetup, buildPinchySetupPlan, summarizePinchySetupPlan } from "../apps/host/src/pinchy-setup.js";
+import { buildLlmEnvTemplate, buildLlmRuntimeConfigTemplate, buildWebSearchEnvTemplate, resolvePlaywrightInstallCommand, runInteractivePinchySetup, buildPinchySetupPlan, summarizePinchySetupPlan } from "../apps/host/src/pinchy-setup.js";
 
 async function withTempDir(run: (cwd: string) => Promise<void> | void) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-setup-"));
@@ -35,12 +35,47 @@ test("buildPinchySetupPlan provisions Playwright and reports optional local tool
   assert.equal(plan.optionalChecks.find((check) => check.name === "tesseract")?.status, "warn");
   assert.equal(plan.optionalChecks.find((check) => check.name === "local_models")?.status, "warn");
   assert.deepEqual(plan.llmSetup.missingRoles, ["default", "orchestration", "subagent"]);
+  assert.equal(plan.runtimeSetup.status, "submarine");
+  assert.match(plan.runtimeSetup.hint, /Submarine runtime is enabled/);
+  assert.equal(plan.webSearchSetup.status, "fallback");
   assert.equal(plan.discordSetup.status, "not_configured");
   assert.deepEqual(plan.discordSetup.missingEnv, [
     "PINCHY_DISCORD_BOT_TOKEN",
     "PINCHY_API_TOKEN",
     "PINCHY_DISCORD_BOT_USER_ID",
   ]);
+});
+
+test("buildPinchySetupPlan reports Exa web search readiness from env", () => {
+  const plan = buildPinchySetupPlan({
+    playwrightCommand: { command: "/pkg/node_modules/.bin/playwright", args: ["install", "chromium"] },
+    commandExists: () => true,
+    env: {
+      EXA_API_KEY: "exa-key",
+    },
+  });
+
+  assert.equal(plan.webSearchSetup.status, "exa_configured");
+  assert.match(plan.webSearchSetup.hint, /orchestrator and subagent/);
+});
+
+test("buildPinchySetupPlan reports Submarine runtime readiness from workspace config", () => {
+  const plan = buildPinchySetupPlan({
+    playwrightCommand: { command: "/pkg/node_modules/.bin/playwright", args: ["install", "chromium"] },
+    commandExists: () => true,
+    runtimeConfig: {
+      submarine: {
+        enabled: true,
+        pythonPath: "python3",
+        scriptModule: "submarine.serve_stdio",
+        supervisorModel: "qwen3-coder",
+        supervisorBaseUrl: "http://127.0.0.1:8080/v1",
+      },
+    },
+  });
+
+  assert.equal(plan.runtimeSetup.status, "submarine");
+  assert.match(plan.runtimeSetup.hint, /Submarine runtime is enabled/);
 });
 
 test("buildPinchySetupPlan skips Playwright installation when Chromium is already installed", () => {
@@ -146,6 +181,16 @@ test("summarizePinchySetupPlan explains what setup will do and what remains opti
       docsPath: "docs/LOCAL_RUNTIME.md",
       hint: "Configure runtime providers.",
     },
+    webSearchSetup: {
+      status: "fallback",
+      docsPath: "docs/LOCAL_RUNTIME.md",
+      hint: "Set EXA_API_KEY for Exa-backed internet_search.",
+    },
+    runtimeSetup: {
+      status: "pi",
+      docsPath: "docs/SUBMARINE_DEFAULT_PLAN.md",
+      hint: "Standard Pi runtime is active.",
+    },
     discordSetup: {
       status: "not_configured",
       missingEnv: ["PINCHY_DISCORD_BOT_TOKEN", "PINCHY_DISCORD_BOT_USER_ID"],
@@ -163,10 +208,18 @@ test("summarizePinchySetupPlan explains what setup will do and what remains opti
   assert.match(text, /LLM runtime/);
   assert.match(text, /orchestration, subagent/);
   assert.match(text, /docs\/LOCAL_RUNTIME\.md/);
+  assert.match(text, /Web search/);
+  assert.match(text, /EXA_API_KEY/);
+  assert.match(text, /Runtime strategy/);
+  assert.match(text, /Standard Pi runtime/);
   assert.match(text, /Discord remote control/);
   assert.match(text, /PINCHY_DISCORD_BOT_TOKEN/);
   assert.match(text, /PINCHY_DISCORD_BOT_USER_ID/);
   assert.match(text, /docs\/DISCORD\.md/);
+});
+
+test("buildWebSearchEnvTemplate includes Exa API key setup", () => {
+  assert.equal(buildWebSearchEnvTemplate({ exaApiKey: "exa-key" }), "export EXA_API_KEY=\"exa-key\"\n");
 });
 
 test("buildLlmRuntimeConfigTemplate includes separate orchestration and subagent providers", () => {
@@ -254,6 +307,8 @@ test("runInteractivePinchySetup uses selector prompts by default in interactive 
   assert.match(summary ?? "", /"defaultProvider": "ollama"/);
   assert.match(prompts[0] ?? "", /What do you want to set up/);
   assert.match(prompts[0] ?? "", /1\. LLM runtime and Discord/);
+  assert.match(prompts[0] ?? "", /4\. Web search only/);
+  assert.match(prompts[0] ?? "", /5\. Runtime strategy only/);
   assert.match(prompts[1] ?? "", /Configure LLM runtime/);
 });
 
@@ -352,5 +407,139 @@ test("runInteractivePinchySetup saves Discord connection settings to workspace e
     assert.match(envText, /PINCHY_DISCORD_ALLOWED_GUILD_IDS="guild-1"/);
     assert.match(envText, /PINCHY_DISCORD_ALLOWED_CHANNEL_IDS="channel-1"/);
     assert.match(envText, /PINCHY_DISCORD_BOT_USER_ID="bot-user-1"/);
+  });
+});
+
+test("runInteractivePinchySetup saves Exa search settings to workspace env", async () => {
+  await withTempDir(async (cwd) => {
+    const answers = [
+      "4",
+      "1",
+      "exa-key-secret",
+    ];
+
+    const summary = await runInteractivePinchySetup({
+      cwd,
+      question: async () => answers.shift() ?? "",
+    });
+
+    const envText = readFileSync(join(cwd, ".pinchy/env"), "utf8");
+    assert.match(summary ?? "", /Saved Exa search settings/);
+    assert.doesNotMatch(summary ?? "", /exa-key-secret/);
+    assert.match(summary ?? "", /EXA_API_KEY="<saved-in-\.pinchy\/env>"/);
+    assert.match(envText, /EXA_API_KEY="exa-key-secret"/);
+  });
+});
+
+test("runInteractivePinchySetup enables Submarine runtime from setup", async () => {
+  await withTempDir(async (cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), `${JSON.stringify({
+      defaultProvider: "openai",
+      defaultModel: "qwen3-coder",
+      autoDeleteEnabled: true,
+    }, null, 2)}\n`);
+    const answers = [
+      "5",
+      "2",
+      "python3.12",
+      "submarine.serve_stdio",
+      "qwen3-coder",
+      "http://127.0.0.1:8080/v1",
+      "worker",
+      "qwen3-coder",
+      "http://127.0.0.1:8000/v1",
+    ];
+
+    const summary = await runInteractivePinchySetup({
+      cwd,
+      runtimeConfig: {
+        defaultProvider: "openai",
+        defaultModel: "qwen3-coder",
+        autoDeleteEnabled: true,
+      },
+      question: async () => answers.shift() ?? "",
+    });
+
+    const persisted = JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")) as any;
+    assert.match(summary ?? "", /Saved runtime strategy settings/);
+    assert.equal(persisted.autoDeleteEnabled, true);
+    assert.equal(persisted.submarine.enabled, true);
+    assert.equal(persisted.submarine.pythonPath, "python3.12");
+    assert.equal(persisted.submarine.scriptModule, "submarine.serve_stdio");
+    assert.equal(persisted.submarine.supervisorModel, "qwen3-coder");
+    assert.equal(persisted.submarine.supervisorBaseUrl, "http://127.0.0.1:8080/v1");
+    assert.equal(persisted.submarine.agents.worker.model, "qwen3-coder");
+    assert.equal(persisted.submarine.agents.worker.baseUrl, "http://127.0.0.1:8000/v1");
+    assert.equal(persisted.submarine.supervisorApiKey, undefined);
+  });
+});
+
+test("runInteractivePinchySetup recommends Submarine as the default runtime strategy", async () => {
+  await withTempDir(async (cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), `${JSON.stringify({
+      defaultProvider: "openai",
+      defaultModel: "qwen3-coder",
+    }, null, 2)}\n`);
+    const answers = [
+      "5",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ];
+
+    const summary = await runInteractivePinchySetup({
+      cwd,
+      runtimeConfig: {
+        defaultProvider: "openai",
+        defaultModel: "qwen3-coder",
+      },
+      question: async () => answers.shift() ?? "",
+    });
+
+    const persisted = JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")) as any;
+    assert.match(summary ?? "", /Saved runtime strategy settings/);
+    assert.match(summary ?? "", /Submarine is the default runtime for new workspaces/);
+    assert.equal(persisted.submarine.enabled, true);
+    assert.equal(persisted.submarine.pythonPath, "python3");
+    assert.equal(persisted.submarine.scriptModule, "submarine.serve_stdio");
+    assert.equal(persisted.submarine.supervisorModel, "qwen3-coder");
+    assert.equal(persisted.submarine.supervisorBaseUrl, "http://127.0.0.1:8080/v1");
+    assert.equal(persisted.submarine.agents.worker.model, "qwen3-coder");
+    assert.equal(persisted.submarine.agents.worker.baseUrl, "http://127.0.0.1:8000/v1");
+  });
+});
+
+test("runInteractivePinchySetup can keep the standard Pi runtime as explicit fallback", async () => {
+  await withTempDir(async (cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), `${JSON.stringify({
+      defaultProvider: "openai",
+      defaultModel: "qwen3-coder",
+      submarine: { enabled: true, supervisorModel: "old-model" },
+    }, null, 2)}\n`);
+    const answers = [
+      "5",
+      "1",
+    ];
+
+    const summary = await runInteractivePinchySetup({
+      cwd,
+      runtimeConfig: {
+        defaultProvider: "openai",
+        defaultModel: "qwen3-coder",
+        submarine: { enabled: true, supervisorModel: "old-model" },
+      },
+      question: async () => answers.shift() ?? "",
+    });
+
+    const persisted = JSON.parse(readFileSync(join(cwd, ".pinchy-runtime.json"), "utf8")) as any;
+    assert.match(summary ?? "", /Saved runtime strategy settings/);
+    assert.equal(persisted.defaultProvider, "openai");
+    assert.equal(persisted.submarine.enabled, false);
+    assert.equal(persisted.submarine.supervisorModel, "old-model");
   });
 });

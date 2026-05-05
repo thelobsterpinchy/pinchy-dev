@@ -12,8 +12,15 @@ function parseEnvLine(line: string) {
   if (!match) return undefined;
   const [, key, rawValue = ""] = match;
   const value = rawValue.trim();
-  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
-    return { key, value: value.slice(1, -1).replace(/\\"/g, "\"").replace(/\\\\/g, "\\") };
+  if (value.startsWith("\"") && value.endsWith("\"")) {
+    try {
+      return { key, value: JSON.parse(value) as string };
+    } catch {
+      return { key, value: value.slice(1, -1).replace(/\\"/g, "\"").replace(/\\\\/g, "\\") };
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return { key, value: value.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\") };
   }
   return { key, value };
 }
@@ -38,7 +45,10 @@ export function savePinchyWorkspaceEnv(cwd: string, patch: Record<string, string
   const current = loadPinchyWorkspaceEnv(cwd);
   const next = { ...current };
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined || value.trim() === "") continue;
+    if (value === undefined || value.trim() === "") {
+      delete next[key];
+      continue;
+    }
     next[key] = value.trim();
   }
 
@@ -63,7 +73,7 @@ export function mergePinchyWorkspaceEnv(cwd: string, env: NodeJS.ProcessEnv = pr
 export function applyPinchyWorkspaceEnv(cwd: string, env: NodeJS.ProcessEnv = process.env) {
   const workspaceEnv = loadPinchyWorkspaceEnv(cwd);
   for (const [key, value] of Object.entries(workspaceEnv)) {
-    if (!env[key]) {
+    if (env[key] === undefined) {
       env[key] = value;
     }
   }

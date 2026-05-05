@@ -22,6 +22,7 @@ export type DiscordGatewayRuntime = {
   apiClient: DiscordGatewayApiClient;
   createThread(input: { channelId: string; messageId: string; name: string }): Promise<{ threadId: string }>;
   sendMessage?: (input: { channelId: string; content: string }) => Promise<{ id: string }>;
+  triggerTyping?: (input: { channelId: string }) => Promise<void>;
 };
 
 export type DiscordGatewayRouteResult =
@@ -170,6 +171,14 @@ async function acknowledge(runtime: DiscordGatewayRuntime, channelId: string, co
   }
 }
 
+async function triggerTyping(runtime: DiscordGatewayRuntime, channelId: string) {
+  try {
+    await runtime.triggerTyping?.({ channelId });
+  } catch (error) {
+    console.error("[pinchy-discord] typing indicator failed", error);
+  }
+}
+
 export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage, runtime: DiscordGatewayRuntime): Promise<DiscordGatewayRouteResult> {
   if (message.isBot) {
     return { action: "ignored", reason: "bot message" };
@@ -244,6 +253,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
       goal: prompt,
       kind: "user_prompt",
     });
+    await triggerTyping(runtime, mappedThreadId);
     if (!isDirectMessageMapping(mapping) && shouldAcknowledgeQueuedWork(prompt)) {
       await acknowledge(runtime, mappedThreadId, `Queued the next Pinchy objective.\n\nRun: ${run.id}\nGoal: ${run.goal}`);
     }
@@ -275,6 +285,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
       goal: prompt,
       kind: "user_prompt",
     });
+    await triggerTyping(runtime, message.channelId);
 
     return {
       action: "created_conversation",
@@ -316,6 +327,7 @@ export async function routeDiscordGatewayMessage(message: DiscordGatewayMessage,
     goal: prompt,
     kind: "user_prompt",
   });
+  await triggerTyping(runtime, thread.threadId);
   if (shouldAcknowledgeQueuedWork(prompt)) {
     await acknowledge(runtime, thread.threadId, [
       "Pinchy is on it.",

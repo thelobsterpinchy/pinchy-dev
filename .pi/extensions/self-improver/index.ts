@@ -9,6 +9,7 @@ const BASE_PROMPT = [
   "Focus on docs, prompts, skills, extensions, tests, guardrails, and small refactors.",
   "Avoid edited files with unrelated dirty-worktree changes.",
   "Validate any changes when practical.",
+  "When changing behavior, prefer a test-first or regression-test-first workflow.",
   "If no safe improvement is warranted, explain why and stop.",
   "Do not weaken safety or expand beyond this repo unless explicitly instructed.",
   "Use /skill:self-improvement-loop if helpful.",

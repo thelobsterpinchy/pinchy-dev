@@ -16,11 +16,13 @@ import { applyRunOutcome } from "./run-transition-manager.js";
 type WorkerDependencies = {
   executeRun: (run: Run) => Promise<PiRunExecutionResult | LegacyRunExecutionResult>;
   sendRunSummary?: (cwd: string, input: { conversationId: string; runId: string; summary: string; mappedOnly: boolean }) => Promise<NotificationDelivery | undefined>;
+  startTyping?: (cwd: string, input: { conversationId?: string }) => () => void;
 };
 
 type ResumeDependencies = {
   resumeRun: (run: Run, reply: string) => Promise<PiRunExecutionResult | LegacyRunExecutionResult>;
   sendRunSummary?: (cwd: string, input: { conversationId: string; runId: string; summary: string; mappedOnly: boolean }) => Promise<NotificationDelivery | undefined>;
+  startTyping?: (cwd: string, input: { conversationId?: string }) => () => void;
 };
 
 type DeliveryDependencies = {
@@ -190,6 +192,7 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
     details: { executionMode: "queued", runKind: runningRun.kind },
   });
 
+  const stopTyping = dependencies.startTyping?.(cwd, { conversationId: runningRun.conversationId }) ?? (() => undefined);
   try {
     const { guidanceText } = consumePendingGuidanceForRun(cwd, runningRun);
     const result = await dependencies.executeRun(applyGuidanceToRun(runningRun, guidanceText));
@@ -312,6 +315,7 @@ async function executeClaimedRun(cwd: string, runningRun: Run, dependencies: Wor
     }
     throw error;
   } finally {
+    stopTyping();
     clearRunContext(cwd);
   }
 }
@@ -452,6 +456,7 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
     details: { executionMode: "resumed", runKind: runningRun.kind },
   });
 
+  const stopTyping = dependencies.startTyping?.(cwd, { conversationId: runningRun.conversationId }) ?? (() => undefined);
   try {
     const { guidanceText } = consumePendingGuidanceForRun(cwd, runningRun);
     const result = await dependencies.resumeRun(runningRun, applyGuidanceToReply(resumable.reply, guidanceText));
@@ -574,6 +579,7 @@ export async function processNextResumableRun(cwd: string, dependencies: ResumeD
     }
     throw error;
   } finally {
+    stopTyping();
     clearRunContext(cwd);
   }
 }
@@ -619,11 +625,15 @@ async function defaultSendRunSummary(cwd: string, input: { conversationId: strin
   return defaultDiscordNotifier.sendRunSummary(cwd, input);
 }
 
+function defaultStartTyping(cwd: string, input: { conversationId?: string }) {
+  return defaultDiscordNotifier.startTyping(cwd, input);
+}
+
 async function runInteractiveLane(cwd: string, intervalMs: number, concurrency: number, once: boolean) {
   do {
-    const resumed = await processNextResumableRun(cwd, { resumeRun: defaultResumeRun, sendRunSummary: defaultSendRunSummary });
+    const resumed = await processNextResumableRun(cwd, { resumeRun: defaultResumeRun, sendRunSummary: defaultSendRunSummary, startTyping: defaultStartTyping });
     const delivered = resumed ? undefined : await processNextPendingQuestionDelivery(cwd, { dispatchQuestion: defaultDispatchQuestion });
-    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun, sendRunSummary: defaultSendRunSummary }, { concurrency, lane: "interactive" });
+    const processedRuns = resumed || delivered ? [] : await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun, sendRunSummary: defaultSendRunSummary, startTyping: defaultStartTyping }, { concurrency, lane: "interactive" });
     const processed = resumed ?? (delivered?.delivery.status === "failed" ? undefined : delivered) ?? processedRuns[0];
     if (once) return;
     if (!processed) await sleep(intervalMs);
@@ -632,7 +642,7 @@ async function runInteractiveLane(cwd: string, intervalMs: number, concurrency: 
 
 async function runBackgroundLane(cwd: string, intervalMs: number, concurrency: number, once: boolean) {
   do {
-    const processedRuns = await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun, sendRunSummary: defaultSendRunSummary }, { concurrency, lane: "background" });
+    const processedRuns = await processAvailableQueuedRuns(cwd, { executeRun: defaultExecuteRun, sendRunSummary: defaultSendRunSummary, startTyping: defaultStartTyping }, { concurrency, lane: "background" });
     const processed = processedRuns[0];
     if (once) return;
     if (!processed) await sleep(intervalMs);

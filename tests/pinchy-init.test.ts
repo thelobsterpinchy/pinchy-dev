@@ -14,6 +14,15 @@ test("buildPinchyInitPlan scaffolds packaged defaults and gitignore lines for a 
   assert.ok(plan.writeFiles.some((entry) => entry.path === "/work/demo/.pinchy-runtime.json"));
   assert.ok(plan.writeFiles.some((entry) => entry.path === "/work/demo/.pinchy-goals.json"));
 
+  const runtimeConfig = plan.writeFiles.find((entry) => entry.path === "/work/demo/.pinchy-runtime.json");
+  assert.ok(runtimeConfig);
+  const parsedRuntimeConfig = JSON.parse(runtimeConfig.content);
+  assert.equal(parsedRuntimeConfig.submarine.enabled, true);
+  assert.equal(parsedRuntimeConfig.submarine.pythonPath, "python3");
+  assert.equal(parsedRuntimeConfig.submarine.scriptModule, "submarine.serve_stdio");
+  assert.equal(parsedRuntimeConfig.submarine.supervisorModel, "qwen3-coder");
+  assert.equal(parsedRuntimeConfig.submarine.agents.worker.model, "qwen3-coder");
+
   const watchConfig = plan.writeFiles.find((entry) => entry.path === "/work/demo/.pinchy-watch.json");
   assert.ok(watchConfig);
   assert.match(
@@ -44,6 +53,8 @@ test("formatPinchyInitSummary explains next steps after initialization", () => {
   assert.match(summary, /pinchy doctor/);
   assert.match(summary, /pinchy up/);
   assert.match(summary, /pinchy agent/);
+  assert.match(summary, /Submarine runtime is enabled for new workspaces/);
+  assert.match(summary, /submarine\.enabled false/);
 });
 
 test("buildPinchyInitPlan respects existing workspace files and avoids duplicate gitignore lines", () => {

@@ -81,6 +81,8 @@ Suggested workflow:
 4. treat provider outages, rate limits, and result relevance as possible failure modes
 5. use the saved JSON artifact when you want a durable record of what the search returned; it is also indexed in `artifacts/index.json`
 
+Set `EXA_API_KEY` in `.pinchy/env` or the process environment to use Exa-backed search. The same `internet_search` tool is loaded from `.pi/extensions` for orchestrator and subagent sessions.
+
 ## Local app debugging
 
 Useful tools:
