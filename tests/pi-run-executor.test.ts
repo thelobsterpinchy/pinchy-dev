@@ -162,6 +162,57 @@ test("Pi run executor overrides the resolved model baseUrl when a local endpoint
   ]);
 });
 
+test("Pi run executor uses orchestration-specific provider model and baseUrl when configured", async () => {
+  const calls: string[] = [];
+  const executor = createPiRunExecutor({
+    agentDir: "/agent-dir",
+    loadRuntimeConfig: () => ({
+      defaultProvider: "openai-codex",
+      defaultModel: "gpt-5.4",
+      defaultBaseUrl: "https://api.openai.com/v1",
+      orchestrationProvider: "ollama",
+      orchestrationModel: "qwen3-coder",
+      orchestrationBaseUrl: "http://127.0.0.1:11434/v1",
+    }),
+    resolveModel: (provider, modelId) => {
+      calls.push(`resolveModel:${provider}/${modelId}`);
+      return { provider, id: modelId, baseUrl: "https://old.example.invalid" };
+    },
+    createSession: async ({ model }) => {
+      calls.push(`model:${JSON.stringify(model)}`);
+      return {
+        session: {
+          sessionFile: "/tmp/pi-session-orchestration-endpoint.json",
+          async prompt() {
+            return undefined;
+          },
+          async followUp() {
+            return undefined;
+          },
+        },
+      };
+    },
+  });
+
+  await executor.executeRun({
+    cwd: "/repo",
+    run: {
+      id: "run-orchestration-endpoint",
+      conversationId: "conversation-1",
+      goal: "Use the orchestration endpoint",
+      kind: "user_prompt",
+      status: "queued",
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "resolveModel:ollama/qwen3-coder",
+    'model:{"provider":"ollama","id":"qwen3-coder","baseUrl":"http://127.0.0.1:11434/v1"}',
+  ]);
+});
+
 test("Pi run executor starts a fresh session for strictly conversational follow-up user prompts", async () => {
   const calls: string[] = [];
   const sessionManagerFactory = {

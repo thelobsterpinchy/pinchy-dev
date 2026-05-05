@@ -7,6 +7,12 @@ export function summarizePinchyConfigView(config: PinchyRuntimeConfig) {
     `[pinchy] defaultModel: ${config.defaultModel ?? ""}`,
     `[pinchy] defaultThinkingLevel: ${config.defaultThinkingLevel ?? ""}`,
     `[pinchy] defaultBaseUrl: ${config.defaultBaseUrl ?? ""}`,
+    `[pinchy] orchestrationProvider: ${config.orchestrationProvider ?? ""}`,
+    `[pinchy] orchestrationModel: ${config.orchestrationModel ?? ""}`,
+    `[pinchy] orchestrationBaseUrl: ${config.orchestrationBaseUrl ?? ""}`,
+    `[pinchy] subagentProvider: ${config.subagentProvider ?? ""}`,
+    `[pinchy] subagentModel: ${config.subagentModel ?? ""}`,
+    `[pinchy] subagentBaseUrl: ${config.subagentBaseUrl ?? ""}`,
   ].join("\n") + "\n";
 }
 

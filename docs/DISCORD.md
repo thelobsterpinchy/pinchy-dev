@@ -19,6 +19,7 @@ export PINCHY_DISCORD_BOT_TOKEN="..."
 export PINCHY_API_TOKEN="local-secret-token"
 export PINCHY_DISCORD_ALLOWED_GUILD_IDS="1234567890"
 export PINCHY_DISCORD_ALLOWED_CHANNEL_IDS="2345678901"
+export PINCHY_DISCORD_BOT_USER_ID="4567890123"
 # Optional user allowlist:
 export PINCHY_DISCORD_ALLOWED_USER_IDS="3456789012"
 ```
@@ -32,6 +33,8 @@ pinchy logs discord
 ```
 
 `pinchy up` starts the Discord gateway only when `PINCHY_DISCORD_BOT_TOKEN` is set. When `PINCHY_API_TOKEN` is set, Pinchy's API requires `Authorization: Bearer <token>` for every route except `GET /health`; the dashboard and Discord gateway forward it automatically from the environment.
+
+`PINCHY_DISCORD_BOT_USER_ID` is the bot user's numeric Discord ID. Pinchy uses it to make sure top-level channel messages wake Pinchy only when they mention your bot, not any arbitrary Discord user.
 
 ## Usage
 

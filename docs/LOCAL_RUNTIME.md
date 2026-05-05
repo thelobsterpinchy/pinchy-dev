@@ -38,7 +38,7 @@ pinchy up
 pinchy agent
 ```
 
-`pinchy setup` installs Playwright Chromium for browser tooling and reminds you about optional local tools.
+`pinchy setup` installs Playwright Chromium for browser tooling, checks optional local tools, and offers an interactive setup helper when run in a terminal. The helper prints copyable templates for Discord remote control and LLM runtime routing. It does not write secrets or tokens.
 
 `pinchy doctor` checks workspace initialization, core config presence, Playwright browser readiness, local model provider availability, and optional local tooling such as `cliclick` and `tesseract`.
 
@@ -80,6 +80,13 @@ For quick inspection or updates, you can also use the CLI instead of editing the
 pinchy config view
 pinchy config set defaultProvider ollama
 pinchy config set defaultModel qwen3-coder
+pinchy config set defaultBaseUrl http://127.0.0.1:11434/v1
+pinchy config set orchestrationProvider ollama
+pinchy config set orchestrationModel qwen3-coder
+pinchy config set orchestrationBaseUrl http://127.0.0.1:11434/v1
+pinchy config set subagentProvider ollama
+pinchy config set subagentModel deepseek-coder
+pinchy config set subagentBaseUrl http://127.0.0.1:1234/v1
 ```
 
 `pinchy config view` is a quick summary of the core connection defaults that Pinchy resolves for the active workspace.
@@ -90,6 +97,12 @@ Supported `pinchy config set` keys:
 - `defaultModel`
 - `defaultThinkingLevel`
 - `defaultBaseUrl`
+- `orchestrationProvider`
+- `orchestrationModel`
+- `orchestrationBaseUrl`
+- `subagentProvider`
+- `subagentModel`
+- `subagentBaseUrl`
 - `autoDeleteEnabled` — boolean (`true` / `false`)
 - `autoDeleteDays` — positive integer
 - `toolRetryWarningThreshold` — positive integer
@@ -106,6 +119,12 @@ Example:
   "defaultModel": "gpt-5.4",
   "defaultThinkingLevel": "medium",
   "defaultBaseUrl": "http://127.0.0.1:11434/v1",
+  "orchestrationProvider": "ollama",
+  "orchestrationModel": "qwen3-coder",
+  "orchestrationBaseUrl": "http://127.0.0.1:11434/v1",
+  "subagentProvider": "openai",
+  "subagentModel": "deepseek-coder",
+  "subagentBaseUrl": "http://127.0.0.1:1234/v1",
   "modelOptions": {
     "temperature": 0.2,
     "topP": 0.95,
@@ -133,6 +152,12 @@ Environment defaults are also supported:
 - `PINCHY_DEFAULT_MODEL`
 - `PINCHY_DEFAULT_THINKING_LEVEL`
 - `PINCHY_DEFAULT_BASE_URL`
+- `PINCHY_ORCHESTRATION_PROVIDER`
+- `PINCHY_ORCHESTRATION_MODEL`
+- `PINCHY_ORCHESTRATION_BASE_URL`
+- `PINCHY_SUBAGENT_PROVIDER`
+- `PINCHY_SUBAGENT_MODEL`
+- `PINCHY_SUBAGENT_BASE_URL`
 
 Pinchy resolves runtime defaults for the active workspace in this order:
 1. workspace `.pinchy-runtime.json`
@@ -143,7 +168,7 @@ Pinchy resolves runtime defaults for the active workspace in this order:
 This keeps the workspace settings screen authoritative for the active repo while still allowing machine-level defaults where supported.
 
 Only the core provider/model/thinking defaults participate in Pi-agent global fallback resolution.
-`defaultBaseUrl` is the only additional field here with environment-default fallback support.
+Role-specific LLM routing lets you use one server/provider for the main orchestration thread and another for delegated subagents. If a role-specific provider, model, or base URL is unset, Pinchy falls back to the corresponding `default*` value.
 Other `.pinchy-runtime.json` fields such as `modelOptions`, `savedModelConfigs`, `autoDeleteEnabled`, `autoDeleteDays`, `toolRetryWarningThreshold`, `toolRetryHardStopThreshold`, and `dangerModeEnabled` remain workspace-local.
 
 These defaults are intended for portable runtime preferences and local guardrails only.

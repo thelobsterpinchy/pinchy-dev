@@ -10,6 +10,12 @@ test("LOCAL_RUNTIME documents the supported pinchy config set keys and workspace
   assert.match(doc, /`defaultModel`/);
   assert.match(doc, /`defaultThinkingLevel`/);
   assert.match(doc, /`defaultBaseUrl`/);
+  assert.match(doc, /`orchestrationProvider`/);
+  assert.match(doc, /`orchestrationModel`/);
+  assert.match(doc, /`orchestrationBaseUrl`/);
+  assert.match(doc, /`subagentProvider`/);
+  assert.match(doc, /`subagentModel`/);
+  assert.match(doc, /`subagentBaseUrl`/);
   assert.match(doc, /`autoDeleteEnabled`/);
   assert.match(doc, /`autoDeleteDays`/);
   assert.match(doc, /`toolRetryWarningThreshold`/);
@@ -21,6 +27,7 @@ test("LOCAL_RUNTIME documents the supported pinchy config set keys and workspace
   assert.match(doc, /2\. `PINCHY_DEFAULT_\*` environment defaults/);
   assert.match(doc, /3\. Pi agent global settings for `defaultProvider`, `defaultModel`, and `defaultThinkingLevel`/);
   assert.match(doc, /`defaultBaseUrl` currently falls back through workspace config and `PINCHY_DEFAULT_BASE_URL`, but not Pi agent global settings/);
+  assert.match(doc, /Role-specific LLM routing lets you use one server\/provider for the main orchestration thread and another for delegated subagents/);
   assert.match(doc, /`dangerModeEnabled` is workspace-local and should only be enabled for sandboxed local debugging/);
   assert.match(doc, /Do not put secrets, auth tokens, or private session state in `.pinchy-runtime.json`/);
 });

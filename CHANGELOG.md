@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3
+
+- add interactive `pinchy setup` templates for Discord remote control and LLM runtime routing without writing secrets
+- support separate orchestration and subagent provider, model, and base URL runtime settings through workspace config, environment variables, and the dashboard settings API
+- route main orchestration runs and delegated subagents through the correct role-specific model selection
+- require exact Discord bot mentions for top-level Discord conversation creation so arbitrary mentions do not wake Pinchy when the bot user ID is missing
+- bump the package release to `0.3.3`
+
 ## 0.3.2
 
 - harden queued task execution so tasks stay recoverable until their delegated child run is created

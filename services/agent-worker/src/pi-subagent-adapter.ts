@@ -6,6 +6,7 @@ import { buildRuntimeConfigSignature } from "../../../apps/host/src/runtime-conf
 import { loadPinchyRuntimeConfig } from "../../../apps/host/src/runtime-config.js";
 import type { Run } from "../../../packages/shared/src/contracts.js";
 import { createRuntimeModelSettingsResourceLoader } from "./pi-model-runtime-settings.js";
+import { selectRuntimeModel } from "./runtime-model-selection.js";
 import type { SubagentAdapter, SubagentExecutionInput, SubagentExecutionResult, SubagentQueueFollowUpInput, SubagentResumeInput, SubagentSteerInput } from "./subagent-adapter.js";
 import { buildRunExecutionPrompt, shouldReuseConversationSessionForRun } from "./run-orchestration-prompt.js";
 import { PinchySessionManager } from "./pinchy-session-manager.js";
@@ -139,22 +140,18 @@ export class PiSubagentAdapter implements SubagentAdapter {
 
   private buildSessionDefaults(cwd: string) {
     const runtimeConfig = this.loadRuntimeConfig(cwd);
-    const sessionModel = runtimeConfig.subagentModel || runtimeConfig.defaultModel;
-    const sessionProvider = runtimeConfig.subagentModel !== undefined 
-      ? (runtimeConfig.defaultProvider || "openai")
-      : runtimeConfig.defaultProvider;
-    
-    const resolvedModel = sessionProvider && sessionModel
-      ? this.resolveModel(sessionProvider, sessionModel, this.agentDir)
+    const selection = selectRuntimeModel(runtimeConfig, "subagent");
+    const resolvedModel = selection.provider && selection.modelId
+      ? this.resolveModel(selection.provider, selection.modelId, this.agentDir)
       : undefined;
-    const model = runtimeConfig.defaultBaseUrl && resolvedModel && typeof resolvedModel === "object"
-      ? { ...resolvedModel, baseUrl: runtimeConfig.defaultBaseUrl }
+    const model = selection.baseUrl && resolvedModel && typeof resolvedModel === "object"
+      ? { ...resolvedModel, baseUrl: selection.baseUrl }
       : resolvedModel;
 
     return {
       model,
-      thinkingLevel: runtimeConfig.defaultThinkingLevel,
-      modelOptions: runtimeConfig.modelOptions,
+      thinkingLevel: selection.thinkingLevel,
+      modelOptions: selection.modelOptions,
       runtimeConfigSignature: buildRuntimeConfigSignature(runtimeConfig),
     };
   }

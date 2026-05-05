@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { PinchyRuntimeConfig } from "./runtime-config.js";
 
-export const PINCHY_CONFIG_KEYS = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "defaultBaseUrl", "autoDeleteEnabled", "autoDeleteDays", "toolRetryWarningThreshold", "toolRetryHardStopThreshold", "dangerModeEnabled"] as const;
+export const PINCHY_CONFIG_KEYS = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "defaultBaseUrl", "orchestrationProvider", "orchestrationModel", "orchestrationBaseUrl", "subagentProvider", "subagentModel", "subagentBaseUrl", "autoDeleteEnabled", "autoDeleteDays", "toolRetryWarningThreshold", "toolRetryHardStopThreshold", "dangerModeEnabled"] as const;
 export type PinchyConfigKey = typeof PINCHY_CONFIG_KEYS[number];
 
 type RuntimeConfigValue = string | boolean | number;

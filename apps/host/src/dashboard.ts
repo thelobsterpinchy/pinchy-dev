@@ -185,6 +185,12 @@ function readDashboardSettings(cwd: string, agentDir: string) {
     defaultModel: effective.defaultModel,
     defaultThinkingLevel: effective.defaultThinkingLevel,
     defaultBaseUrl: effective.defaultBaseUrl,
+    orchestrationProvider: effective.orchestrationProvider,
+    orchestrationModel: effective.orchestrationModel,
+    orchestrationBaseUrl: effective.orchestrationBaseUrl,
+    subagentProvider: effective.subagentProvider,
+    subagentModel: effective.subagentModel,
+    subagentBaseUrl: effective.subagentBaseUrl,
     modelOptions: effective.modelOptions,
     savedModelConfigs: effective.savedModelConfigs ?? [],
     storedProviderCredentials: buildStoredProviderCredentials(agentDir),
@@ -198,6 +204,12 @@ function readDashboardSettings(cwd: string, agentDir: string) {
       defaultModel: readPinchyConfigValue(cwd, "defaultModel"),
       defaultThinkingLevel: readPinchyConfigValue(cwd, "defaultThinkingLevel") as ThinkingLevel | undefined,
       defaultBaseUrl: readPinchyConfigValue(cwd, "defaultBaseUrl"),
+      orchestrationProvider: readPinchyConfigValue(cwd, "orchestrationProvider"),
+      orchestrationModel: readPinchyConfigValue(cwd, "orchestrationModel"),
+      orchestrationBaseUrl: readPinchyConfigValue(cwd, "orchestrationBaseUrl"),
+      subagentProvider: readPinchyConfigValue(cwd, "subagentProvider"),
+      subagentModel: readPinchyConfigValue(cwd, "subagentModel"),
+      subagentBaseUrl: readPinchyConfigValue(cwd, "subagentBaseUrl"),
       modelOptions: normalizeRuntimeModelOptions(workspaceConfig.modelOptions),
       savedModelConfigs: normalizeSavedModelConfigs(workspaceConfig.savedModelConfigs) ?? [],
       autoDeleteEnabled: readPinchyConfigValue(cwd, "autoDeleteEnabled") as boolean | undefined,
@@ -395,6 +407,30 @@ export function createDashboardServer({ cwd, port, controlPlaneApiBaseUrl = "htt
           }
           if (typeof payload.defaultBaseUrl === "string") {
             nextRuntimeConfig.defaultBaseUrl = payload.defaultBaseUrl.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.orchestrationProvider === "string") {
+            nextRuntimeConfig.orchestrationProvider = payload.orchestrationProvider.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.orchestrationModel === "string") {
+            nextRuntimeConfig.orchestrationModel = payload.orchestrationModel.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.orchestrationBaseUrl === "string") {
+            nextRuntimeConfig.orchestrationBaseUrl = payload.orchestrationBaseUrl.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.subagentProvider === "string") {
+            nextRuntimeConfig.subagentProvider = payload.subagentProvider.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.subagentModel === "string") {
+            nextRuntimeConfig.subagentModel = payload.subagentModel.trim();
+            hasRuntimeConfigChanges = true;
+          }
+          if (typeof payload.subagentBaseUrl === "string") {
+            nextRuntimeConfig.subagentBaseUrl = payload.subagentBaseUrl.trim();
             hasRuntimeConfigChanges = true;
           }
           if (payload.modelOptions !== undefined) {

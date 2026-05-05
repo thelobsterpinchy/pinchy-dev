@@ -8,12 +8,21 @@ test("summarizePinchyConfigView renders current config values", () => {
     defaultModel: "qwen2.5-coder",
     defaultThinkingLevel: "medium",
     defaultBaseUrl: "http://localhost:11434/v1",
+    orchestrationProvider: "ollama",
+    orchestrationModel: "qwen3-coder",
+    orchestrationBaseUrl: "http://localhost:11434/v1",
+    subagentProvider: "openai",
+    subagentModel: "deepseek-coder",
+    subagentBaseUrl: "http://localhost:1234/v1",
   });
 
   assert.match(text, /Current Pinchy runtime config/);
   assert.match(text, /defaultProvider: ollama/);
   assert.match(text, /defaultModel: qwen2.5-coder/);
   assert.match(text, /defaultBaseUrl: http:\/\/localhost:11434\/v1/);
+  assert.match(text, /orchestrationProvider: ollama/);
+  assert.match(text, /subagentProvider: openai/);
+  assert.match(text, /subagentBaseUrl: http:\/\/localhost:1234\/v1/);
 });
 
 test("summarizePinchyConfigSet confirms the updated key and value", () => {

@@ -83,6 +83,7 @@ test("buildPinchyDoctorReport reports a healthy initialized workspace when core 
       PINCHY_API_TOKEN: "api-token",
       PINCHY_DISCORD_ALLOWED_GUILD_IDS: "guild-1",
       PINCHY_DISCORD_ALLOWED_CHANNEL_IDS: "channel-1",
+      PINCHY_DISCORD_BOT_USER_ID: "bot-1",
     },
   });
 
@@ -106,6 +107,8 @@ test("buildPinchyDoctorReport fails Discord bot checks when required gateway set
   assert.match(discordCheck?.message ?? "", /PINCHY_API_TOKEN/);
   assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_GUILD_IDS/);
   assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_ALLOWED_CHANNEL_IDS/);
+  assert.match(discordCheck?.message ?? "", /PINCHY_DISCORD_BOT_USER_ID/);
+  assert.match(discordCheck?.hint ?? "", /docs\/DISCORD\.md/);
 });
 
 test("buildPinchyDoctorReport warns when Discord bot gateway is not configured", () => {
