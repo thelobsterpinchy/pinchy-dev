@@ -25,6 +25,12 @@ export type DashboardSettings = {
   defaultModel?: string;
   defaultThinkingLevel?: "off" | "low" | "medium" | "high";
   defaultBaseUrl?: string;
+  orchestrationProvider?: string;
+  orchestrationModel?: string;
+  orchestrationBaseUrl?: string;
+  subagentProvider?: string;
+  subagentModel?: string;
+  subagentBaseUrl?: string;
   modelOptions?: {
     temperature?: number;
     topP?: number;
@@ -72,6 +78,12 @@ export type DashboardSettings = {
     defaultModel?: string;
     defaultThinkingLevel?: "off" | "low" | "medium" | "high";
     defaultBaseUrl?: string;
+    orchestrationProvider?: string;
+    orchestrationModel?: string;
+    orchestrationBaseUrl?: string;
+    subagentProvider?: string;
+    subagentModel?: string;
+    subagentBaseUrl?: string;
     modelOptions?: {
       temperature?: number;
       topP?: number;
@@ -117,6 +129,12 @@ export type DashboardSettings = {
     defaultModel?: "env" | "workspace" | "pi-agent" | "unset";
     defaultThinkingLevel?: "env" | "workspace" | "pi-agent" | "unset";
     defaultBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
+    orchestrationProvider?: "env" | "workspace" | "pi-agent" | "unset";
+    orchestrationModel?: "env" | "workspace" | "pi-agent" | "unset";
+    orchestrationBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
+    subagentProvider?: "env" | "workspace" | "pi-agent" | "unset";
+    subagentModel?: "env" | "workspace" | "pi-agent" | "unset";
+    subagentBaseUrl?: "env" | "workspace" | "pi-agent" | "unset";
     autoDeleteEnabled?: "env" | "workspace" | "pi-agent" | "unset";
     autoDeleteDays?: "env" | "workspace" | "pi-agent" | "unset";
     toolRetryWarningThreshold?: "env" | "workspace" | "pi-agent" | "unset";

@@ -337,6 +337,30 @@ test("discord router ignores disallowed users without mutating Pinchy state", as
   });
 });
 
+test("discord router does not treat arbitrary mentions as Pinchy mentions when bot user id is missing", async () => {
+  await withTempDir(async (cwd) => {
+    const { apiClient, calls } = createMockApiClient();
+    const result = await routeDiscordGatewayMessage({
+      id: "message-1",
+      guildId: "guild-1",
+      channelId: "channel-1",
+      authorId: "user-1",
+      content: "<@someone-else> please look at this",
+      mentionedUserIds: ["someone-else"],
+    }, {
+      cwd,
+      config: { ...config, botUserId: undefined },
+      apiClient,
+      createThread: async () => {
+        throw new Error("should not create thread");
+      },
+    });
+
+    assert.deepEqual(result, { action: "ignored", reason: "top-level message did not mention Pinchy" });
+    assert.deepEqual(calls, []);
+  });
+});
+
 test("resolveDiscordReconnectDelay backs off and caps reconnect attempts", () => {
   assert.equal(resolveDiscordReconnectDelay(1, { initialDelayMs: 100, maxDelayMs: 1000, multiplier: 2 }), 100);
   assert.equal(resolveDiscordReconnectDelay(2, { initialDelayMs: 100, maxDelayMs: 1000, multiplier: 2 }), 200);
