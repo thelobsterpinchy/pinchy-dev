@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.6
+
+- add first-party macOS/Linux and Windows installer scripts that install Pinchy into a local prefix and provide explicit PATH setup guidance
+
 ## 0.3.5
 
 - make `pinchy setup` use guided selector prompts instead of an unstructured question list
