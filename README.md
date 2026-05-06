@@ -12,13 +12,25 @@ Pinchy owns the chat, memory, run, task, dashboard, and operator lifecycle while
 
 ## Install Pinchy
 
-Install Pinchy globally:
+Recommended installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pinchy-dev/pinchy-dev/main/scripts/install.sh | bash
+```
+
+The installer keeps Pinchy under a local prefix by default (`~/.pinchy`), verifies the CLI, and prints the exact PATH line if your shell cannot find `pinchy` yet. To let the installer update your shell startup file:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pinchy-dev/pinchy-dev/main/scripts/install.sh | bash -s -- --update-shell
+```
+
+Manual npm fallback:
 
 ```bash
 npm install -g pinchy-dev
 ```
 
-You can also install directly from GitHub:
+You can also install directly from GitHub if you already manage Node/npm yourself:
 
 ```bash
 npm install -g github:pinchy-dev/pinchy-dev
