@@ -4,7 +4,19 @@
 
 Pinchy can now be installed as a CLI and used outside the source checkout.
 
-Published package install:
+Recommended installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pinchy-dev/pinchy-dev/main/scripts/install.sh | bash
+```
+
+The installer uses a local prefix by default (`~/.pinchy`), installs the published package there, verifies the CLI, and prints the exact PATH line when the current shell cannot find `pinchy`. Use `--update-shell` only when you want the installer to append that PATH line to your shell startup file:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pinchy-dev/pinchy-dev/main/scripts/install.sh | bash -s -- --update-shell
+```
+
+Manual npm fallback:
 
 ```bash
 npm install -g pinchy-dev
