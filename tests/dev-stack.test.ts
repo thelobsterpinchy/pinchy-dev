@@ -11,12 +11,7 @@ import {
 } from "../apps/host/src/dev-stack.js";
 
 test("buildManagedServiceDefinitions returns installable direct-entry service commands", () => {
-  const previousToken = process.env.PINCHY_DISCORD_BOT_TOKEN;
-  delete process.env.PINCHY_DISCORD_BOT_TOKEN;
-  const services = buildManagedServiceDefinitions();
-  if (previousToken !== undefined) {
-    process.env.PINCHY_DISCORD_BOT_TOKEN = previousToken;
-  }
+  const services = buildManagedServiceDefinitions({});
 
   assert.deepEqual(services.map((service) => service.name), ["api", "worker", "dashboard", "daemon", "discord"]);
   assert.equal(typeof services[0]?.command, "string");
@@ -31,19 +26,8 @@ test("buildManagedServiceDefinitions returns installable direct-entry service co
 });
 
 test("buildManagedServiceDefinitions enables Discord only when the bot token is configured", () => {
-  const previousToken = process.env.PINCHY_DISCORD_BOT_TOKEN;
-  process.env.PINCHY_DISCORD_BOT_TOKEN = "bot-token";
-
-  try {
-    const discord = buildManagedServiceDefinitions().find((service) => service.name === "discord");
-    assert.equal(discord?.enabled, true);
-  } finally {
-    if (previousToken === undefined) {
-      delete process.env.PINCHY_DISCORD_BOT_TOKEN;
-    } else {
-      process.env.PINCHY_DISCORD_BOT_TOKEN = previousToken;
-    }
-  }
+  const discord = buildManagedServiceDefinitions({ PINCHY_DISCORD_BOT_TOKEN: "bot-token" }).find((service) => service.name === "discord");
+  assert.equal(discord?.enabled, true);
 });
 
 test("getManagedServiceStatePaths keeps pid and log files under .pinchy/run", () => {

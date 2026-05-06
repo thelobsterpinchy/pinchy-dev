@@ -26,7 +26,7 @@ pinchy status
 pinchy agent
 ```
 
-`pinchy init` copies the packaged `.pi/` resources into the target repository and creates default `.pinchy-runtime.json`, `.pinchy-goals.json`, and `.pinchy-watch.json` files when missing.
+`pinchy init` copies the packaged `.pi/` resources into the target repository and creates default `.pinchy-runtime.json`, `.pinchy-goals.json`, and `.pinchy-watch.json` files when missing. Pinchy uses the Submarine runtime by default for both new and existing workspaces unless `submarine.enabled` is explicitly set to `false`.
 
 Recommended first-run flow:
 
@@ -38,9 +38,29 @@ pinchy up
 pinchy agent
 ```
 
-`pinchy setup` installs Playwright Chromium for browser tooling, checks optional local tools, and offers an interactive setup helper when run in a terminal. The helper prints copyable templates for Discord remote control and LLM runtime routing. It does not write secrets or tokens.
+`pinchy setup` installs Playwright Chromium for browser tooling, checks optional local tools, and offers an interactive setup helper when run in a terminal. The helper can persist non-secret runtime choices, recommends Submarine for new dogfood workspaces, and still keeps the standard Pi runtime as an explicit fallback. It does not write secrets or tokens outside the workspace-local `.pinchy/env`.
 
-`pinchy doctor` checks workspace initialization, core config presence, Playwright browser readiness, local model provider availability, and optional local tooling such as `cliclick` and `tesseract`.
+`pinchy doctor` checks workspace initialization, core config presence, Playwright browser readiness, local model provider availability, Submarine launchability, and optional local tooling such as `cliclick` and `tesseract`.
+
+Pinchy ships a bundled copy of the Submarine Python package under `vendor/submarine-python` and adds it to `PYTHONPATH` when launching `submarine.serve_stdio`. Users should not need to separately install the Submarine package just to start the default runtime. The remaining runtime prerequisites are Python itself and the configured OpenAI-compatible supervisor/subagent model endpoints.
+
+To roll back a workspace to the standard Pi runtime, set the runtime flag to `false`:
+
+```json
+{
+  "submarine": {
+    "enabled": false
+  }
+}
+```
+
+Initialized workspaces include an `internet_search` Pi tool for narrow public web lookups. It is available to both the main orchestration session and delegated subagent sessions through the shared `.pi/extensions` workspace tools. When `EXA_API_KEY` is set, `internet_search` uses Exa `/search` with `type: "auto"` and highlights content. Without an Exa key, it falls back to lightweight public provider adapters. Each result set is saved as a JSON artifact under `artifacts/`.
+
+Use `pinchy setup`, `.pinchy/env`, or your shell environment to set:
+
+```bash
+export EXA_API_KEY="your-exa-api-key"
+```
 
 ## Interactive mode
 
@@ -223,8 +243,9 @@ Pinchy also supports a first-class Discord bot gateway. `pinchy up` starts the g
 
 - `PINCHY_DISCORD_BOT_TOKEN`
 - `PINCHY_API_TOKEN`
-- `PINCHY_DISCORD_ALLOWED_GUILD_IDS`
-- `PINCHY_DISCORD_ALLOWED_CHANNEL_IDS`
+- `PINCHY_DISCORD_BOT_USER_ID`
+- `PINCHY_DISCORD_ALLOWED_GUILD_IDS` (optional; unset allows any invited server)
+- `PINCHY_DISCORD_ALLOWED_CHANNEL_IDS` (optional; unset allows any channel the bot can access)
 - `PINCHY_DISCORD_ALLOWED_USER_IDS` (optional)
 
 When `PINCHY_API_TOKEN` is set, every API route except `GET /health` requires `Authorization: Bearer <token>`. The dashboard proxy and Discord gateway forward this token from the local environment.

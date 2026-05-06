@@ -9,9 +9,12 @@ type DiscordNotifierDependencies = {
   webhookUrl?: string;
   botToken?: string;
   sendBotMessage?: (input: { channelId: string; content: string }) => Promise<{ id: string }>;
+  triggerBotTyping?: (input: { channelId: string }) => Promise<void>;
   postJson?: PostJson;
   fetchImpl?: typeof fetch;
   webhookTimeoutMs?: number;
+  setIntervalFn?: typeof setInterval;
+  clearIntervalFn?: typeof clearInterval;
 };
 
 async function defaultPostJson(url: string, body: unknown, input: { fetchImpl?: typeof fetch; timeoutMs?: number } = {}) {
@@ -50,6 +53,21 @@ export function createDiscordNotifier(dependencies: DiscordNotifierDependencies 
   }));
   const restClient = botToken ? createDiscordRestClient({ token: botToken }) : undefined;
   const sendBotMessage = dependencies.sendBotMessage ?? restClient?.sendMessage;
+  const triggerBotTyping = dependencies.triggerBotTyping ?? restClient?.triggerTyping;
+  const setIntervalFn = dependencies.setIntervalFn ?? setInterval;
+  const clearIntervalFn = dependencies.clearIntervalFn ?? clearInterval;
+
+  async function triggerTyping(cwd: string, input: { conversationId?: string }) {
+    const mappedThread = input.conversationId
+      ? listDiscordThreadMappings(cwd).find((mapping) => mapping.conversationId === input.conversationId)
+      : undefined;
+    if (!mappedThread || !triggerBotTyping) return;
+    try {
+      await triggerBotTyping({ channelId: mappedThread.threadId });
+    } catch (error) {
+      console.error("[pinchy-discord] typing indicator failed", error);
+    }
+  }
 
   async function send(cwd: string, input: { questionId?: string; runId?: string; content: string }) {
     if (!webhookUrl) {
@@ -82,6 +100,18 @@ export function createDiscordNotifier(dependencies: DiscordNotifierDependencies 
   }
 
   return {
+    triggerTyping,
+    startTyping(cwd: string, input: { conversationId?: string; intervalMs?: number }) {
+      if (!input.conversationId || !triggerBotTyping) return () => undefined;
+      const mappedThread = listDiscordThreadMappings(cwd).find((mapping) => mapping.conversationId === input.conversationId);
+      if (!mappedThread) return () => undefined;
+      const pulse = () => {
+        void triggerTyping(cwd, { conversationId: input.conversationId });
+      };
+      pulse();
+      const interval = setIntervalFn(pulse, Math.max(1_000, input.intervalMs ?? 8_000));
+      return () => clearIntervalFn(interval);
+    },
     async sendQuestion(cwd: string, input: { questionId: string; runId: string; conversationId?: string; prompt: string; conversationTitle?: string }) {
       const header = input.conversationTitle ? `Pinchy question for ${input.conversationTitle}` : "Pinchy question";
       const content = [
@@ -125,7 +155,7 @@ export function createDiscordNotifier(dependencies: DiscordNotifierDependencies 
       const mappedThread = input.conversationId
         ? listDiscordThreadMappings(cwd).find((mapping) => mapping.conversationId === input.conversationId)
         : undefined;
-      const content = `Pinchy run summary\n\n${input.summary}`;
+      const content = input.summary;
 
       if (sendBotMessage && mappedThread) {
         try {

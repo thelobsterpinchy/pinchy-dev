@@ -29,8 +29,10 @@ Avoid by default:
 2. Pick one small, high-leverage improvement.
 3. Prefer tests/docs/guardrails before deeper behavior changes.
 4. If the worktree already has unrelated in-progress work, avoid editing those files unless the improvement clearly depends on them; prefer isolated docs/tests/guardrail changes that will not clobber local work.
-5. Implement the change with minimal scope.
-6. Validate if possible.
-7. Record what improved and what remains.
+5. If the improvement changes behavior, write the narrowest useful test-first or regression-test-first coverage before implementation when practical.
+6. If implementation work is needed, delegate coding work to a scoped subagent or implementation workflow before patching, and keep the change within this repository.
+7. Implement the change with minimal scope.
+8. Validate if possible.
+9. Record what improved and what remains.
 
 If no safe improvement is justified, stop and explain why.

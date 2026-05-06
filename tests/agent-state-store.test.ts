@@ -25,6 +25,9 @@ import {
   listQuestions,
   listReplies,
   clearRunCancellationRequest,
+  clearSubmarineSession,
+  createSubmarineSession,
+  getSubmarineSession,
   hasRunCancellationRequest,
   listRunActivities,
   listRunCancellationRequests,
@@ -34,6 +37,7 @@ import {
   requestRunCancellation,
   updateQuestionStatus,
   updateRunStatus,
+  updateSubmarineSession,
 } from "../apps/host/src/agent-state-store.js";
 
 function withTempDir(run: (cwd: string) => void) {
@@ -517,6 +521,42 @@ test("agent state store preserves cancellation requests for active deleted runs 
     assert.equal(listRunCancellationRequests(cwd).some((request) => request.runId === activeRun.id && request.reason === "Conversation deleted"), true);
     assert.equal(hasRunCancellationRequest(cwd, completedRun.id), false);
     assert.equal(hasRunCancellationRequest(cwd, "run-unrelated"), true);
+  });
+});
+
+test("agent state store persists and clears submarine sessions", () => {
+  withTempDir((cwd) => {
+    const created = createSubmarineSession(cwd, {
+      runId: "run-123",
+      sessionKey: "session-abc",
+    });
+
+    assert.equal(created.sessionKey, "session-abc");
+    assert.equal(getSubmarineSession(cwd, "run-123")?.sessionKey, "session-abc");
+
+    const duplicate = createSubmarineSession(cwd, {
+      runId: "run-123",
+      sessionKey: "session-new",
+    });
+
+    assert.equal(duplicate.sessionKey, "session-abc");
+    assert.equal(getSubmarineSession(cwd, "run-123")?.sessionKey, "session-abc");
+
+    const updated = updateSubmarineSession(cwd, "run-123", {
+      waitingTaskId: "task-7",
+      lastTaskMessage: "Need clarification",
+      sessionKey: "session-rotated",
+    });
+
+    assert.equal(updated?.waitingTaskId, "task-7");
+    assert.equal(updated?.lastTaskMessage, "Need clarification");
+    assert.equal(updated?.sessionKey, "session-rotated");
+    assert.equal(getSubmarineSession(cwd, "run-123")?.sessionKey, "session-rotated");
+    assert.equal(updateSubmarineSession(cwd, "run-missing", { waitingTaskId: "task-8" }), undefined);
+
+    clearSubmarineSession(cwd, "run-123");
+
+    assert.equal(getSubmarineSession(cwd, "run-123"), undefined);
   });
 });
 

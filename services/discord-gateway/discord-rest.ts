@@ -1,6 +1,7 @@
 export type DiscordRestClient = {
   createThreadFromMessage(input: { channelId: string; messageId: string; name: string }): Promise<{ id: string }>;
   sendMessage(input: { channelId: string; content: string }): Promise<{ id: string }>;
+  triggerTyping(input: { channelId: string }): Promise<void>;
 };
 
 async function discordFetch<T>(input: {
@@ -38,7 +39,8 @@ async function discordFetch<T>(input: {
     const text = await response.text();
     throw new Error(`Discord REST request failed: ${response.status} ${response.statusText}${text ? ` ${text}` : ""}`);
   }
-  return response.json() as Promise<T>;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export function createDiscordRestClient(input: { token: string; fetchImpl?: typeof fetch; timeoutMs?: number }): DiscordRestClient {
@@ -64,6 +66,15 @@ export function createDiscordRestClient(input: { token: string; fetchImpl?: type
         method: "POST",
         path: `/channels/${encodeURIComponent(args.channelId)}/messages`,
         body: { content: args.content },
+      });
+    },
+    triggerTyping(args) {
+      return discordFetch<void>({
+        token: input.token,
+        fetchImpl: input.fetchImpl,
+        timeoutMs: input.timeoutMs,
+        method: "POST",
+        path: `/channels/${encodeURIComponent(args.channelId)}/typing`,
       });
     },
   };

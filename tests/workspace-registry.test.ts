@@ -65,6 +65,36 @@ test("workspace registry resolves relative workspace paths against the provided 
   });
 });
 
+test("workspace registry trims whitespace around input paths before registering", () => {
+  withTempDir((cwd) => {
+    const added = registerWorkspace(cwd, { path: "  nested/demo-repo  ", name: "Demo repo" });
+
+    assert.equal(added.path, join(cwd, "nested/demo-repo"));
+    assert.equal(listWorkspaces(cwd).some((entry) => entry.path === join(cwd, "nested/demo-repo")), true);
+  });
+});
+
+test("workspace registry de-duplicates the same path even when later registrations include extra whitespace", () => {
+  withTempDir((cwd) => {
+    const first = registerWorkspace(cwd, { path: "/tmp/demo-repo", name: "Demo repo" });
+    const second = registerWorkspace(cwd, { path: "  /tmp/demo-repo  ", name: "Renamed demo repo" });
+
+    assert.equal(first.id, second.id);
+    assert.equal(second.name, "Renamed demo repo");
+    assert.equal(listWorkspaces(cwd).filter((entry) => entry.path === "/tmp/demo-repo").length, 1);
+  });
+});
+
+test("workspace registry rejects empty workspace paths instead of mutating the seeded cwd entry", () => {
+  withTempDir((cwd) => {
+    const seeded = listWorkspaces(cwd)[0];
+
+    assert.throws(() => registerWorkspace(cwd, { path: "   ", name: "Unexpected rename" }), /path is required/);
+    assert.deepEqual(listWorkspaces(cwd), [seeded]);
+    assert.equal(getActiveWorkspace(cwd)?.name, seeded.name);
+  });
+});
+
 test("workspace registry deletes a workspace and falls back active selection when needed", () => {
   withTempDir((cwd) => {
     const demo = registerWorkspace(cwd, { path: "/tmp/demo-repo", name: "Demo repo" });

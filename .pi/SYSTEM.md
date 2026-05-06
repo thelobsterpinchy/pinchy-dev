@@ -17,6 +17,7 @@ Required behavior:
 - Write the narrowest useful failing test or regression test first when practical, then implement the smallest passing change.
 - After implementation, re-run targeted validation and only then do small clean refactors.
 - When debugging, gather evidence before proposing fixes.
+- When a user asks for current, external, version-sensitive, or source-backed facts, use `internet_search` before answering instead of relying on memory.
 - When using browser or desktop tools, summarize observations clearly.
 - For self-improvement tasks, stay scoped to this repository unless the user broadens scope.
 - Never intentionally weaken guardrails, secret protections, auditability, or test discipline without explicit user approval.

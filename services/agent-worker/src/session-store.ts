@@ -30,6 +30,24 @@ function getEntryPath(sessionsDir: string, sessionId: string): string {
   return path.join(sessionsDir, `${sessionId}.json`);
 }
 
+function isSessionEntry(value: unknown): value is SessionEntry {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SessionEntry>;
+  return typeof candidate.id === "string"
+    && typeof candidate.sessionPath === "string"
+    && typeof candidate.createdAt === "string"
+    && typeof candidate.updatedAt === "string";
+}
+
+function readSessionEntry(filePath: string): SessionEntry | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
+    return isSessionEntry(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function saveSessionEntry(cwd: string, entry: Omit<SessionEntry, "createdAt" | "updatedAt">): SessionEntry {
   const sessionsDir = ensureSessionsDir(cwd);
   const now = new Date().toISOString();
@@ -46,8 +64,10 @@ export function updateSessionEntry(cwd: string, sessionId: string, patch: Partia
   const sessionsDir = ensureSessionsDir(cwd);
   const entryPath = getEntryPath(sessionsDir, sessionId);
   if (!fs.existsSync(entryPath)) return undefined;
-  
-  const existing = JSON.parse(fs.readFileSync(entryPath, "utf8")) as SessionEntry;
+
+  const existing = readSessionEntry(entryPath);
+  if (!existing) return undefined;
+
   const updated: SessionEntry = {
     ...existing,
     ...patch,
@@ -61,18 +81,19 @@ export function getSessionEntry(cwd: string, sessionId: string): SessionEntry | 
   const sessionsDir = ensureSessionsDir(cwd);
   const entryPath = getEntryPath(sessionsDir, sessionId);
   if (!fs.existsSync(entryPath)) return undefined;
-  
-  return JSON.parse(fs.readFileSync(entryPath, "utf8")) as SessionEntry;
+
+  return readSessionEntry(entryPath);
 }
 
 export function listSessionEntries(cwd: string): SessionEntry[] {
   const sessionsDir = ensureSessionsDir(cwd);
   if (!fs.existsSync(sessionsDir)) return [];
-  
+
   return fs.readdirSync(sessionsDir)
     .filter((file) => file.endsWith(".json"))
     .map((file) => path.join(sessionsDir, file))
-    .map((filePath) => JSON.parse(fs.readFileSync(filePath, "utf8")) as SessionEntry)
+    .map((filePath) => readSessionEntry(filePath))
+    .filter((entry): entry is SessionEntry => Boolean(entry))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
@@ -88,23 +109,23 @@ export function deleteSessionEntry(cwd: string, sessionId: string): boolean {
 export function findSessionByConversationId(cwd: string, conversationId: string): SessionEntry | undefined {
   const sessionsDir = ensureSessionsDir(cwd);
   if (!fs.existsSync(sessionsDir)) return undefined;
-  
+
   return fs.readdirSync(sessionsDir)
     .filter((file) => file.endsWith(".json"))
     .map((file) => path.join(sessionsDir, file))
-    .map((filePath) => JSON.parse(fs.readFileSync(filePath, "utf8")) as SessionEntry)
-    .find((entry) => entry.conversationId === conversationId);
+    .map((filePath) => readSessionEntry(filePath))
+    .find((entry) => entry?.conversationId === conversationId);
 }
 
 export function findSessionsByRuntimeConfigSignature(cwd: string, signature: string): SessionEntry[] {
   const sessionsDir = ensureSessionsDir(cwd);
   if (!fs.existsSync(sessionsDir)) return [];
-  
+
   return fs.readdirSync(sessionsDir)
     .filter((file) => file.endsWith(".json"))
     .map((file) => path.join(sessionsDir, file))
-    .map((filePath) => JSON.parse(fs.readFileSync(filePath, "utf8")) as SessionEntry)
-    .filter((entry) => entry.runtimeConfigSignature === signature)
+    .map((filePath) => readSessionEntry(filePath))
+    .filter((entry): entry is SessionEntry => entry !== undefined && entry.runtimeConfigSignature === signature)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 

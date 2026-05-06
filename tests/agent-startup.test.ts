@@ -33,7 +33,7 @@ test("buildAgentStartupSummary reports modern dashboard mode when built assets e
 test("buildAgentStartupSummary falls back to the default dashboard port when the env value is invalid", () => {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-agent-startup-"));
 
-  for (const value of ["", "not-a-number", "0", "-1", "4310.5"]) {
+  for (const value of ["", "not-a-number", "0", "-1", "4310.5", "65536", "99999"]) {
     const summary = buildAgentStartupSummary(cwd, {
       PINCHY_DASHBOARD_PORT: value,
     });

@@ -16,7 +16,7 @@ export function requiresInteractiveTerminal(
 
 function resolveDashboardPort(value: string | undefined) {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 4310;
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535 ? parsed : 4310;
 }
 
 function resolveApiBaseUrl(value: string | undefined) {

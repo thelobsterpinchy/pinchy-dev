@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { chromium } from "playwright";
 import { loadDiscordGatewayConfig } from "../../../services/discord-gateway/config.js";
+import { loadPinchyRuntimeConfig, withDefaultSubmarineRuntimeConfig, type PinchyRuntimeConfig } from "./runtime-config.js";
+import { buildSubmarinePythonEnv, getBundledSubmarinePythonPath } from "./submarine-python.js";
 
 export type PinchyDoctorCheckStatus = "ok" | "warn" | "fail";
 
@@ -28,6 +30,9 @@ export type PinchyDoctorDependencies = {
   pathExists?: (path: string) => boolean;
   commandExists?: (command: string) => boolean;
   resolvePlaywrightBrowserPath?: () => string | undefined;
+  canLaunchPythonModule?: (pythonPath: string, moduleName: string, cwd: string) => boolean;
+  endpointReachable?: (url: string) => boolean | undefined;
+  runtimeConfig?: PinchyRuntimeConfig;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -62,10 +67,160 @@ function resolvePlaywrightBrowserPath() {
   }
 }
 
+function canLaunchPythonModule(pythonPath: string, moduleName: string, cwd: string) {
+  const result = spawnSync(pythonPath, ["-m", moduleName, "--help"], {
+    cwd,
+    env: buildSubmarinePythonEnv(process.env),
+    stdio: "ignore",
+    timeout: 5_000,
+  });
+  return result.status === 0;
+}
+
+function isValidHttpUrl(value: string | undefined) {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function checkEndpoint(url: string | undefined, endpointReachable: ((url: string) => boolean | undefined) | undefined) {
+  if (!isValidHttpUrl(url)) return "fail" as const;
+  const reachable = endpointReachable?.(url!);
+  if (reachable === true) return "ok" as const;
+  if (reachable === false) return "fail" as const;
+  return "warn" as const;
+}
+
+const REQUIRED_SUBMARINE_TOOL_BRIDGE_PATHS = [
+  ".pi/extensions/web-search/index.ts",
+  ".pi/extensions/browser-debugger/index.ts",
+  ".pi/extensions/approval-inbox/index.ts",
+  ".pi/extensions/guardrails/index.ts",
+  ".pi/extensions/design-patterns/index.ts",
+];
+
+const REQUIRED_SUBMARINE_RESOURCE_PATHS = [
+  ".pi/skills/design-pattern-review/SKILL.md",
+  ".pi/skills/engineering-excellence/SKILL.md",
+  ".pi/skills/tdd-implementation/SKILL.md",
+  ".pi/skills/website-debugger/SKILL.md",
+  ".pi/skills/playwright-investigation/SKILL.md",
+];
+
+function addSubmarineChecks(input: {
+  cwd: string;
+  checks: PinchyDoctorCheck[];
+  pathExists: (path: string) => boolean;
+  hasCommand: (command: string) => boolean;
+  runtimeConfig: PinchyRuntimeConfig;
+  canLaunchModule: (pythonPath: string, moduleName: string, cwd: string) => boolean;
+  endpointReachable?: (url: string) => boolean | undefined;
+}) {
+  const submarine = input.runtimeConfig.submarine;
+  if (!submarine?.enabled) {
+    input.checks.push({
+      name: "submarine_runtime",
+      status: "ok",
+      message: "Submarine runtime is not configured.",
+      hint: "Run `pinchy setup` and choose Runtime strategy only to opt into Submarine.",
+    });
+    return;
+  }
+
+  input.checks.push({
+    name: "submarine_runtime",
+    status: "ok",
+    message: "Submarine runtime is enabled.",
+    hint: "Run the remaining Submarine doctor checks before treating it as production-ready.",
+  });
+
+  const pythonPath = submarine.pythonPath ?? "python3";
+  const scriptModule = submarine.scriptModule ?? "submarine.serve_stdio";
+  const hasPython = input.hasCommand(pythonPath);
+  input.checks.push({
+    name: "submarine_python",
+    status: hasPython ? "ok" : "fail",
+    message: hasPython ? `${pythonPath} is available for Submarine.` : `${pythonPath} is not available for Submarine.`,
+    hint: hasPython ? undefined : "Install Python or update submarine.pythonPath in .pinchy-runtime.json.",
+  });
+
+  const moduleLaunches = hasPython && input.canLaunchModule(pythonPath, scriptModule, input.cwd);
+  input.checks.push({
+    name: "submarine_module",
+    status: moduleLaunches ? "ok" : "fail",
+    message: moduleLaunches ? `${scriptModule} can be launched.` : `${scriptModule} could not be launched with ${pythonPath}.`,
+    hint: moduleLaunches ? `Using bundled Submarine Python path: ${getBundledSubmarinePythonPath()}.` : "Install the Submarine Python package, restore the packaged vendor/submarine-python directory, or update submarine.scriptModule.",
+  });
+
+  const supervisorEndpointStatus = checkEndpoint(submarine.supervisorBaseUrl, input.endpointReachable);
+  input.checks.push({
+    name: "submarine_supervisor_endpoint",
+    status: supervisorEndpointStatus,
+    message: supervisorEndpointStatus === "ok"
+      ? "Submarine supervisor endpoint is reachable."
+      : supervisorEndpointStatus === "fail"
+        ? "Submarine supervisor endpoint is missing, invalid, or unreachable."
+        : "Submarine supervisor endpoint is configured but reachability was not checked.",
+    hint: supervisorEndpointStatus === "ok" ? undefined : "Set submarine.supervisorBaseUrl and make sure the model server is running.",
+  });
+
+  const agents = Object.entries(submarine.agents ?? {});
+  const invalidAgents = agents.filter(([, agent]) => !isValidHttpUrl(agent.baseUrl));
+  const unreachableAgents = agents.filter(([, agent]) => isValidHttpUrl(agent.baseUrl) && input.endpointReachable?.(agent.baseUrl!) === false);
+  const agentStatus: PinchyDoctorCheckStatus = agents.length === 0 || invalidAgents.length > 0 || unreachableAgents.length > 0
+    ? "fail"
+    : input.endpointReachable ? "ok" : "warn";
+  input.checks.push({
+    name: "submarine_agent_endpoints",
+    status: agentStatus,
+    message: agentStatus === "ok"
+      ? "Submarine agent endpoints are configured and reachable."
+      : agentStatus === "fail"
+        ? "One or more Submarine agent endpoints are missing, invalid, or unreachable."
+        : "Submarine agent endpoints are configured but reachability was not checked.",
+    hint: agentStatus === "ok" ? undefined : "Configure submarine.agents with model and baseUrl values, then start those model servers.",
+  });
+
+  const missingToolBridgePaths = REQUIRED_SUBMARINE_TOOL_BRIDGE_PATHS.filter((path) => !input.pathExists(resolve(input.cwd, path)));
+  input.checks.push({
+    name: "submarine_tool_bridge",
+    status: missingToolBridgePaths.length === 0 ? "ok" : "fail",
+    message: missingToolBridgePaths.length === 0
+      ? "Submarine tool bridge workspace extensions are present."
+      : `Submarine tool bridge is missing workspace extensions: ${missingToolBridgePaths.join(", ")}.`,
+    hint: missingToolBridgePaths.length === 0 ? undefined : "Run `pinchy init` to restore workspace .pi resources.",
+  });
+
+  const missingResourcePaths = REQUIRED_SUBMARINE_RESOURCE_PATHS.filter((path) => !input.pathExists(resolve(input.cwd, path)));
+  input.checks.push({
+    name: "submarine_resources",
+    status: missingResourcePaths.length === 0 ? "ok" : "fail",
+    message: missingResourcePaths.length === 0
+      ? "Submarine skill and prompt resources are present."
+      : `Submarine is missing workspace resources: ${missingResourcePaths.join(", ")}.`,
+    hint: missingResourcePaths.length === 0 ? undefined : "Run `pinchy init` to restore workspace .pi skills and prompts.",
+  });
+}
+
 export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorDependencies = {}): PinchyDoctorReport {
   const pathExists = dependencies.pathExists ?? existsSync;
   const hasCommand = dependencies.commandExists ?? commandExists;
   const getPlaywrightBrowserPath = dependencies.resolvePlaywrightBrowserPath ?? resolvePlaywrightBrowserPath;
+  const rawRuntimeConfig = dependencies.runtimeConfig ?? loadPinchyRuntimeConfig(cwd);
+  const runtimeConfig = {
+    ...rawRuntimeConfig,
+    submarine: withDefaultSubmarineRuntimeConfig(rawRuntimeConfig.submarine, {
+      defaultModel: rawRuntimeConfig.defaultModel,
+      defaultBaseUrl: rawRuntimeConfig.defaultBaseUrl,
+      subagentModel: rawRuntimeConfig.subagentModel,
+      subagentBaseUrl: rawRuntimeConfig.subagentBaseUrl,
+    }),
+  };
+  const canLaunchModule = dependencies.canLaunchPythonModule ?? canLaunchPythonModule;
   const env = dependencies.env ?? process.env;
 
   const checks: PinchyDoctorCheck[] = [];
@@ -137,13 +292,11 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
       name: "discord_bot",
       status: "warn",
       message: "Discord bot gateway is not configured.",
-      hint: "Follow docs/DISCORD.md, then set PINCHY_DISCORD_BOT_TOKEN, PINCHY_API_TOKEN, PINCHY_DISCORD_ALLOWED_GUILD_IDS, and PINCHY_DISCORD_ALLOWED_CHANNEL_IDS to enable Discord control.",
+      hint: "Run `pinchy setup` and choose Discord remote control, or follow docs/DISCORD.md.",
     });
   } else {
     const missing: string[] = [];
     if (!discordConfig.apiToken) missing.push("PINCHY_API_TOKEN");
-    if (discordConfig.allowedGuildIds.length === 0) missing.push("PINCHY_DISCORD_ALLOWED_GUILD_IDS");
-    if (discordConfig.allowedChannelIds.length === 0) missing.push("PINCHY_DISCORD_ALLOWED_CHANNEL_IDS");
     if (!discordConfig.botUserId) missing.push("PINCHY_DISCORD_BOT_USER_ID");
     checks.push({
       name: "discord_bot",
@@ -153,9 +306,19 @@ export function buildPinchyDoctorReport(cwd: string, dependencies: PinchyDoctorD
         : `Discord bot gateway is missing required settings: ${missing.join(", ")}.`,
       hint: missing.length === 0
         ? "Ensure the Discord app has Message Content Intent and channel permissions: view/send messages, create public threads, send in threads, and read message history."
-        : "Set the missing environment variables before running `pinchy up`. See docs/DISCORD.md.",
+        : "Run `pinchy setup` to save the missing local Discord settings. Guild and channel allowlists are optional.",
     });
   }
+
+  addSubmarineChecks({
+    cwd,
+    checks,
+    pathExists,
+    hasCommand,
+    runtimeConfig,
+    canLaunchModule,
+    endpointReachable: dependencies.endpointReachable,
+  });
 
   return {
     cwd,

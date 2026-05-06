@@ -4,8 +4,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Conversation, ConversationState, HumanReply, Message, Run } from "../packages/shared/src/contracts.js";
-import { loadDiscordGatewayConfig } from "../services/discord-gateway/config.js";
+import { assertDiscordGatewayConfigReady, loadDiscordGatewayConfig } from "../services/discord-gateway/config.js";
 import { createDiscordRestClient } from "../services/discord-gateway/discord-rest.js";
+import { normalizeDiscordMessage } from "../services/discord-gateway/gateway.js";
 import { resolveDiscordReconnectDelay } from "../services/discord-gateway/reconnect.js";
 import { listDiscordThreadMappings, upsertDiscordThreadMapping } from "../services/discord-gateway/thread-store.js";
 import { routeDiscordGatewayMessage } from "../services/discord-gateway/router.js";
@@ -85,6 +86,28 @@ test("loadDiscordGatewayConfig parses allowlists and enables only when a bot tok
   });
 });
 
+test("discord gateway config requires only bot token and local API token", () => {
+  assert.doesNotThrow(() => assertDiscordGatewayConfigReady(loadDiscordGatewayConfig({
+    PINCHY_DISCORD_BOT_TOKEN: "token",
+    PINCHY_API_TOKEN: "api",
+  })));
+});
+
+test("discord gateway normalization does not infer threads from channel allowlists", () => {
+  const message = normalizeDiscordMessage({
+    id: "message-1",
+    guild_id: "guild-1",
+    channel_id: "channel-1",
+    content: "<@bot-1> help",
+    mentions: [{ id: "bot-1" }],
+    author: { id: "user-1", username: "operator" },
+  });
+
+  assert.equal(message?.threadId, undefined);
+  assert.equal(message?.channelId, "channel-1");
+  assert.deepEqual(message?.mentionedUserIds, ["bot-1"]);
+});
+
 test("discord thread mapping store creates and reuses workspace-local mappings", async () => {
   await withTempDir((cwd) => {
     const first = upsertDiscordThreadMapping(cwd, {
@@ -123,6 +146,27 @@ test("Discord REST client aborts hung requests after its timeout", async () => {
   );
 });
 
+test("Discord REST client triggers typing indicators", async () => {
+  const calls: Array<{ url: string; method?: string; body?: BodyInit | null }> = [];
+  const client = createDiscordRestClient({
+    token: "bot-token",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body });
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  await client.triggerTyping({ channelId: "channel-1" });
+
+  assert.deepEqual(calls, [
+    {
+      url: "https://discord.com/api/v10/channels/channel-1/typing",
+      method: "POST",
+      body: undefined,
+    },
+  ]);
+});
+
 test("discord router creates a thread, conversation, message, and run from an allowed mention", async () => {
   await withTempDir(async (cwd) => {
     const { apiClient, calls } = createMockApiClient();
@@ -156,6 +200,197 @@ test("discord router creates a thread, conversation, message, and run from an al
     assert.equal(acknowledgements[0]?.channelId, "thread-1");
     assert.match(acknowledgements[0]?.content ?? "", /Pinchy is on it/);
     assert.match(acknowledgements[0]?.content ?? "", /Reply with `status`/);
+  });
+});
+
+test("discord router allows any invited guild and channel when allowlists are empty", async () => {
+  await withTempDir(async (cwd) => {
+    const { apiClient, calls } = createMockApiClient();
+    const result = await routeDiscordGatewayMessage({
+      id: "message-1",
+      guildId: "guild-2",
+      channelId: "channel-2",
+      authorId: "user-2",
+      content: "<@bot-1> Fix the setup docs",
+      mentionedUserIds: ["bot-1"],
+    }, {
+      cwd,
+      config: { ...config, allowedGuildIds: [], allowedChannelIds: [], allowedUserIds: [] },
+      apiClient,
+      createThread: async () => ({ threadId: "thread-2" }),
+    });
+
+    assert.equal(result.action, "created_conversation");
+    assert.equal(listDiscordThreadMappings(cwd)[0]?.threadId, "thread-2");
+    assert.deepEqual(calls, [
+      "createConversation:Fix the setup docs",
+      "appendMessage:conversation-1:Fix the setup docs",
+      "createRun:conversation-1:Fix the setup docs:user_prompt",
+    ]);
+  });
+});
+
+test("discord router does not send deterministic queue acknowledgements for conversational channel messages", async () => {
+  await withTempDir(async (cwd) => {
+    const { apiClient, calls } = createMockApiClient();
+    const acknowledgements: Array<{ channelId: string; content: string }> = [];
+    const result = await routeDiscordGatewayMessage({
+      id: "message-1",
+      guildId: "guild-1",
+      channelId: "channel-1",
+      authorId: "user-1",
+      content: "<@bot-1> hello",
+      mentionedUserIds: ["bot-1"],
+    }, {
+      cwd,
+      config,
+      apiClient,
+      createThread: async () => ({ threadId: "thread-1" }),
+      sendMessage: async (input) => {
+        acknowledgements.push(input);
+        return { id: "ack-1" };
+      },
+    });
+
+    assert.equal(result.action, "created_conversation");
+    assert.deepEqual(acknowledgements, []);
+    assert.deepEqual(calls, [
+      "createConversation:hello",
+      "appendMessage:conversation-1:hello",
+      "createRun:conversation-1:hello:user_prompt",
+    ]);
+  });
+});
+
+test("discord router infers mapped thread replies when channel allowlists are empty", async () => {
+  await withTempDir(async (cwd) => {
+    upsertDiscordThreadMapping(cwd, {
+      guildId: "guild-2",
+      channelId: "channel-2",
+      threadId: "thread-2",
+      conversationId: "conversation-1",
+    });
+    const { apiClient, calls } = createMockApiClient({
+      questions: [
+        { id: "question-1", conversationId: "conversation-1", runId: "run-1", prompt: "Which path?", status: "waiting_for_human", priority: "normal", createdAt: "2026-05-05T00:00:00.000Z" },
+      ],
+    });
+
+    const result = await routeDiscordGatewayMessage({
+      id: "message-2",
+      guildId: "guild-2",
+      channelId: "thread-2",
+      authorId: "user-2",
+      content: "Use the setup path.",
+    }, {
+      cwd,
+      config: { ...config, allowedGuildIds: [], allowedChannelIds: [], allowedUserIds: [] },
+      apiClient,
+      createThread: async () => ({ threadId: "unused" }),
+    });
+
+    assert.equal(result.action, "answered_question");
+    assert.deepEqual(calls, [
+      "fetchConversationState:conversation-1",
+      "replyToQuestion:question-1:Use the setup path.",
+    ]);
+  });
+});
+
+test("discord router creates a conversation from a direct message without requiring a mention", async () => {
+  await withTempDir(async (cwd) => {
+    const { apiClient, calls } = createMockApiClient();
+    const acknowledgements: Array<{ channelId: string; content: string }> = [];
+    const typing: Array<{ channelId: string }> = [];
+
+    const result = await routeDiscordGatewayMessage({
+      id: "dm-message-1",
+      channelId: "dm-channel-1",
+      authorId: "user-1",
+      authorUsername: "operator",
+      content: "Fix setup so Discord is easier.",
+    }, {
+      cwd,
+      config,
+      apiClient,
+      createThread: async () => {
+        throw new Error("DMs should not create public threads");
+      },
+      sendMessage: async (input) => {
+        acknowledgements.push(input);
+        return { id: "ack-1" };
+      },
+      triggerTyping: async (input) => {
+        typing.push(input);
+      },
+    });
+
+    assert.equal(result.action, "created_conversation");
+    assert.deepEqual(listDiscordThreadMappings(cwd).map((entry) => ({
+      guildId: entry.guildId,
+      channelId: entry.channelId,
+      threadId: entry.threadId,
+    })), [{ guildId: "", channelId: "dm-channel-1", threadId: "dm-channel-1" }]);
+    assert.deepEqual(calls, [
+      "createConversation:Fix setup so Discord is easier.",
+      "appendMessage:conversation-1:Fix setup so Discord is easier.",
+      "createRun:conversation-1:Fix setup so Discord is easier.:user_prompt",
+    ]);
+    assert.deepEqual(acknowledgements, []);
+    assert.deepEqual(typing, [{ channelId: "dm-channel-1" }]);
+  });
+});
+
+test("discord router routes follow-up direct messages to the mapped conversation", async () => {
+  await withTempDir(async (cwd) => {
+    upsertDiscordThreadMapping(cwd, {
+      guildId: "",
+      channelId: "dm-channel-1",
+      threadId: "dm-channel-1",
+      conversationId: "conversation-1",
+    });
+    const { apiClient, calls } = createMockApiClient();
+
+    const result = await routeDiscordGatewayMessage({
+      id: "dm-message-2",
+      channelId: "dm-channel-1",
+      authorId: "user-1",
+      content: "Continue with docs.",
+    }, {
+      cwd,
+      config,
+      apiClient,
+      createThread: async () => ({ threadId: "unused" }),
+    });
+
+    assert.equal(result.action, "queued_run");
+    assert.deepEqual(calls, [
+      "fetchConversationState:conversation-1",
+      "appendMessage:conversation-1:Continue with docs.",
+      "createRun:conversation-1:Continue with docs.:user_prompt",
+    ]);
+  });
+});
+
+test("discord router applies optional user allowlists to direct messages", async () => {
+  await withTempDir(async (cwd) => {
+    const { apiClient, calls } = createMockApiClient();
+
+    const result = await routeDiscordGatewayMessage({
+      id: "dm-message-1",
+      channelId: "dm-channel-1",
+      authorId: "user-2",
+      content: "Do work",
+    }, {
+      cwd,
+      config,
+      apiClient,
+      createThread: async () => ({ threadId: "unused" }),
+    });
+
+    assert.equal(result.action, "ignored");
+    assert.deepEqual(calls, []);
+    assert.deepEqual(listDiscordThreadMappings(cwd), []);
   });
 });
 
@@ -210,6 +445,7 @@ test("discord router queues a new run in a mapped thread when no question is pen
       conversationId: "conversation-1",
     });
     const { apiClient, calls } = createMockApiClient();
+    const typing: Array<{ channelId: string }> = [];
 
     const result = await routeDiscordGatewayMessage({
       id: "message-2",
@@ -223,6 +459,9 @@ test("discord router queues a new run in a mapped thread when no question is pen
       config,
       apiClient,
       createThread: async () => ({ threadId: "unused" }),
+      triggerTyping: async (input) => {
+        typing.push(input);
+      },
     });
 
     assert.equal(result.action, "queued_run");
@@ -231,6 +470,7 @@ test("discord router queues a new run in a mapped thread when no question is pen
       "appendMessage:conversation-1:Continue with tests.",
       "createRun:conversation-1:Continue with tests.:user_prompt",
     ]);
+    assert.deepEqual(typing, [{ channelId: "thread-1" }]);
   });
 });
 

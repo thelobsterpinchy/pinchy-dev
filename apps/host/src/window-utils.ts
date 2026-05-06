@@ -19,6 +19,7 @@ export function parseWindowBoundsOutput(stdout: string): WindowBounds | undefine
   if (numericValues.some((value) => !Number.isFinite(value))) return undefined;
 
   const [parsedX, parsedY, parsedWidth, parsedHeight] = numericValues;
+  if (parsedWidth <= 0 || parsedHeight <= 0) return undefined;
   return {
     appName: resolvedAppName,
     x: parsedX,

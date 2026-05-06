@@ -10,11 +10,19 @@ export type WatchConfig = {
 
 const FILE = ".pinchy-watch.json";
 
+function cloneWatchConfig(config: Required<WatchConfig>): Required<WatchConfig> {
+  return {
+    watch: [...config.watch],
+    debounceMs: config.debounceMs,
+    prompt: config.prompt,
+  };
+}
+
 export function loadWatchConfig(cwd: string): Required<WatchConfig> {
   const fallback = DEFAULT_WATCH_CONFIG;
 
   const path = resolve(cwd, FILE);
-  if (!existsSync(path)) return fallback;
+  if (!existsSync(path)) return cloneWatchConfig(fallback);
 
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as WatchConfig;
@@ -27,11 +35,11 @@ export function loadWatchConfig(cwd: string): Required<WatchConfig> {
     const prompt = parsed.prompt?.trim();
 
     return {
-      watch: watch?.length ? watch : fallback.watch,
+      watch: watch?.length ? watch : [...fallback.watch],
       debounceMs: typeof parsed.debounceMs === "number" && parsed.debounceMs > 0 ? parsed.debounceMs : fallback.debounceMs,
       prompt: prompt ? prompt : fallback.prompt,
     };
   } catch {
-    return fallback;
+    return cloneWatchConfig(fallback);
   }
 }

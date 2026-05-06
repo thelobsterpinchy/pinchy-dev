@@ -104,6 +104,18 @@ test("loadWatchConfig trims prompt overrides before returning them", () => {
   });
 });
 
+test("loadWatchConfig returns a fresh fallback so caller mutations do not leak across reads", () => {
+  withTempDir((cwd) => {
+    const first = loadWatchConfig(cwd);
+    first.watch.push("tmp/mutated");
+
+    const second = loadWatchConfig(cwd);
+
+    assert.deepEqual(second.watch, ["README.md", "docs", ".pi", "apps", "packages", "services", "scripts"]);
+    assert.notEqual(first.watch, second.watch);
+  });
+});
+
 test("loadWatchConfig fallback matches the watch config scaffolded by pinchy init", () => {
   const plan = buildPinchyInitPlan({
     cwd: "/work/demo",

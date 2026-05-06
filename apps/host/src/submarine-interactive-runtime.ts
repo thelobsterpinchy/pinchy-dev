@@ -8,6 +8,11 @@ import {
   createExtensionRuntime,
 } from "@mariozechner/pi-coding-agent";
 import { loadPinchyRuntimeConfig } from "./runtime-config.js";
+import { buildSubmarinePythonEnv } from "./submarine-python.js";
+import { createExtensionBackedToolCatalog, type ToolCatalogSnapshot } from "./tool-catalog.js";
+import { createExtensionBackedToolExecutor, type ToolExecutor } from "./tool-executor.js";
+import { buildSubmarineResourceContext, type SubmarineResourceContext } from "../../../services/agent-worker/src/submarine-resource-bridge.js";
+import type { PinchyRuntimeConfig } from "./runtime-config.js";
 
 type RpcEnvelope = {
   type: "response" | "event";
@@ -35,11 +40,98 @@ function textMessage(role: "user" | "assistant", text: string, extras: Record<st
   };
 }
 
+export async function buildSubmarineInteractiveStartSessionPayload(input: {
+  cwd: string;
+  runtimeConfig: PinchyRuntimeConfig;
+  toolCatalog?: ToolCatalogSnapshot;
+  resourceContext?: SubmarineResourceContext;
+}) {
+  const submarine = input.runtimeConfig.submarine!;
+  const toolCatalog = input.toolCatalog ?? await createExtensionBackedToolCatalog().listTools(input.cwd);
+  const resourceContext = input.resourceContext ?? buildSubmarineResourceContext(input.cwd);
+  return {
+    supervisor: {
+      model: submarine.supervisorModel ?? input.runtimeConfig.defaultModel,
+      base_url: submarine.supervisorBaseUrl,
+      api_key: submarine.supervisorApiKey,
+      system_prompt: resourceContext.systemPrompt,
+    },
+    tools: toolCatalog.tools.map((tool) => ({
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      prompt_snippet: tool.promptSnippet,
+      parameters: tool.parameters,
+    })),
+    resources: resourceContext.resources,
+    agents: Object.entries(submarine.agents ?? {}).map(([role, agent]) => ({
+      role,
+      model: agent.model,
+      base_url: agent.baseUrl,
+      api_key: agent.apiKey,
+      system_prompt: [agent.systemPrompt, resourceContext.systemPrompt].filter((entry): entry is string => Boolean(entry?.trim())).join("\n\n") || undefined,
+      timeout: agent.timeout,
+    })),
+    run_kind_routes: submarine.runKindRoutes,
+    shared_memory: {},
+  };
+}
+
+export async function handleSubmarineInteractiveToolCall(input: {
+  cwd: string;
+  event: Record<string, any>;
+  sendToolResult: (params: Record<string, unknown>) => Promise<unknown>;
+  toolExecutor?: ToolExecutor;
+  signal?: AbortSignal;
+}) {
+  if (input.event.type !== "tool_call") return false;
+  const toolCallId = typeof input.event.tool_call_id === "string" ? input.event.tool_call_id : undefined;
+  const toolName = typeof input.event.tool_name === "string" ? input.event.tool_name : undefined;
+  if (!toolName) {
+    await input.sendToolResult({
+      tool_call_id: toolCallId,
+      result: {
+        content: [{ type: "text", text: "Submarine tool call missing tool_name." }],
+        isError: true,
+      },
+    });
+    return true;
+  }
+
+  const toolExecutor = input.toolExecutor ?? createExtensionBackedToolExecutor();
+  let result;
+  try {
+    result = await toolExecutor.executeTool({
+      cwd: input.cwd,
+      toolName,
+      input: input.event.input && typeof input.event.input === "object" ? input.event.input : {},
+      toolCallId,
+      signal: input.signal,
+      hasUI: true,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result = {
+      content: [{ type: "text", text: `Tool call failed: ${message}` }],
+      isError: true,
+      details: { toolName, error: message },
+    };
+  }
+  await input.sendToolResult({
+    tool_call_id: toolCallId,
+    result,
+  });
+  return true;
+}
+
 class SubmarineBridgeClient {
   private child;
   private buffer = "";
   private pending = new Map<string, PendingRpc>();
   private eventListeners = new Set<(event: Record<string, any>) => void>();
+  private stderrTail: string[] = [];
+  private exited = false;
+  private exitError?: Error;
 
   constructor(private cwd: string) {
     const runtimeConfig = loadPinchyRuntimeConfig(cwd);
@@ -49,8 +141,8 @@ class SubmarineBridgeClient {
     }
     this.child = spawn(submarine.pythonPath ?? "python3", ["-m", submarine.scriptModule ?? "submarine.serve_stdio"], {
       cwd,
-      stdio: ["pipe", "pipe", "inherit"],
-      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: buildSubmarinePythonEnv(process.env),
     });
 
     this.child.stdout.on("data", (chunk: Buffer) => {
@@ -61,7 +153,14 @@ class SubmarineBridgeClient {
         const line = this.buffer.slice(0, index).trim();
         this.buffer = this.buffer.slice(index + 1);
         if (!line) continue;
-        const envelope = JSON.parse(line) as RpcEnvelope;
+        let envelope: RpcEnvelope;
+        try {
+          envelope = JSON.parse(line) as RpcEnvelope;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.failPending(new Error(this.formatProcessError(`Submarine emitted invalid JSON on stdout: ${message}`)));
+          continue;
+        }
         if (envelope.type === "response" && envelope.id) {
           const deferred = this.pending.get(envelope.id);
           if (!deferred) continue;
@@ -75,6 +174,42 @@ class SubmarineBridgeClient {
         }
       }
     });
+    this.child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8").trim();
+      if (!text) return;
+      for (const line of text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+        this.stderrTail.push(line);
+      }
+      if (this.stderrTail.length > 20) {
+        this.stderrTail.splice(0, this.stderrTail.length - 20);
+      }
+      process.stderr.write(`${text}\n`);
+    });
+    this.child.stdin.on("error", (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.failPending(new Error(this.formatProcessError(`Submarine stdin write failed: ${message}`)));
+    });
+    this.child.on("error", (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.failPending(new Error(this.formatProcessError(`Submarine process failed to start: ${message}`)));
+    });
+    this.child.on("exit", (code, signal) => {
+      this.failPending(new Error(this.formatProcessError(`Submarine process exited${signal ? ` with signal ${signal}` : ` with code ${code ?? "unknown"}`}`)));
+    });
+  }
+
+  private formatProcessError(message: string) {
+    const stderr = this.stderrTail.join("\n").trim();
+    return stderr ? `${message}\nSubmarine stderr:\n${stderr}` : message;
+  }
+
+  private failPending(error: Error) {
+    this.exited = true;
+    this.exitError = error;
+    for (const [id, deferred] of this.pending) {
+      this.pending.delete(id);
+      deferred.reject(error);
+    }
   }
 
   onEvent(listener: (event: Record<string, any>) => void) {
@@ -83,34 +218,39 @@ class SubmarineBridgeClient {
   }
 
   rpc(method: string, params: Record<string, unknown>) {
+    if (this.exited) {
+      return Promise.reject(this.exitError ?? new Error("Submarine process is no longer available."));
+    }
     const id = randomUUID();
-    const promise = new Promise<any>((resolve, reject) => {
+    return new Promise<any>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
+      try {
+        const accepted = this.child.stdin.write(JSON.stringify({ id, method, params }) + "\n", (error) => {
+          if (!error) return;
+          this.pending.delete(id);
+          const processError = new Error(this.formatProcessError(error.message));
+          this.failPending(processError);
+          reject(processError);
+        });
+        if (!accepted && this.child.stdin.destroyed) {
+          this.pending.delete(id);
+          const processError = new Error(this.formatProcessError("Submarine stdin is closed."));
+          this.failPending(processError);
+          reject(processError);
+        }
+      } catch (error) {
+        this.pending.delete(id);
+        const message = error instanceof Error ? error.message : String(error);
+        const processError = new Error(this.formatProcessError(message));
+        this.failPending(processError);
+        reject(processError);
+      }
     });
-    this.child.stdin.write(JSON.stringify({ id, method, params }) + "\n");
-    return promise;
   }
 
   async startSession() {
     const runtimeConfig = loadPinchyRuntimeConfig(this.cwd);
-    const submarine = runtimeConfig.submarine!;
-    await this.rpc("start_session", {
-      supervisor: {
-        model: submarine.supervisorModel ?? runtimeConfig.defaultModel,
-        base_url: submarine.supervisorBaseUrl,
-        api_key: submarine.supervisorApiKey,
-      },
-      agents: Object.entries(submarine.agents ?? {}).map(([role, agent]) => ({
-        role,
-        model: agent.model,
-        base_url: agent.baseUrl,
-        api_key: agent.apiKey,
-        system_prompt: agent.systemPrompt,
-        timeout: agent.timeout,
-      })),
-      run_kind_routes: submarine.runKindRoutes,
-      shared_memory: {},
-    });
+    await this.rpc("start_session", await buildSubmarineInteractiveStartSessionPayload({ cwd: this.cwd, runtimeConfig }));
   }
 
   async converse(message: string, targetTaskId?: string) {
@@ -118,6 +258,10 @@ class SubmarineBridgeClient {
       message,
       target_task_id: targetTaskId,
     });
+  }
+
+  async sendToolResult(params: Record<string, unknown>) {
+    return this.rpc("tool_result", params);
   }
 
   async stop() {
@@ -214,6 +358,12 @@ class SubmarineInteractiveAgent {
     if (this.initialized) return;
     await this.bridge!.startSession();
     this.unsubscribeBridge = this.bridge!.onEvent((event) => {
+      void handleSubmarineInteractiveToolCall({
+        cwd: this.cwd,
+        event,
+        sendToolResult: (params) => this.bridge!.sendToolResult(params),
+        signal: this.activeAbortController?.signal,
+      });
       if (event.type === "agent_yielded") {
         this.waitingTaskId = event.task_id;
       }

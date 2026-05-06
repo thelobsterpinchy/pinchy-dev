@@ -127,6 +127,63 @@ test("control plane proxy forwards local API bearer token when configured", asyn
   }
 });
 
+test("control plane proxy respects an existing mixed-case Authorization header", async () => {
+  const previousToken = process.env.PINCHY_API_TOKEN;
+  process.env.PINCHY_API_TOKEN = "local-token";
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await requestControlPlaneApi({
+      apiBaseUrl: "http://127.0.0.1:4320",
+      path: "/conversations",
+      method: "GET",
+      fetchImpl: fetchMock,
+      headers: { Authorization: "Bearer explicit-token" },
+    });
+
+    assert.equal((calls[0]?.init?.headers as Record<string, string>)?.Authorization, "Bearer explicit-token");
+    assert.equal((calls[0]?.init?.headers as Record<string, string>)?.authorization, undefined);
+  } finally {
+    if (previousToken === undefined) {
+      delete process.env.PINCHY_API_TOKEN;
+    } else {
+      process.env.PINCHY_API_TOKEN = previousToken;
+    }
+  }
+});
+
+test("control plane proxy ascii-encodes mixed-case workspace override headers too", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const workspacePath = "/Users/brandon/Documents/Documents - Brandon’s Mac mini/Projects/pinchy-dev";
+  await requestControlPlaneApi({
+    apiBaseUrl: "http://127.0.0.1:4320",
+    path: "/conversations",
+    method: "GET",
+    fetchImpl: fetchMock,
+    headers: { "X-Pinchy-Workspace-Path": workspacePath },
+  });
+
+  assert.equal(
+    (calls[0]?.init?.headers as Record<string, string>)?.["X-Pinchy-Workspace-Path"],
+    encodeURIComponent(workspacePath),
+  );
+});
+
 test("control plane proxy falls back to JSON content type when the upstream omits one", async () => {
   const fetchMock: typeof fetch = async () => new Response(new Uint8Array(Buffer.from("{\"ok\":true}")), {
     status: 200,

@@ -7,6 +7,10 @@ type GoalConfig = {
   intervalMs?: number;
 };
 
+function normalizeOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function parseBooleanEnv(value: string | undefined) {
   if (value === undefined) return undefined;
   const normalized = value.trim().toLowerCase();
@@ -22,6 +26,14 @@ function loadJsonFile<T>(path: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function normalizeGoalEntries(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function parseEnvGoals(): string[] {
@@ -45,11 +57,12 @@ function parseIntervalMs(value: unknown): number | undefined {
 export function loadDaemonGoalsConfig(cwd: string) {
   const config = loadJsonFile<GoalConfig>(resolve(cwd, ".pinchy-goals.json")) ?? {};
   const envGoals = parseEnvGoals();
+  const configGoals = normalizeGoalEntries(config.goals);
   const enabledOverride = parseBooleanEnv(process.env.PINCHY_DAEMON_AUTO_IMPROVEMENTS);
 
   return {
-    enabled: enabledOverride ?? config.enabled ?? true,
-    goals: envGoals.length > 0 ? envGoals : config.goals?.length ? config.goals : getDefaultGoals(),
+    enabled: enabledOverride ?? normalizeOptionalBoolean(config.enabled) ?? true,
+    goals: envGoals.length > 0 ? envGoals : configGoals.length > 0 ? configGoals : getDefaultGoals(),
     intervalMs: parseIntervalMs(process.env.PINCHY_DAEMON_INTERVAL_MS) ?? parseIntervalMs(config.intervalMs) ?? 30 * 60 * 1000,
   };
 }

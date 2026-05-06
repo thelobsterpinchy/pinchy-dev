@@ -68,6 +68,7 @@ function main() {
   const doctorOutput = runStep(plan.steps[3]!);
   assertIncludes(doctorOutput, "Pinchy doctor", "installed doctor output");
   assertIncludes(doctorOutput, "workspace_init: ok", "installed doctor workspace status");
+  assertIncludes(doctorOutput, "submarine_module: ok", "installed doctor bundled Submarine status");
 
   const statusOutput = runStep(plan.steps[4]!);
   assertIncludes(statusOutput, "Managed service status", "installed status output");

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApiServer } from "../apps/api/src/server.js";
+import { createApiServer, resolveApiServerPort } from "../apps/api/src/server.js";
 
 async function withServer(run: (args: { cwd: string; baseUrl: string }) => Promise<void>) {
   const cwd = mkdtempSync(join(tmpdir(), "pinchy-api-"));
@@ -97,6 +97,36 @@ test("api server exposes health and conversation endpoints", async () => {
     assert.equal(conversations.length, 1);
     assert.equal(conversations[0]?.id, conversation.id);
   });
+});
+
+test("resolveApiServerPort falls back to the default port for invalid env values", () => {
+  assert.equal(resolveApiServerPort({}), 4320);
+  assert.equal(resolveApiServerPort({ PINCHY_API_PORT: "" }), 4320);
+  assert.equal(resolveApiServerPort({ PINCHY_API_PORT: "not-a-number" }), 4320);
+  assert.equal(resolveApiServerPort({ PINCHY_API_PORT: "65536" }), 4320);
+  assert.equal(resolveApiServerPort({ PINCHY_API_PORT: "-1" }), 4320);
+  assert.equal(resolveApiServerPort({ PINCHY_API_PORT: "4319.5" }), 4320);
+  assert.equal(resolveApiServerPort({ PINCHY_API_PORT: "4319" }), 4319);
+});
+
+test("api server ignores ambient PINCHY_API_TOKEN unless auth is explicitly configured", async () => {
+  const originalToken = process.env.PINCHY_API_TOKEN;
+  process.env.PINCHY_API_TOKEN = "ambient-token";
+
+  try {
+    await withServer(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/conversations`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "No explicit auth" }),
+      });
+
+      assert.equal(response.status, 201);
+    });
+  } finally {
+    if (originalToken === undefined) delete process.env.PINCHY_API_TOKEN;
+    else process.env.PINCHY_API_TOKEN = originalToken;
+  }
 });
 
 test("api server requires bearer token for non-health routes when PINCHY_API_TOKEN is configured", async () => {

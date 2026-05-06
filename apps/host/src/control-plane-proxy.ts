@@ -12,11 +12,17 @@ function encodeWorkspaceOverrideHeaderValue(value: string) {
   return /^[\u0000-\u00ff]*$/.test(value) ? value : encodeURIComponent(value);
 }
 
+function findHeaderKey(headers: Record<string, string>, headerName: string) {
+  const normalizedHeaderName = headerName.toLowerCase();
+  return Object.keys(headers).find((key) => key.toLowerCase() === normalizedHeaderName);
+}
+
 function normalizeOutgoingHeaders(headers: Record<string, string>) {
   const normalized = { ...headers };
-  const workspacePath = normalized["x-pinchy-workspace-path"];
-  if (workspacePath) {
-    normalized["x-pinchy-workspace-path"] = encodeWorkspaceOverrideHeaderValue(workspacePath);
+  const workspaceHeaderKey = findHeaderKey(normalized, "x-pinchy-workspace-path");
+  const workspacePath = workspaceHeaderKey ? normalized[workspaceHeaderKey] : undefined;
+  if (workspaceHeaderKey && workspacePath) {
+    normalized[workspaceHeaderKey] = encodeWorkspaceOverrideHeaderValue(workspacePath);
   }
   return normalized;
 }
@@ -33,7 +39,7 @@ export async function requestControlPlaneApi(input: ControlPlaneRequest): Promis
   if (input.contentType) {
     headers["content-type"] = input.contentType;
   }
-  if (process.env.PINCHY_API_TOKEN && !headers.authorization) {
+  if (process.env.PINCHY_API_TOKEN && !findHeaderKey(headers, "authorization")) {
     headers.authorization = `Bearer ${process.env.PINCHY_API_TOKEN}`;
   }
 

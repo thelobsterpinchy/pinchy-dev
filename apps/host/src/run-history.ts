@@ -9,7 +9,8 @@ export function loadRunHistory(cwd: string): RunHistoryEntry[] {
   const path = resolve(cwd, FILE);
   if (!existsSync(path)) return [];
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as RunHistoryEntry[];
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return Array.isArray(parsed) ? parsed as RunHistoryEntry[] : [];
   } catch {
     return [];
   }

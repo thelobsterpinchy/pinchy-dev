@@ -100,8 +100,11 @@ Provides local design-pattern and anti-pattern retrieval tools plus query-based,
 ### `.pi/extensions/desktop-observer`
 Provides local screenshot and active-app inspection tools for desktop debugging, lightweight accessibility-style UI snapshots, and approval-gated app opening.
 
+### `.pi/extensions/ocr-tools`
+Provides OCR-based screen inspection helpers for extracting visible text and locating matching text on screen images.
+
 ### `.pi/extensions/screen-operator`
-Provides guarded click/type/key tools plus exact PNG template matching for screen targeting.
+Provides guarded click/type/key tools plus exact PNG template matching and OCR-based visible-text targeting for screen interaction.
 
 ### `.pi/extensions/simulator-tools`
 Provides guarded Simulator workflows for listing devices, booting, opening URLs, screenshots, focusing, and typing.
@@ -166,8 +169,7 @@ Disallowed by default:
 
 ## Suggested next upgrades
 
-1. add OCR-based targeting in addition to exact template matching
-2. add image-aware screenshot diffing beyond hash/size checks
-3. add richer Simulator gesture helpers
-4. add dashboard auth/token protection if exposed beyond localhost
-5. add more extension-level tests and fixtures
+1. add image-aware screenshot diffing beyond hash/size checks
+2. add richer Simulator gesture helpers
+3. add dashboard auth/token protection if exposed beyond localhost
+4. add more extension-level tests and fixtures

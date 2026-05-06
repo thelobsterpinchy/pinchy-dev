@@ -58,6 +58,7 @@ test("self-improver prompt reinforces safe bounded maintenance guidance", async 
     assert.match(prompt, /small refactors/i);
     assert.match(prompt, /dirty-worktree|edited files with unrelated/i);
     assert.match(prompt, /validate any changes when practical/i);
+    assert.match(prompt, /test-first|regression-test-first/i);
     assert.match(prompt, /If no safe improvement is warranted, explain why and stop/i);
     assert.match(prompt, /Current health hints:\nKeep docs current\./i);
   } finally {
@@ -84,6 +85,7 @@ test("queue_self_improvement_cycle sends follow-up prompt with the same guardrai
     assert.equal(harness.userMessages[0]?.options?.deliverAs, "followUp");
     assert.match(harness.userMessages[0]?.message ?? "", /dirty-worktree|edited files with unrelated/i);
     assert.match(harness.userMessages[0]?.message ?? "", /validate any changes when practical/i);
+    assert.match(harness.userMessages[0]?.message ?? "", /test-first|regression-test-first/i);
     assert.match(harness.userMessages[0]?.message ?? "", /If no safe improvement is warranted, explain why and stop/i);
   } finally {
     rmSync(cwd, { recursive: true, force: true });

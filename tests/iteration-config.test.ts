@@ -99,3 +99,13 @@ test("loadIterationConfig accepts the smallest positive numeric boundary values"
     assert.equal(config.maxCyclesPerRun, 1);
   });
 });
+
+test("loadIterationConfig rejects fractional maxCyclesPerRun values that could overrun iteration cycles", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-iteration.json"), JSON.stringify({ maxCyclesPerRun: 1.5 }));
+
+    const config = loadIterationConfig(cwd);
+
+    assert.equal(config.maxCyclesPerRun, 1);
+  });
+});

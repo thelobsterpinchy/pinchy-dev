@@ -174,10 +174,13 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
       options: args.modelOptions,
     }),
   }));
-  const sessionManagerFactory = dependencies.sessionManagerFactory ?? {
+  const sessionManagerFactory = dependencies.sessionManagerFactory ?? (dependencies.createSession ? {
+    create: (cwd: string) => ({ kind: "create", cwd }),
+    open: (sessionPath: string) => ({ kind: "open", sessionPath }),
+  } : {
     create: (cwd: string) => SessionManager.create(cwd),
     open: (sessionPath: string) => SessionManager.open(sessionPath),
-  } satisfies PiSessionManagerFactory;
+  }) satisfies PiSessionManagerFactory;
   const loadRuntimeConfig = dependencies.loadRuntimeConfig ?? loadPinchyRuntimeConfig;
   const submarineAdapter = createSubmarineAdapter({ loadRuntimeConfig });
   const resolveModel = dependencies.resolveModel ?? defaultResolveModel;
@@ -185,6 +188,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
   const loadConversationSessionBinding = dependencies.loadConversationSessionBinding ?? ((cwd: string, conversationId: string) => getConversationSessionBinding(cwd, conversationId));
   const hasCancellationRequest = dependencies.hasRunCancellationRequest ?? ((cwd: string, runId: string) => hasRunCancellationRequest(cwd, runId));
   const clearCancellationRequest = dependencies.clearRunCancellationRequest ?? ((cwd: string, runId: string) => clearRunCancellationRequest(cwd, runId));
+  const useSubmarineRuntime = dependencies.createSession === undefined;
 
   function buildSessionDefaults(cwd: string) {
     const runtimeConfig = loadRuntimeConfig(cwd);
@@ -247,7 +251,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
   return {
     async executeRun({ cwd, run }: { cwd: string; run: Run }): Promise<PiRunExecutionResult> {
       const runtimeConfig = loadRuntimeConfig(cwd);
-      if (runtimeConfig.submarine?.enabled) {
+      if (useSubmarineRuntime && runtimeConfig.submarine?.enabled) {
         return submarineAdapter.executeRun({ cwd, run });
       }
       const defaults = buildSessionDefaults(cwd);
@@ -280,7 +284,7 @@ export function createPiRunExecutor(dependencies: PiRunExecutorDependencies = {}
     },
     async resumeRun({ cwd, run, reply }: { cwd: string; run: Run; reply: string }): Promise<PiRunExecutionResult> {
       const runtimeConfig = loadRuntimeConfig(cwd);
-      if (runtimeConfig.submarine?.enabled) {
+      if (useSubmarineRuntime && runtimeConfig.submarine?.enabled) {
         return submarineAdapter.resumeRun({ cwd, run, reply });
       }
       if (!run.sessionPath) {

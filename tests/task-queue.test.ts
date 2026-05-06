@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearCompletedTasks, deleteTask, enqueueDelegationPlan, enqueueTask, getNextPendingTask, loadTasks, reprioritizeTask, updateTaskStatus, updateTaskStatusByExecutionRunId } from "../apps/host/src/task-queue.js";
@@ -14,6 +14,34 @@ function withTempDir(run: (cwd: string) => void) {
     rmSync(cwd, { recursive: true, force: true });
   }
 }
+
+test("loadTasks ignores corrupted parseable task storage instead of returning invalid data", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-tasks.json"), JSON.stringify({ broken: true }), "utf8");
+
+    assert.deepEqual(loadTasks(cwd), []);
+    assert.equal(getNextPendingTask(cwd), undefined);
+  });
+});
+
+test("loadTasks filters out invalid persisted task entries before queue helpers inspect them", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-tasks.json"), JSON.stringify([
+      { broken: true },
+      {
+        id: "task-1",
+        title: "Valid task",
+        prompt: "Inspect the edge case.",
+        status: "pending",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]), "utf8");
+
+    assert.deepEqual(loadTasks(cwd).map((task) => task.id), ["task-1"]);
+    assert.equal(getNextPendingTask(cwd)?.id, "task-1");
+  });
+});
 
 test("enqueueTask stores a pending task", () => {
   withTempDir((cwd) => {
@@ -53,6 +81,23 @@ test("enqueueTask can persist orchestration links when a task is spawned from ch
       },
     ]);
     assert.deepEqual(loadOrchestrationEvents(cwd).map((event) => event.type), ["TaskReady"]);
+  });
+});
+
+test("enqueueTask trims and filters dependency ids so invalid input does not block ready work", () => {
+  withTempDir((cwd) => {
+    const dependency = enqueueTask(cwd, "Inspect logs", "Inspect logs first.");
+    const dependent = enqueueTask(cwd, "Apply fix", "Apply the smallest safe fix.", {
+      dependsOnTaskIds: ["  ", `  ${dependency.id}  `, "", null] as unknown as string[],
+    });
+
+    assert.deepEqual(dependent.dependsOnTaskIds, [dependency.id]);
+    assert.deepEqual(loadTasks(cwd).find((task) => task.id === dependent.id)?.dependsOnTaskIds, [dependency.id]);
+    assert.equal(getNextPendingTask(cwd)?.id, dependency.id);
+
+    updateTaskStatus(cwd, dependency.id, "done");
+
+    assert.equal(getNextPendingTask(cwd)?.id, dependent.id);
   });
 });
 
@@ -164,6 +209,27 @@ test("enqueueDelegationPlan trims whitespace around dependency ids before linkin
         title: "Apply fix",
         prompt: "Apply the smallest safe fix.",
         dependsOn: [" inspect "],
+      },
+    ]);
+
+    assert.deepEqual(tasks[1]?.dependsOnTaskIds, [tasks[0]?.id]);
+    assert.equal(getNextPendingTask(cwd)?.title, "Inspect logs");
+  });
+});
+
+test("enqueueDelegationPlan ignores invalid dependency entries instead of throwing", () => {
+  withTempDir((cwd) => {
+    const tasks = enqueueDelegationPlan(cwd, [
+      {
+        id: "inspect",
+        title: "Inspect logs",
+        prompt: "Inspect the logs and summarize the issue.",
+      },
+      {
+        id: "fix",
+        title: "Apply fix",
+        prompt: "Apply the smallest safe fix.",
+        dependsOn: [" inspect ", null, 42] as unknown as string[],
       },
     ]);
 

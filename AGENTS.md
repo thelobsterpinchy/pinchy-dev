@@ -60,5 +60,6 @@
 When asked to improve `pinchy-dev` itself:
 - start with docs, tests, guardrails, and workflows
 - prefer incremental upgrades over rewrites
+- avoid editing files with unrelated dirty-worktree changes; prefer isolated docs, tests, or guardrail updates
 - document major runtime or architecture changes in `README.md` and `docs/ARCHITECTURE.md`
 - do not silently weaken safety checks to increase autonomy

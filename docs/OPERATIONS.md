@@ -52,13 +52,14 @@ Useful tools:
 - `npm run playwright:install` when Playwright browser binaries are missing
 
 Suggested workflow:
-0. if Playwright reports a missing browser executable, run `npm run playwright:install`
-1. run `browser_debug_scan` first to collect screenshot, console issues, and failing requests
-2. use `browser_dom_snapshot` when you need saved HTML and visible-text evidence
-3. use `browser_run_probe` for quick selector/text checks
-4. use `browser_execute_steps` for bounded multi-step reproduction flows
-5. save before/after screenshots or DOM snapshots when verifying a fix
-6. use `browser_compare_artifacts` to compare before/after screenshots or DOM snapshots
+0. run `pinchy doctor` when you want a quick readiness check for Playwright Chromium and related local browser tooling
+1. if Playwright reports a missing browser executable, run `npm run playwright:install`
+2. run `browser_debug_scan` first to collect screenshot, console issues, and failing requests
+3. use `browser_dom_snapshot` when you need saved HTML and visible-text evidence
+4. use `browser_run_probe` for quick selector/text checks
+5. use `browser_execute_steps` for bounded multi-step reproduction flows
+6. save before/after screenshots or DOM snapshots when verifying a fix
+7. use `browser_compare_artifacts` to compare before/after screenshots or DOM snapshots
 
 Suggested evidence bundle for a reproducible bug:
 - one `browser_debug_scan` screenshot
@@ -79,6 +80,8 @@ Suggested workflow:
 3. inspect the returned URLs/snippets before relying on them
 4. treat provider outages, rate limits, and result relevance as possible failure modes
 5. use the saved JSON artifact when you want a durable record of what the search returned; it is also indexed in `artifacts/index.json`
+
+Set `EXA_API_KEY` in `.pinchy/env` or the process environment to use Exa-backed search. The same `internet_search` tool is loaded from `.pi/extensions` for orchestrator and subagent sessions.
 
 ## Local app debugging
 

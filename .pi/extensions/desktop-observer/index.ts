@@ -115,10 +115,6 @@ async function saveJsonArtifact(cwd: string, outputPath: string, value: unknown)
   await writeFile(absolutePath, JSON.stringify(value, null, 2), "utf8");
 }
 
-function requireDarwin(platform: NodeJS.Platform) {
-  if (platform !== "darwin") throw new Error("This desktop tool currently ships with a macOS implementation only.");
-}
-
 export function registerDesktopObserverTools(pi: ExtensionAPI, deps: DesktopObserverDeps = {}) {
   const now = deps.now ?? Date.now;
   const platform = deps.platform ?? process.platform;
@@ -135,10 +131,12 @@ export function registerDesktopObserverTools(pi: ExtensionAPI, deps: DesktopObse
     promptSnippet: "Capture the local desktop to inspect app state.",
     parameters: Type.Object({ outputPath: Type.Optional(Type.String()) }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (platform !== "darwin") {
+        return { content: [{ type: "text", text: "desktop_screenshot currently has a macOS implementation only." }], details: {} };
+      }
       const outputPath = params.outputPath ?? `artifacts/desktop-${now()}.png`;
       const absolutePath = normalizePath(ctx.cwd, outputPath);
       await mkdir(dirname(absolutePath), { recursive: true });
-      requireDarwin(platform);
       await captureScreenshotImpl(absolutePath);
       recordArtifact(ctx.cwd, outputPath, "desktop_screenshot", "image/png", undefined, ["screenshot"]);
       return { content: [{ type: "text", text: `Captured desktop screenshot to ${outputPath}` }], details: { outputPath } };
@@ -194,7 +192,9 @@ export function registerDesktopObserverTools(pi: ExtensionAPI, deps: DesktopObse
     promptGuidelines: ["Do not use this tool unless opening the app is clearly helpful and safe."],
     parameters: Type.Object({ appName: Type.String(), reason: Type.String() }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      requireDarwin(platform);
+      if (platform !== "darwin") {
+        return { content: [{ type: "text", text: "desktop_open_app currently has a macOS implementation only." }], details: {} };
+      }
       const approved = await requestApprovalImpl(ctx, {
         scope: "desktop.actions",
         title: "Desktop action approval",

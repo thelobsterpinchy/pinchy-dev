@@ -16,7 +16,7 @@ export type InternetSearchResult = {
   snippet: string;
 };
 
-export type InternetSearchProvider = "bing-rss" | "open-library";
+export type InternetSearchProvider = "exa" | "bing-rss" | "open-library";
 
 export type InternetSearchResponse = {
   provider: InternetSearchProvider;
@@ -46,6 +46,16 @@ type OpenLibrarySearchResponse = {
   }>;
 };
 
+type ExaSearchResponse = {
+  results?: Array<{
+    title?: string;
+    url?: string;
+    highlights?: string[];
+    summary?: string;
+    text?: string;
+  }>;
+};
+
 export function buildBingRssSearchUrl({ query, count }: { query: string; count: number }) {
   const params = new URLSearchParams({ format: "rss", q: query, count: String(count) });
   return `https://www.bing.com/search?${params.toString()}`;
@@ -54,6 +64,17 @@ export function buildBingRssSearchUrl({ query, count }: { query: string; count: 
 export function buildOpenLibrarySearchUrl({ query, limit }: { query: string; limit: number }) {
   const params = new URLSearchParams({ title: query, limit: String(limit) });
   return `https://openlibrary.org/search.json?${params.toString()}`;
+}
+
+export function buildExaSearchRequest({ query, numResults }: { query: string; numResults: number }) {
+  return {
+    query,
+    type: "auto",
+    numResults,
+    contents: {
+      highlights: true,
+    },
+  };
 }
 
 function stripHtml(value: string) {
@@ -187,6 +208,23 @@ async function fetchText(fetchImpl: SearchFetch, url: string, accept: string) {
   return response.text();
 }
 
+async function fetchExaJson(fetchImpl: SearchFetch, apiKey: string, query: string, maxResults: number) {
+  const response: SearchResponseLike = await fetchImpl("https://api.exa.ai/search", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify(buildExaSearchRequest({ query, numResults: maxResults })),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Exa search provider request failed with status ${response.status}: ${text}`);
+  }
+  return JSON.parse(text) as ExaSearchResponse;
+}
+
 async function searchBingRss(fetchImpl: SearchFetch, query: string, maxResults: number): Promise<SearchProviderResult> {
   const xml = await fetchText(fetchImpl, buildBingRssSearchUrl({ query, count: maxResults }), "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5");
   return {
@@ -204,16 +242,55 @@ async function searchOpenLibrary(fetchImpl: SearchFetch, query: string, maxResul
   };
 }
 
+function parseExaResults(payload: ExaSearchResponse, maxResults: number): InternetSearchResult[] {
+  return (payload.results ?? [])
+    .slice(0, maxResults)
+    .flatMap((result) => {
+      if (!result.title || !result.url) return [];
+      const snippet = result.highlights?.filter(Boolean).join(" ") || result.summary || result.text || "";
+      return [{
+        title: result.title,
+        url: result.url,
+        snippet,
+      }];
+    });
+}
+
+async function searchExa(fetchImpl: SearchFetch, apiKey: string, query: string, maxResults: number): Promise<SearchProviderResult> {
+  const payload = await fetchExaJson(fetchImpl, apiKey, query, maxResults);
+  return {
+    provider: "exa",
+    results: parseExaResults(payload, maxResults),
+  };
+}
+
 export async function searchWeb(
   input: SearchWebInput,
-  options: { fetch?: SearchFetch } = {},
+  options: { fetch?: SearchFetch; exaApiKey?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<InternetSearchResponse> {
   const fetchImpl = options.fetch ?? fetch;
   const maxResults = Math.max(1, Math.min(input.maxResults ?? 5, 10));
-  const providers = await Promise.all([
+  const exaApiKey = options.exaApiKey ?? options.env?.EXA_API_KEY ?? process.env.EXA_API_KEY;
+  if (exaApiKey?.trim()) {
+    const exa = await searchExa(fetchImpl, exaApiKey.trim(), input.query, maxResults);
+    return {
+      provider: exa.provider,
+      query: input.query,
+      results: exa.results,
+    };
+  }
+
+  const settledProviders = await Promise.allSettled([
     searchBingRss(fetchImpl, input.query, maxResults),
-    searchOpenLibrary(fetchImpl, input.query, maxResults).catch(() => ({ provider: "open-library" as const, results: [] })),
+    searchOpenLibrary(fetchImpl, input.query, maxResults),
   ]);
+  const providers = settledProviders.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  if (providers.length === 0) {
+    throw settledProviders[0]?.status === "rejected"
+      ? settledProviders[0].reason
+      : new Error("Internet search providers failed.");
+  }
+
   const selected = pickPreferredProvider(input.query, providers);
   return {
     provider: selected.provider,

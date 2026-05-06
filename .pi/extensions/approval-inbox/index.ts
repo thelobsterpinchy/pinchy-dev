@@ -1,9 +1,8 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import { setSessionScope } from "../../../apps/host/src/session-approval.js";
-import { isActionAutoApproved, setApprovalScope } from "../../../apps/host/src/approval-policy.js";
+import { getApprovalScopeForTool, isActionAutoApproved, setApprovalScope } from "../../../apps/host/src/approval-policy.js";
 
 type ApprovalRecord = {
   id: string;
@@ -15,6 +14,16 @@ type ApprovalRecord = {
 };
 
 const APPROVALS_PATH = ".pinchy-approvals.json";
+const DESKTOP_ACTION_SCOPE = "desktop.actions";
+
+function normalizeApprovalPayload(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return input as Record<string, unknown>;
+}
+
+function approvalMatchesToolCall(entry: ApprovalRecord, toolName: string, payload: Record<string, unknown>) {
+  return entry.toolName === toolName && JSON.stringify(entry.payload) === JSON.stringify(payload);
+}
 
 async function loadApprovals(cwd: string): Promise<ApprovalRecord[]> {
   const path = resolve(cwd, APPROVALS_PATH);
@@ -39,29 +48,43 @@ async function appendAuditNote(cwd: string, line: string) {
 
 export default function approvalInbox(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
-    if (!isToolCallEventType("desktop_open_app", event)) return;
+    const scope = getApprovalScopeForTool(event.toolName);
+    if (scope !== DESKTOP_ACTION_SCOPE) return;
 
-    if (isActionAutoApproved(ctx.cwd, "desktop.actions")) {
-      await appendAuditNote(ctx.cwd, `approved-use tool=${event.toolName} app=${String(event.input.appName)} scope=desktop.actions`);
+    const payload = normalizeApprovalPayload(event.input);
+    const reason = typeof payload.reason === "string" ? payload.reason : "";
+
+    if (isActionAutoApproved(ctx.cwd, DESKTOP_ACTION_SCOPE)) {
+      await appendAuditNote(ctx.cwd, `approved-use tool=${event.toolName} scope=${DESKTOP_ACTION_SCOPE}`);
       return;
     }
 
     const approvals = await loadApprovals(ctx.cwd);
-    const approved = approvals.find((entry) => entry.status === "approved" && entry.toolName === event.toolName && entry.payload.appName === event.input.appName);
+    const approved = approvals.find((entry) => entry.status === "approved" && approvalMatchesToolCall(entry, event.toolName, payload));
     if (approved) {
-      await appendAuditNote(ctx.cwd, `approved-use tool=${event.toolName} app=${String(event.input.appName)}`);
+      await appendAuditNote(ctx.cwd, `approved-use tool=${event.toolName}`);
       return;
     }
 
-    const existingPending = approvals.find((entry) => entry.status === "pending" && entry.toolName === event.toolName && entry.payload.appName === event.input.appName);
+    const existingPending = approvals.find((entry) => entry.status === "pending" && approvalMatchesToolCall(entry, event.toolName, payload));
     if (!existingPending) {
-      approvals.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ts: new Date().toISOString(), status: "pending", toolName: event.toolName, reason: String(event.input.reason ?? ""), payload: { appName: event.input.appName } });
+      approvals.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ts: new Date().toISOString(),
+        status: "pending",
+        toolName: event.toolName,
+        reason,
+        payload,
+      });
       await saveApprovals(ctx.cwd, approvals);
-      await appendAuditNote(ctx.cwd, `pending tool=${event.toolName} app=${String(event.input.appName)}`);
+      await appendAuditNote(ctx.cwd, `pending tool=${event.toolName}`);
     }
 
     if (!ctx.hasUI && process.env.PINCHY_ALLOW_DESKTOP_ACTIONS !== "1") {
-      return { block: true, reason: `Pending approval required. Review ${APPROVALS_PATH} and approve the request, then retry.` };
+      return {
+        block: true,
+        reason: `Pending approval required. Review ${APPROVALS_PATH}, run /approvals to inspect pending requests, then /approve <id> or /deny <id> before retrying.`,
+      };
     }
   });
 

@@ -202,6 +202,29 @@ test("processPendingTaskRuns schedules multiple ready tasks but leaves dependenc
   });
 });
 
+test("processPendingTaskRuns falls back to a safe default when limit is not finite", async () => {
+  await withTempDir(async (cwd) => {
+    enqueueTask(cwd, "Inspect logs", "Inspect logs.");
+
+    const scheduledTitles: string[] = [];
+    await processPendingTaskRuns(cwd, {
+      enqueueTaskRun: async (_cwd, input) => {
+        scheduledTitles.push(input.title);
+        const conversation = createConversation(cwd, { title: "Pinchy queued tasks" });
+        const run = createRun(cwd, {
+          conversationId: conversation.id,
+          goal: `Queued task: ${input.title}`,
+          kind: "user_prompt",
+        });
+        return { conversation, run };
+      },
+    }, { limit: Number.NaN });
+
+    assert.deepEqual(scheduledTitles, ["Inspect logs"]);
+    assert.equal(loadTasks(cwd)[0]?.status, "running");
+  });
+});
+
 test("resolveGoals keeps the enabled flag so daemon goal cycles can be disabled", async () => {
   await withTempDir(async (cwd) => {
     writeFileSync(join(cwd, ".pinchy-goals.json"), JSON.stringify({ enabled: false, intervalMs: 1234, goals: ["demo"] }));

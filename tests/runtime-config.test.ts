@@ -92,6 +92,61 @@ test("loadPinchyRuntimeConfig reads separate orchestration and subagent provider
   });
 });
 
+test("loadPinchyRuntimeConfig defaults existing workspaces to Submarine unless explicitly disabled", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      defaultProvider: "openai",
+      defaultModel: "qwen3-coder",
+    }));
+
+    const config = loadPinchyRuntimeConfig(cwd);
+    assert.equal(config.submarine?.enabled, true);
+    assert.equal(config.submarine?.pythonPath, "python3");
+    assert.equal(config.submarine?.scriptModule, "submarine.serve_stdio");
+    assert.equal(config.submarine?.supervisorModel, "qwen3-coder");
+    assert.equal(config.submarine?.supervisorBaseUrl, "http://127.0.0.1:8080/v1");
+    assert.equal(config.submarine?.agents?.worker?.model, "qwen3-coder");
+    assert.equal(config.submarine?.agents?.worker?.baseUrl, "http://127.0.0.1:8000/v1");
+  });
+});
+
+test("loadPinchyRuntimeConfig preserves explicit standard Pi runtime fallback", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      submarine: {
+        enabled: false,
+        supervisorModel: "old-model",
+      },
+    }));
+
+    const config = loadPinchyRuntimeConfig(cwd);
+    assert.equal(config.submarine?.enabled, false);
+    assert.equal(config.submarine?.supervisorModel, "old-model");
+  });
+});
+
+test("loadPinchyRuntimeConfig fills missing Submarine defaults around partial workspace config", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      defaultModel: "local-coder",
+      subagentModel: "local-worker",
+      submarine: {
+        enabled: true,
+        supervisorBaseUrl: "http://127.0.0.1:9000/v1",
+      },
+    }));
+
+    const config = loadPinchyRuntimeConfig(cwd);
+    assert.equal(config.submarine?.enabled, true);
+    assert.equal(config.submarine?.pythonPath, "python3");
+    assert.equal(config.submarine?.scriptModule, "submarine.serve_stdio");
+    assert.equal(config.submarine?.supervisorModel, "local-coder");
+    assert.equal(config.submarine?.supervisorBaseUrl, "http://127.0.0.1:9000/v1");
+    assert.equal(config.submarine?.agents?.worker?.model, "local-worker");
+    assert.equal(config.submarine?.agents?.worker?.baseUrl, "http://127.0.0.1:8000/v1");
+  });
+});
+
 test("loadPinchyRuntimeConfig supports env defaults for orchestration and subagent provider endpoints", () => {
   withTempDir((cwd) => {
     process.env.PINCHY_ORCHESTRATION_PROVIDER = "ollama";
@@ -331,6 +386,39 @@ test("loadPinchyRuntimeConfig ignores invalid saved model config values", () => 
         modelOptions: {
           topP: 0.95,
           stop: ["END"],
+        },
+      },
+    ]);
+  });
+});
+
+test("loadPinchyRuntimeConfig trims string-array model options such as stop sequences", () => {
+  withTempDir((cwd) => {
+    writeFileSync(join(cwd, ".pinchy-runtime.json"), JSON.stringify({
+      modelOptions: {
+        stop: ["  </tool>  ", "   ", "\nObservation:"],
+      },
+      savedModelConfigs: [
+        {
+          id: "valid",
+          name: "Valid",
+          modelOptions: {
+            stop: ["  DONE  ", " ", "END"],
+          },
+        },
+      ],
+    }));
+
+    const config = loadPinchyRuntimeConfig(cwd);
+    assert.deepEqual(config.modelOptions, {
+      stop: ["</tool>", "\nObservation:"],
+    });
+    assert.deepEqual(config.savedModelConfigs, [
+      {
+        id: "valid",
+        name: "Valid",
+        modelOptions: {
+          stop: ["DONE", "END"],
         },
       },
     ]);

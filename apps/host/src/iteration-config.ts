@@ -14,6 +14,10 @@ function parsePositiveNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+function parsePositiveInteger(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function parseEdgeCaseFocus(value: unknown) {
   if (!Array.isArray(value)) return undefined;
   const normalized: string[] = [];
@@ -49,7 +53,7 @@ export function loadIterationConfig(cwd: string): Required<IterationConfig> {
       enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : fallback.enabled,
       intervalMs: parsePositiveNumber(parsed.intervalMs) ?? fallback.intervalMs,
       edgeCaseFocus: parseEdgeCaseFocus(parsed.edgeCaseFocus) ?? fallback.edgeCaseFocus,
-      maxCyclesPerRun: parsePositiveNumber(parsed.maxCyclesPerRun) ?? fallback.maxCyclesPerRun,
+      maxCyclesPerRun: parsePositiveInteger(parsed.maxCyclesPerRun) ?? fallback.maxCyclesPerRun,
     };
   } catch {
     return fallback;

@@ -19,7 +19,8 @@ export function loadRoutines(cwd: string): RoutineRecord[] {
   const path = resolve(cwd, ROUTINES_FILE);
   if (!existsSync(path)) return [];
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as RoutineRecord[];
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return Array.isArray(parsed) ? parsed as RoutineRecord[] : [];
   } catch {
     return [];
   }
